@@ -1,0 +1,55 @@
+apiVersion: workflow/v1
+kind: Workflow
+
+metadata:
+  name: fullstack-development
+  version: "1.0"
+
+project:
+  repository: ./project
+  branch: main
+
+nodes:
+
+  requirement:
+    type: requirement-analysis
+
+  architecture:
+    type: architecture-design
+
+    inputs:
+      requirement:
+        from: requirement.requirement
+
+  backend:
+    type: coding-agent
+
+    config:
+      task: 实现 order-system 后端：依据需求与架构产出源码与 OpenAPI 文档
+
+    inputs:
+      requirement:
+        from: requirement.requirement
+      architecture:
+        from: architecture.architecture
+
+  openapi:
+    type: openapi-generator
+
+    inputs:
+      openapi:
+        from: backend.openapi
+
+  frontend:
+    type: coding-agent
+
+    config:
+      task: 实现 order-system 前端：消费 OpenAPI 与生成的 Frontend SDK
+
+    inputs:
+      requirement:
+        from: requirement.requirement
+      openapi:
+        from: backend.openapi
+      frontend-sdk:
+        from: openapi.frontend-sdk

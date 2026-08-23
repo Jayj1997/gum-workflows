@@ -36,5 +36,11 @@ node_modules/
 npm-debug.log*
 yarn-error.log*
 
+# Workflow runtime state (executions, artifacts)
+.workflow/
+
 # Claude Code local files
 .claude/
+# ...except the demo project's .claude/skills (part of the fullstack example)
+!examples/fullstack/project/.claude/
+!examples/fullstack/project/.claude/**

@@ -1,0 +1,19 @@
+apiVersion: workflow/v1
+kind: Workflow
+
+metadata:
+  name: invalid-type
+
+project:
+  repository: ./examples/order-system
+
+nodes:
+  requirement:
+    type: requirement-analysis
+
+  openapi:
+    type: openapi-generator
+
+    inputs:
+      openapi:
+        from: requirement.requirement

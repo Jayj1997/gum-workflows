@@ -1,0 +1,7 @@
+apiVersion: workflow/v1
+kind: Workflow
+metadata:
+	name: bad-indent
+	nodes:
+		a:
+			type: x
