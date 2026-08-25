@@ -1,0 +1,615 @@
+<title>Gum-Workflows 平台核心设计</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700;900&family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground: #FAFAF7;
+    --paper: #FFFFFF;
+    --ink: #1C2530;
+    --ink-soft: #4A5568;
+    --ink-faint: #8A94A6;
+    --line: #E3E4DC;
+    --line-strong: #C9CBC0;
+    --accent: #0F6E5C;
+    --accent-soft: #E5F1ED;
+    --accent-ink: #0A4A3E;
+    --warn: #B45309;
+    --warn-soft: #FBEFDD;
+    --danger: #B42318;
+    --danger-soft: #FBE9E7;
+    --code-bg: #F2F3EE;
+    --code-ink: #2D3748;
+    --chip-neutral: #EEF0E8;
+    --chip-agent: #E5F1ED;
+    --chip-automation: #E8EDF6;
+    --chip-human: #FBF0DE;
+    --shadow: 0 1px 2px rgba(28,37,48,.05), 0 8px 24px -12px rgba(28,37,48,.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #14181D;
+      --paper: #1C2229;
+      --ink: #E8EADE;
+      --ink-soft: #AEB6C2;
+      --ink-faint: #78808D;
+      --line: #2C343D;
+      --line-strong: #3A444F;
+      --accent: #3DBBA0;
+      --accent-soft: #1B332D;
+      --accent-ink: #7DDCC4;
+      --warn: #E5A458;
+      --warn-soft: #3A2E1C;
+      --danger: #F08578;
+      --danger-soft: #3C221E;
+      --code-bg: #222933;
+      --code-ink: #C9D2DE;
+      --chip-neutral: #262E36;
+      --chip-agent: #1B332D;
+      --chip-automation: #1F2A3C;
+      --chip-human: #3A2E1C;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 28px -14px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #14181D;
+    --paper: #1C2229;
+    --ink: #E8EADE;
+    --ink-soft: #AEB6C2;
+    --ink-faint: #78808D;
+    --line: #2C343D;
+    --line-strong: #3A444F;
+    --accent: #3DBBA0;
+    --accent-soft: #1B332D;
+    --accent-ink: #7DDCC4;
+    --warn: #E5A458;
+    --warn-soft: #3A2E1C;
+    --danger: #F08578;
+    --danger-soft: #3C221E;
+    --code-bg: #222933;
+    --code-ink: #C9D2DE;
+    --chip-neutral: #262E36;
+    --chip-agent: #1B332D;
+    --chip-automation: #1F2A3C;
+    --chip-human: #3A2E1C;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 28px -14px rgba(0,0,0,.5);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 15px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 48px 32px 96px;
+  }
+
+  /* ---------- Hero ---------- */
+  .hero { border-bottom: 1px solid var(--line-strong); padding-bottom: 36px; margin-bottom: 40px; }
+  .eyebrow {
+    font-size: 12px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 700;
+    margin-bottom: 14px;
+  }
+  h1 {
+    font-family: "Noto Serif SC", "Songti SC", serif;
+    font-weight: 900;
+    font-size: clamp(30px, 5vw, 44px);
+    line-height: 1.25;
+    text-wrap: balance;
+    letter-spacing: .01em;
+  }
+  .hero-sub { margin-top: 14px; color: var(--ink-soft); font-size: 16px; max-width: 62ch; }
+  .hero-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 22px;
+    font-size: 12.5px;
+  }
+  .pill {
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    padding: 3px 12px;
+    color: var(--ink-soft);
+    background: var(--paper);
+  }
+  .pill b { color: var(--ink); font-weight: 700; }
+
+  /* ---------- Section scaffolding ---------- */
+  section { margin-bottom: 56px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 18px; }
+  .sec-num {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+  h2 {
+    font-family: "Noto Serif SC", "Songti SC", serif;
+    font-weight: 700;
+    font-size: 24px;
+    line-height: 1.4;
+    text-wrap: balance;
+  }
+  .sec-lede { color: var(--ink-soft); margin-bottom: 20px; max-width: 66ch; }
+  h3 {
+    font-size: 15.5px;
+    font-weight: 700;
+    margin: 26px 0 10px;
+    color: var(--ink);
+  }
+  p + p { margin-top: 10px; }
+  .muted { color: var(--ink-soft); }
+  .small { font-size: 13px; }
+
+  /* ---------- Cards & chips ---------- */
+  .card {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    padding: 20px 22px;
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (max-width: 720px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+
+  .chip {
+    display: inline-block;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    border-radius: 5px;
+    padding: 1px 8px;
+    line-height: 1.7;
+    white-space: nowrap;
+  }
+  .chip-agent { background: var(--chip-agent); color: var(--accent-ink); }
+  .chip-automation { background: var(--chip-automation); color: #3D5A99; }
+  :root[data-theme="dark"] .chip-automation { color: #9DB8E8; }
+  .chip-human { background: var(--chip-human); color: var(--warn); }
+  .chip-neutral { background: var(--chip-neutral); color: var(--ink-soft); }
+
+  /* ---------- Diagram (component stack) ---------- */
+  .stack { display: flex; flex-direction: column; align-items: center; gap: 0; }
+  .stack-box {
+    width: 100%;
+    max-width: 560px;
+    background: var(--paper);
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    padding: 13px 18px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .stack-box .role { font-weight: 700; font-size: 14px; }
+  .stack-box .hint { color: var(--ink-faint); font-size: 12.5px; flex-basis: 100%; }
+  .stack-link {
+    color: var(--ink-faint);
+    font-size: 11px;
+    font-family: "JetBrains Mono", monospace;
+    padding: 4px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+  }
+  .stack-link::before { content: "▲"; font-size: 9px; opacity: .6; }
+  .stack-link::after { content: "│"; opacity: .5; }
+  .stack-link em { font-style: normal; color: var(--accent); }
+
+  /* ---------- Tables ---------- */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th {
+    text-align: left;
+    font-size: 12px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 700;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+  td { padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td code, p code, li code {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+
+  /* ---------- Code blocks ---------- */
+  pre {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: var(--code-ink);
+  }
+  pre .c { color: var(--ink-faint); }
+  pre .k { color: var(--accent); font-weight: 600; }
+  pre .s { color: var(--warn); }
+
+  /* ---------- Approval gate table ---------- */
+  .gate-table td:first-child { font-weight: 700; white-space: nowrap; }
+  .gate-no { color: var(--danger); font-weight: 700; }
+  .gate-yes { color: var(--accent); font-weight: 700; }
+
+  /* ---------- Error split ---------- */
+  .err-card h4 {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .err-structural { border-top: 3px solid var(--danger); }
+  .err-interaction { border-top: 3px solid var(--accent); }
+  .err-structural h4 { color: var(--danger); }
+  .err-interaction h4 { color: var(--accent); }
+  .err-card ul { padding-left: 18px; color: var(--ink-soft); font-size: 13.5px; }
+  .err-card li { margin-bottom: 4px; }
+  .err-card li b { color: var(--ink); }
+
+  /* ---------- State machine ---------- */
+  .flow {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    line-height: 2.1;
+    white-space: pre;
+    overflow-x: auto;
+    color: var(--code-ink);
+  }
+  .flow .hl { color: var(--accent); font-weight: 600; }
+  .flow .warn { color: var(--warn); font-weight: 600; }
+
+  /* ---------- Timeline ---------- */
+  .timeline { border-left: 2px solid var(--line-strong); margin-left: 6px; padding-left: 22px; display: flex; flex-direction: column; gap: 16px; }
+  .tl-item { position: relative; }
+  .tl-item::before {
+    content: "";
+    position: absolute;
+    left: -28px;
+    top: 6px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--paper);
+    border: 2.5px solid var(--accent);
+  }
+  .tl-item.tl-human::before { border-color: var(--warn); }
+  .tl-item.tl-bad::before { border-color: var(--danger); }
+  .tl-title { font-weight: 700; font-size: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .tl-body { color: var(--ink-soft); font-size: 13.5px; margin-top: 2px; }
+
+  /* ---------- Decision ledger ---------- */
+  .ledger { counter-reset: q; }
+  .ledger-item {
+    display: flex;
+    gap: 12px;
+    padding: 7px 0;
+    border-bottom: 1px dashed var(--line);
+    font-size: 13.5px;
+  }
+  .ledger-item:last-child { border-bottom: none; }
+  .ledger-item::before {
+    counter-increment: q;
+    content: "Q" counter(q);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: 4px;
+    padding: 1px 6px;
+    height: fit-content;
+    margin-top: 3px;
+    flex-shrink: 0;
+  }
+  .ledger-item b { color: var(--ink); }
+  .ledger-item span { color: var(--ink-soft); }
+
+  footer {
+    border-top: 1px solid var(--line-strong);
+    margin-top: 64px;
+    padding-top: 20px;
+    color: var(--ink-faint);
+    font-size: 12.5px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ============ HERO ============ -->
+  <header class="hero">
+    <div class="eyebrow">Gum-Workflows · 平台核心设计 · plans/</div>
+    <h1>组件定义体系与迭代执行引擎</h1>
+    <p class="hero-sub">从「无环 DAG、跑完即止」的 MVP，转向一个有环迭代、人工在环、持续收敛的工作流运行时：人给需求，节点凭新输入反复运行，审批拒绝带意见重做，用户手动结束。</p>
+    <div class="hero-meta">
+      <span class="pill">决策 <b>Q1–Q41</b> 全部确认</span>
+      <span class="pill">吸收取代 <b>run-history 设计稿</b></span>
+      <span class="pill">里程碑 <b>P1–P8</b></span>
+      <span class="pill">术语权威 <b>CONTEXT.md</b></span>
+    </div>
+  </header>
+
+  <!-- ============ 1. 组件栈 ============ -->
+  <section>
+    <div class="sec-head"><span class="sec-num">§2–3</span><h2>四层定义体系：YAML 按名，落库按 UUID</h2></div>
+    <p class="sec-lede">Workflow 与 Node 解耦被强化为分层引用链。Go 中无继承，组件间全部是组合与引用；YAML 文件不含 id，UUID 只在持久化层出现。</p>
+
+    <div class="card" style="padding: 26px;">
+      <div class="stack">
+        <div class="stack-box">
+          <span class="role">Node Type Definition</span>
+          <span class="chip chip-agent">agent</span>
+          <span class="chip chip-automation">automation</span>
+          <span class="chip chip-human">human</span>
+          <span class="hint">执行主体分类层 · 全局恰 3 个 · 种子数据 · nodeTypeDefinition/v1</span>
+        </div>
+        <div class="stack-link">type: &lt;name&gt;</div>
+        <div class="stack-box">
+          <span class="role">Node Definition</span>
+          <span class="chip chip-neutral">requirement-analysis · coding-agent · …</span>
+          <span class="hint">平台认识的节点本体 · inputs/outputs 契约的唯一声明处（YAML）· nodeDefinition/v1</span>
+        </div>
+        <div class="stack-link"><em>node: &lt;name&gt; ＋ version</em></div>
+        <div class="stack-box">
+          <span class="role">Node Executor Definition</span>
+          <span class="chip chip-neutral">v1 · v2 · v3</span>
+          <span class="hint">某定义的一个可执行版本：一份内嵌 YAML + 一个编译进二进制的 Go 实现 · nodeExecutor/v1</span>
+        </div>
+        <div class="stack-link">汇总</div>
+        <div class="stack-box">
+          <span class="role">Node Instance</span>
+          <span class="chip chip-neutral">workflow.yaml 内 · map[node-id]</span>
+          <span class="hint">node / executor / llm / target_model / inputs / dependsOn / config / metadata · nodeInstance/v1</span>
+        </div>
+        <div class="stack-link">llm: &lt;provider&gt;</div>
+        <div class="stack-box">
+          <span class="role">用户级 llm.yaml</span>
+          <span class="chip chip-agent">providers -> models</span>
+          <span class="hint">~/.config/gum-workflows/llm.yaml · 跨 Workflow 复用 · 纯运行时配置，不落项目库 · llm/v1</span>
+        </div>
+      </div>
+    </div>
+
+    <h3>内置六节点重分类</h3>
+    <div class="table-wrap">
+      <table>
+        <tr><th>Definition</th><th>类别</th><th>inputs</th><th>outputs</th></tr>
+        <tr><td><code>human-input</code></td><td><span class="chip chip-human">human</span></td><td>-（唯一入口，源节点）</td><td><code>requirement: markdown</code></td></tr>
+        <tr><td><code>requirement-analysis</code></td><td><span class="chip chip-agent">agent</span></td><td><code>requirement: markdown</code></td><td><code>rationality: int</code> · <code>analysis-output: markdown</code></td></tr>
+        <tr><td><code>architecture-design</code></td><td><span class="chip chip-agent">agent</span></td><td><code>analysis-output: markdown</code></td><td><code>architecture: ArchitectureSpec</code></td></tr>
+        <tr><td><code>coding-agent</code></td><td><span class="chip chip-agent">agent</span></td><td>全 optional：analysis-output / architecture / openapi / frontend-sdk / <b>advise</b></td><td><code>source-code: SourceCode</code> · <code>openapi: OpenAPI</code></td></tr>
+        <tr><td><code>openapi-generator</code></td><td><span class="chip chip-automation">automation</span></td><td><code>openapi: OpenAPI</code></td><td><code>frontend-sdk: FrontendSDK</code></td></tr>
+        <tr><td><code>human-approval</code></td><td><span class="chip chip-human">human</span></td><td>-（dependsOn 必须非空）</td><td><code>approve: bool</code> · <code>advise: markdown</code></td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 2. 端口类型语言 ============ -->
+  <section>
+    <div class="sec-head"><span class="sec-num">§4</span><h2>TypeExpr：端口类型语言</h2></div>
+    <p class="sec-lede">契约端口的类型表达式：原子类型、语义 Kind、union、list 自由组合；匹配规则是「消费者类型集合 ⊇ 生产者」，无隐式子类型。</p>
+    <pre><span class="c"># 语法</span>
+typeExpr := union | single
+union    := single ("|" single)+        <span class="c"># 任一成员命中即通过</span>
+single   := atomic | kind | list
+list     := "[" typeExpr "]"            <span class="c"># 多值端口</span>
+atomic   := string | int | bool | float | markdown
+          | file | file:ext             <span class="c"># file 本期语言预留</span>
+
+<span class="c"># 示例</span>
+requirements: <span class="s">"string|file:jpg|file:png|file:pdf"</span>   <span class="c"># union</span>
+test-reports: <span class="s">"[markdown]"</span>                       <span class="c"># list</span>
+architecture: <span class="k">ArchitectureSpec</span>                        <span class="c"># 语义 Kind</span></pre>
+    <p class="small muted">CUE 校验语法形态（受限 pattern），Go 语义校验器做兼容判断，替换现有 Kind 精确相等检查；顺手修复 OptionalInputs 漏检。</p>
+  </section>
+
+  <!-- ============ 3. 迭代引擎 ============ -->
+  <section>
+    <div class="sec-head"><span class="sec-num">§5–6</span><h2>迭代引擎：废除无环，新输入即重跑</h2></div>
+    <p class="sec-lede">节点唯一的调度关注点是 Ready：输入收集完毕即运行。上游产出新版本，下游标 dirty 重新入队；级联重跑是模型的既定代价，机器自驱死循环由收敛保护兜底。</p>
+
+    <pre>Ready(Node)      = 所有数据输入有「已完成轮的产出」 <span class="k">AND</span> control 前驱完成过至少一轮
+重新 Ready(Node) = 任一数据输入出现「未消费的新完成版本」(dirty)
+                   <span class="k">OR</span> 任一 control 前驱出现新的完成轮（审批节点限「通过轮」）
+
+输入取值         = 生产者<span class="hl">最新已完成轮</span>的输出（from 寻址「当前有效输出」）
+轮次合并         = 多个输入版本变化合并为一轮；运行中上游再出新版不打断当前轮
+节点单并发       = 同一节点至多一个 Node Run 在跑，重跑请求以 dirty 排队</pre>
+
+    <h3>可重入状态机</h3>
+    <pre class="flow">节点级：  Pending -> <span class="hl">Ready</span> -> <span class="hl">Running</span> -> Succeeded<span class="c">（本轮完成，可重入：新输入 -> Ready）</span>
+                        ↓                        ↘ WaitingHuman<span class="c">（human 节点等输入/决策）-> Running</span>
+                                                 ↘ Failed<span class="c">（结构性->运行终止；交互性->运行保持）</span>
+
+运行级：  <span class="hl">Running</span><span class="c">（常态；全图静止也保持 Running，等待下一轮用户输入）</span>
+            -> <span class="warn">Stopped</span><span class="c">（Ctrl-C / SIGTERM，stopped_reason=user_interrupt）</span>
+            -> Failed<span class="c">（结构性错误 fail-fast；收敛保护触发）</span></pre>
+
+    <h3>approve 门控：拒绝催更，通过不催更</h3>
+    <div class="table-wrap gate-table">
+      <table>
+        <tr><th></th><th>拒绝轮 approve=false</th><th>通过轮 approve=true</th></tr>
+        <tr><td>advise / approve 输出版本</td><td>正常更新</td><td>正常更新</td></tr>
+        <tr><td>数据下游（已消费旧版）</td><td class="gate-no">dirty -> 重跑</td><td class="gate-yes">不 dirty、不重跑</td></tr>
+        <tr><td>数据下游（从未运行）</td><td>正常供给</td><td>正常供给</td></tr>
+        <tr><td>control 下游</td><td>不解禁</td><td>解禁（重新 Ready）</td></tr>
+      </table>
+    </div>
+    <p class="small muted" style="margin-top:10px;">审批循环零新语法：<code>backend.inputs.advise: {from: review.advise}</code> ＋ <code>review.dependsOn: [backend]</code>。拒绝 -> advise 新版本 -> backend 重跑 -> review 再审；通过 -> 全图静止收敛。</p>
+
+    <h3>错误二分法与恢复</h3>
+    <div class="grid-2">
+      <div class="card err-card err-structural">
+        <h4>结构性 Structural</h4>
+        <ul>
+          <li><b>例：</b>automation 跑不起来、LLM 网络不可达、stdin 关闭</li>
+          <li><b>本质：</b>工作流底层坏了，人工在运行内修不了</li>
+          <li><b>运行：</b><b style="color:var(--danger)">Failed，进程退出</b>（fail-fast）</li>
+          <li><b>恢复：</b>修环境/配置后重新 run</li>
+        </ul>
+      </div>
+      <div class="card err-card err-interaction">
+        <h4>交互性 Interaction</h4>
+        <ul>
+          <li><b>例：</b>agent 预期 JSON 返回非 JSON、产出不合格</li>
+          <li><b>本质：</b>AI 交互质量问题，人类 advise 可救</li>
+          <li><b>运行：</b>节点 Failed，<b style="color:var(--accent)">运行保持 Running</b></li>
+          <li><b>恢复：</b>advise 重试（需节点声明 advise 输入）或新一轮需求级联复活</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>收敛保护：只拦机器自驱</h3>
+    <p>每节点计数「自上一次人类事件（新一轮需求 / 审批决策 / advise 重试）以来的连续机器触发重跑」；超过阈值（默认 10，Engine Option，不进 YAML）-> 节点 Failed，运行 Failed。人类事件清零全部计数--<b>人工驾驶的长会话永不被误伤</b>。静态可判的纯配置环在校验阶段降为 warning。</p>
+
+    <h3>Node Run 与版本语义</h3>
+    <p>每次执行 = Node Run（UUID + round）。<code>inputs.from</code> 总取最新已完成轮；某轮具体输出经 node run id / round 寻址（仅历史查询）。同一输出多版本 artifact 共存不删；Workspace 一次 run 内复用，多轮重做累积（增量修码是特性，上轮痕迹是审查依据）。</p>
+  </section>
+
+  <!-- ============ 4. 一次审批循环 ============ -->
+  <section>
+    <div class="sec-head"><span class="sec-num">§7</span><h2>人工在环：一次会话的形态</h2></div>
+    <p class="sec-lede">human 节点前台阻塞于终端（非 TTY 启动即报错）；运行像 Claude Code 一样活着--空闲不退出，等待下一轮输入，Ctrl-C 才记 Stopped。</p>
+    <div class="card">
+      <div class="timeline">
+        <div class="tl-item tl-human">
+          <div class="tl-title"><span class="chip chip-human">human-input</span> 需求第 1 轮</div>
+          <div class="tl-body">用户在终端输入需求，空行结束本轮 -> requirement v1 -> 全链级联推进</div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-title"><span class="chip chip-agent">agent</span> analysis -> architecture -> backend</div>
+          <div class="tl-body">各节点首跑：分析、架构、编码（executor 取 run 启动时固定的最新版）</div>
+        </div>
+        <div class="tl-item tl-human">
+          <div class="tl-title"><span class="chip chip-human">human-approval</span> review 等待审批</div>
+          <div class="tl-body">打印已产出 artifacts 摘要 -> <code>r 请把登录页信息密度降低</code> -> 拒绝，advise v1</div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-title"><span class="chip chip-agent">agent</span> backend / frontend 带 advise 重跑</div>
+          <div class="tl-body">advise 新版本 -> dirty -> 重跑（同一 Workspace，task.md 追加轮次痕迹）-> review 重新 Ready</div>
+        </div>
+        <div class="tl-item tl-human">
+          <div class="tl-title"><span class="chip chip-human">human-approval</span> 通过</div>
+          <div class="tl-body">回车默认 Approve -> 通过轮不催更下游 -> 全图静止，运行保持 Running</div>
+        </div>
+        <div class="tl-item tl-human">
+          <div class="tl-title">下一轮需求 或 Ctrl-C</div>
+          <div class="tl-body">入口节点继续等待；用户结束 -> <b>Stopped</b>（stopped_reason=user_interrupt），各轮次 advise 全程可查</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 5. 持久化 ============ -->
+  <section>
+    <div class="sec-head"><span class="sec-num">§8</span><h2>持久化：一个 SQLite，两种身份</h2></div>
+    <p class="sec-lede">项目本地 <code>.workflow/gum-workflows.db</code> 同时承载定义侧（随 run 隐式导入）与运行历史索引；文件系统仍是运行数据主体，DB 存引用不存本体，删库可重建。</p>
+    <div class="grid-2">
+      <div class="card">
+        <h3 style="margin-top:0;">定义侧五表</h3>
+        <div class="ledger">
+          <div class="ledger-item"><b>node_type_definition</b><span>agent / automation / human 种子三行</span></div>
+          <div class="ledger-item"><b>node_definition</b><span>契约 JSON（inputs/outputs TypeExpr）</span></div>
+          <div class="ledger-item"><b>node_executor</b><span>UNIQUE(definition, version)</span></div>
+          <div class="ledger-item"><b>workflow</b><span>自然键 (name, version)，重导入覆盖</span></div>
+          <div class="ledger-item"><b>node_instance</b><span>解析后固定 executor id + llm 名字</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0;">运行侧两表（node-run 粒度）</h3>
+        <div class="ledger">
+          <div class="ledger-item"><b>workflow_run_history</b><span>status: Running|Stopped|Failed + stopped_reason</span></div>
+          <div class="ledger-item"><b>workflow_node_run_history</b><span>UNIQUE(run_id, node_id, round)，一轮一行</span></div>
+          <div class="ledger-item"><b>llm.yaml 不落库</b><span>用户配置与项目数据分属两个所有者；只记解析后的名字</span></div>
+          <div class="ledger-item"><b>apikey 不落库</b><span>llm.yaml 写 $VAR 引用，加载时从环境变量解析</span></div>
+          <div class="ledger-item"><b>validate 零副作用</b><span>同样做解析检查，但不建库不写库；run 是唯一写入口</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 6. 里程碑 ============ -->
+  <section>
+    <div class="sec-head"><span class="sec-num">§13</span><h2>里程碑 P1–P8</h2></div>
+    <div class="table-wrap">
+      <table>
+        <tr><th></th><th>里程碑</th><th>内容</th><th>验收</th></tr>
+        <tr><td><b>P1</b></td><td>定义层</td><td>internal/definition + TypeExpr + 内嵌种子 + Go/YAML 一致性检查</td><td>种子导入可枚举</td></tr>
+        <tr><td><b>P2</b></td><td>LLM 配置</td><td>internal/llm 类型 + resolver + 环境变量引用</td><td>默认链四象限单测</td></tr>
+        <tr><td><b>P3</b></td><td>Workflow 新 Schema</td><td>Node Instance 形态 + 校验 11 项 + 环降提示</td><td>validate fixture 全覆盖</td></tr>
+        <tr><td><b>P4</b></td><td>SQLite</td><td>internal/history DDL/迁移/导入 + run 接线</td><td>sqlite3 可查五表</td></tr>
+        <tr><td><b>P5</b></td><td>迭代引擎</td><td>触发规则/状态机/单并发/版本化 artifact/approve 门控/收敛保护</td><td>审批循环收敛、机器环被掐断</td></tr>
+        <tr><td><b>P6</b></td><td>human 在环</td><td>HumanGateway + stdin + 错误二分法 + advise retry</td><td>fake gateway 单测</td></tr>
+        <tr><td><b>P7</b></td><td>历史与 CLI</td><td>node-run 级历史 + history 三级查询 + Stopped</td><td>审批循环全程可查</td></tr>
+        <tr><td><b>P8</b></td><td>examples 重写</td><td>新 fullstack demo（human 入口 + 审批循环）+ e2e + 文档同步</td><td>e2e 全绿</td></tr>
+      </table>
+    </div>
+    <p class="small muted" style="margin-top:10px;">顺序纪律：P(n) 未验收不开 P(n+1)。P1–P4 期间现有 examples 冻结（最小改名迁移保绿），P8 整体重写。</p>
+  </section>
+
+  <!-- ============ 7. 决策索引 ============ -->
+  <section>
+    <div class="sec-head"><span class="sec-num">附录 B</span><h2>决策索引：五轮讨论，41 个问题</h2></div>
+    <p class="sec-lede">每条设计都可追溯到一次明确确认，未读原文的人也能知道「为什么是这样」。</p>
+    <div class="card">
+      <div class="ledger">
+        <div class="ledger-item"><b>词汇</b><span>NodeType=类别层，具体节点是 NodeDefinition；旧「node type」语义退役</span></div>
+        <div class="ledger-item"><b>requires / dependsOn</b><span>「我需要什么」与「我等谁执行完」分离，同词三义拆除</span></div>
+        <div class="ledger-item"><b>kind 信封</b><span>kind/apiVersion 是 YAML 组件鉴别位，与数据类型无关</span></div>
+        <div class="ledger-item"><b>executor</b><span>YAML 按 name 引用，落库 UUID；缺省=run 启动时最新版并固定（非持续 latest）</span></div>
+        <div class="ledger-item"><b>llm</b><span>providers->models 嵌套，用户级文件，不落库；缺省走默认链（默认 provider->默认 model）</span></div>
+        <div class="ledger-item"><b>project</b><span>名称+地址，无 branch；相对/绝对均可；本期恰好 1 个</span></div>
+        <div class="ledger-item"><b>有环合法</b><span>节点只看输入收集完毕；环从校验错误降为提示，收敛保护兜底</span></div>
+        <div class="ledger-item"><b>单并发</b><span>同一节点同时至多一个 Node Run，新输入排队</span></div>
+        <div class="ledger-item"><b>approve 门控</b><span>拒绝催更下游、通过不催更</span></div>
+        <div class="ledger-item"><b>单一入口</b><span>恰好一个源节点且必须是 human-input--work 必须来自人</span></div>
+        <div class="ledger-item"><b>无终态</b><span>静止保持 Running 等输入（如 Claude Code 空闲不退出）；Ctrl-C 记 Stopped</span></div>
+        <div class="ledger-item"><b>收敛保护</b><span>只拦机器自驱连续重跑（阈值 10），人类事件清零</span></div>
+        <div class="ledger-item"><b>错误二分法</b><span>结构性 fail-fast；交互性节点败、运行活，advise 重试复活</span></div>
+        <div class="ledger-item"><b>统一库</b><span>项目本地单库，定义+历史；examples 冻结后按新架构重写</span></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>plans/平台核心设计：组件定义体系与迭代执行引擎.md · 完整版含 Go struct / DDL / CUE / 校验清单</span>
+    <span>任何打破本设计的变更，先讨论、改文档、再动码</span>
+  </footer>
+
+</div>
+</body>
+</html>
