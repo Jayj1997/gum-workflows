@@ -2,16 +2,6 @@ package definition
 
 import "testing"
 
-// parse 是兼容矩阵用例的简写：表达式非法即测试失败。
-func parse(t *testing.T, expr string) TypeExpr {
-	t.Helper()
-	got, err := ParseTypeExpr(expr)
-	if err != nil {
-		t.Fatalf("ParseTypeExpr(%q): %v", expr, err)
-	}
-	return got
-}
-
 // TestCompatibleMatrix 覆盖设计文档 §4 匹配规则的兼容矩阵：
 // consumer ⊇ producer（生产者的每个可能取值都落在消费者集合内）。
 // 期望值是独立推导的规范结果，不重算实现逻辑。
@@ -79,8 +69,8 @@ func TestCompatibleMatrix(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			consumer := parse(t, tt.consumer)
-			producer := parse(t, tt.producer)
+			consumer := mustParse(t, tt.consumer)
+			producer := mustParse(t, tt.producer)
 			if got := Compatible(consumer, producer); got != tt.want {
 				t.Errorf("Compatible(consumer=%s, producer=%s) = %v, want %v",
 					tt.consumer, tt.producer, got, tt.want)
@@ -89,11 +79,11 @@ func TestCompatibleMatrix(t *testing.T) {
 	}
 }
 
-// TestCompatibleCommutativeDocuments 语义方向性文档化：
+// TestCompatibleDirection 语义方向性文档化：
 // 兼容判断不对称，方向错用必须给出不同结果（consumer ⊇ producer）。
 func TestCompatibleDirection(t *testing.T) {
-	wide := parse(t, "string|int")
-	narrow := parse(t, "string")
+	wide := mustParse(t, "string|int")
+	narrow := mustParse(t, "string")
 
 	if !Compatible(wide, narrow) {
 		t.Error("Compatible(string|int, string) = false, want true (wide consumer accepts narrow producer)")

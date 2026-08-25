@@ -87,9 +87,11 @@ func TestParseTypeExprForms(t *testing.T) {
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ParseTypeExpr(%q) = %#v, want %#v", tt.expr, got, tt.want)
 			}
-			// 规范化文本往返：解析成功结果再解析应得到等价表达式。
-			if round := mustParse(t, tt.expr).String(); round != tt.expr {
-				t.Errorf("String() = %q, want %q", round, tt.expr)
+			// 规范化文本可再解析：String() 的输出必须是合法表达式，
+			// 且二次解析结果与一次解析等价（往返不变）。
+			round := mustParse(t, got.String())
+			if !reflect.DeepEqual(round, got) {
+				t.Errorf("ParseTypeExpr(String()) = %#v, want %#v", round, got)
 			}
 		})
 	}
@@ -103,12 +105,15 @@ func TestParseTypeExprErrors(t *testing.T) {
 	}{
 		{name: "empty", expr: "", wantErr: "position 0"},
 		{name: "blank", expr: "   ", wantErr: "position 3"},
-		// foo 是未知标识符（position 0 报出）；其后的悬空 | 由
-		// "string|" 形态单独覆盖。
+		// 工单示例 foo|：未知标识符先于悬空 | 报出（position 0 定位）；
+		// 悬空成员的定位由 "string|" 形态单独覆盖。
 		{name: "unknown identifier", expr: "foo", wantErr: "position 0-3"},
 		{name: "missing union member", expr: "string|", wantErr: "position 7"},
 		{name: "leading union bar", expr: "|string", wantErr: "position 0"},
-		{name: "unclosed list", expr: "[unclosed", wantErr: "position 1-9"},
+		// 工单示例 [unclosed：unclosed 是未知标识符（先报出）；
+		// 缺右括号的诊断由合法成员的 "[markdown" 形态覆盖。
+		{name: "unknown identifier unclosed list", expr: "[unclosed", wantErr: "position 1-9"},
+		{name: "unclosed list valid member", expr: "[markdown", wantErr: `expected "]" to close list`},
 		{name: "unclosed nested list", expr: "[[string]", wantErr: "position 9"},
 		{name: "close without open", expr: "string]", wantErr: "position 6"},
 		{name: "double bar", expr: "string||int", wantErr: "position 7"},
@@ -119,6 +124,8 @@ func TestParseTypeExprErrors(t *testing.T) {
 		{name: "file with uppercase ext", expr: "file:JPG", wantErr: "position 5"},
 		{name: "file with dot ext", expr: "file:a.b", wantErr: "position 6"},
 		{name: "kind not uppercase", expr: "sourceCode", wantErr: "position 0"},
+		// 连字符不在 Kind 字符集内：Source 解析成功后 -Code 成为尾随输入。
+		{name: "kind with hyphen", expr: "Source-Code", wantErr: "position 6: unexpected trailing input"},
 		{name: "trailing junk after atom", expr: "string junk", wantErr: "position 7"},
 		{name: "list unclosed after union", expr: "[string|int", wantErr: "position 11"},
 	}

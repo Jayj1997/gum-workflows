@@ -8,35 +8,36 @@ package definition
 
 import "strings"
 
-// 原子类型的合法名（设计文档 §4）。
-// file 特殊：可带 :ext 后缀（[a-z0-9]+），其余四者恒裸名。
-const (
-	AtomicString   = "string"
-	AtomicInt      = "int"
-	AtomicBool     = "bool"
-	AtomicFloat    = "float"
-	AtomicMarkdown = "markdown"
-	AtomicFile     = "file"
-)
-
 // TypeExpr 是端口类型表达式（设计文档 §4）的内存形态。
 //
-// 五种具体形态：
+// 四种具体形态：
 //   - Atomic（string/int/bool/float/markdown 及 file/file:ext）
-//   - KindRef（已注册 Artifact Kind，大写开头）
+//   - KindRef（语义 Artifact Kind，大写开头）
 //   - List（[T]，多值端口，成员递归）
 //   - Union（A|B|C，≥2 成员）
 //
-// 空值 nil 不合法，ParseTypeExpr 的成功结果恒为非 nil。
+// ParseTypeExpr 的成功结果恒为非 nil。
 type TypeExpr interface {
-	// String 返回规范化的表达式文本（往返解析不变）。
+	// String 返回规范化文本（无空白、成员按声明序），可再解析为等价表达式。
 	String() string
 }
 
-// Atomic 是原子类型。Name 为 string/int/bool/float 之一时 Ext 恒空；
-// Name 为 file 时 Ext 为文件扩展名（jpg、pdf…），空表示裸 file。
+// AtomicName 是原子类型名的类型化枚举（DEVELOPMENT.md §4.3）。
+type AtomicName string
+
+// 原子类型名。file 特殊：可带 :ext 后缀（ext := [a-z0-9]+），其余恒裸名。
+const (
+	AtomicString   AtomicName = "string"
+	AtomicInt      AtomicName = "int"
+	AtomicBool     AtomicName = "bool"
+	AtomicFloat    AtomicName = "float"
+	AtomicMarkdown AtomicName = "markdown"
+	AtomicFile     AtomicName = "file"
+)
+
+// Atomic 是原子类型。Name 为 file 时 Ext 为文件扩展名（jpg、pdf…），空表示裸 file。
 type Atomic struct {
-	Name string
+	Name AtomicName
 	Ext  string
 }
 
@@ -60,9 +61,9 @@ type Union struct {
 // String 实现TypeExpr，返回规范化文本。
 func (a Atomic) String() string {
 	if a.Name == AtomicFile && a.Ext != "" {
-		return a.Name + ":" + a.Ext
+		return string(a.Name) + ":" + a.Ext
 	}
-	return a.Name
+	return string(a.Name)
 }
 
 // String 实现TypeExpr，返回 Kind 名。

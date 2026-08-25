@@ -9,11 +9,11 @@ import "fmt"
 //	single   := atomic | kind | list
 //	list     := "[" typeExpr "]"
 //	atomic   := string|int|bool|float|markdown|file|file:ext
-//	kind     := 已注册 Artifact Kind（大写开头标识符）
+//	kind     := 语义 Artifact Kind（大写开头的驼峰标识符）
 //
-// 语义 Kind 的「已注册」检查不在本函数：解析层只识别「大写开头标识符」
-// 形态，注册表校验由定义层校验（checkKindRefs）与语义校验器消费
-// Kinds() 完成——解析与校验分离，使本函数零依赖、可独立测试。
+// 「已注册 Kind」检查不在本函数：解析层只识别标识符形态，注册表校验
+// 属语义层（设计文档 §10 检查 #3），经 Kinds() 取引用名完成--解析与
+// 校验分离，使本函数零依赖。
 //
 // 错误信息携带表达式内偏移（position N），便于上游定位到具体端口。
 func ParseTypeExpr(expr string) (TypeExpr, error) {
@@ -83,9 +83,10 @@ func (p *parser) parseSingle() (TypeExpr, error) {
 }
 
 // parseAtomOrKind 解析一个标识符形态的成员：原子类型、file:ext 或 Kind 引用。
+// 标识符字符集与 Kind 一致（字母/数字）；原子类型名不含连字符。
 func (p *parser) parseAtomOrKind() (TypeExpr, error) {
 	start := p.pos
-	for p.pos < len(p.src) && isIdentChar(p.src[p.pos]) {
+	for p.pos < len(p.src) && isKindChar(p.src[p.pos]) {
 		p.pos++
 	}
 	name := p.src[start:p.pos]
@@ -94,7 +95,7 @@ func (p *parser) parseAtomOrKind() (TypeExpr, error) {
 	}
 
 	// file 特判：允许可选 :ext 后缀（ext := [a-z0-9]+）。
-	if name == AtomicFile {
+	if name == string(AtomicFile) {
 		if p.pos < len(p.src) && p.src[p.pos] == ':' {
 			p.pos++ // 消费 ':'
 			extStart := p.pos
@@ -116,7 +117,7 @@ func (p *parser) parseAtomOrKind() (TypeExpr, error) {
 	}
 
 	if isAtomic(name) {
-		return Atomic{Name: name}, nil
+		return Atomic{Name: AtomicName(name)}, nil
 	}
 
 	// 非原子：大写开头即 Kind 引用，否则非法。
@@ -153,14 +154,14 @@ func (p *parser) peek() string {
 	return string(p.src[p.pos])
 }
 
-// errorf 生成携带位置的错误。
+// errorf 生成携带表达式内位置的错误（§4.2 定位要求在表达式粒度）。
 func (p *parser) errorf(format string, args ...any) error {
 	return fmt.Errorf("type expression %q: position %d: %s", p.src, p.pos, fmt.Sprintf(format, args...))
 }
 
 // isAtomic 报告 name 是否为原子类型名（file 已在前置分支处理）。
 func isAtomic(name string) bool {
-	switch name {
+	switch AtomicName(name) {
 	case AtomicString, AtomicInt, AtomicBool, AtomicFloat, AtomicMarkdown:
 		return true
 	}
@@ -168,23 +169,26 @@ func isAtomic(name string) bool {
 }
 
 // isKindIdent 报告 name 是否为合法 Kind 标识符：大写字母开头，
-// 后续为字母/数字（与 artifact.Kind 命名一致，如 SourceCode）。
+// 后续为字母/数字（与 artifact.Kind 的驼峰命名一致，如 SourceCode；
+// 连字符不合法，避免 "Source-Code" 这类拼写被静默接受）。
 func isKindIdent(name string) bool {
 	if name == "" || name[0] < 'A' || name[0] > 'Z' {
 		return false
 	}
 	for i := 1; i < len(name); i++ {
-		if !isIdentChar(name[i]) {
+		if !isKindChar(name[i]) {
 			return false
 		}
 	}
 	return true
 }
 
-func isIdentChar(c byte) bool {
-	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-'
+// isKindChar 是 Kind 标识符的合法字符（字母/数字，不含连字符）。
+func isKindChar(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
+// isExtChar 是 file 扩展名的合法字符（[a-z0-9]）。
 func isExtChar(c byte) bool {
 	return c >= 'a' && c <= 'z' || c >= '0' && c <= '9'
 }
