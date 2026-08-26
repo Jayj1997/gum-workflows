@@ -78,7 +78,7 @@ func TestValidateSchemaRejectsStructuralErrors(t *testing.T) {
 		},
 		{
 			name:    "wrong kind",
-			yaml:    "apiVersion: workflow/v1\nkind: Workflow\nmetadata:\n  name: x\nprojects:\n  - name: p\n    repository: ./p\nnodes:\n  a:\n    node: t\n",
+			yaml:    "apiVersion: workflow/v1\nkind: Job\nmetadata:\n  name: x\nprojects:\n  - name: p\n    repository: ./p\nnodes:\n  a:\n    node: t\n",
 			wantErr: "kind",
 		},
 		{

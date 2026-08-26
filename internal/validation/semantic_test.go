@@ -137,7 +137,7 @@ func validateFixture(t *testing.T, path string) error {
 }
 
 func TestSemanticValidFullstack(t *testing.T) {
-	err := validateFixture(t, filepath.Join("testdata", "valid", "fullstack.yaml"))
+	err := validateFixture(t, filepath.Join("testdata", "valid", "minimal.yaml"))
 	if err != nil {
 		t.Fatalf("Validate() unexpected error:\n%v", err)
 	}

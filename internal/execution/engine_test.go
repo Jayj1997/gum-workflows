@@ -133,9 +133,9 @@ func (r *recorder) inputCount(nth int) int {
 	return r.events[nth].inputs
 }
 
-// fullstackDef 是最小 human-free 链（纯数据依赖，无 dependsOn）：
+// chainDef 是最小 human-free 链（纯数据依赖，无 dependsOn）：
 // coding-agent 全 optional 输入当源节点 -> openapi-generator。
-func fullstackDef() workflow.Definition {
+func chainDef() workflow.Definition {
 	return workflow.Definition{
 		APIVersion: workflow.APIVersionV1,
 		Kind:       workflow.KindWorkflow,
@@ -151,9 +151,9 @@ func fullstackDef() workflow.Definition {
 	}
 }
 
-// fullstackContracts 是最小 human-free 链的端口契约（与种子
+// chainContracts 是最小 human-free 链的端口契约（与种子
 // Node Definition YAML 同构；此处内联声明使测试不依赖内置节点集）。
-func fullstackContracts() map[string]mockFactory {
+func chainContracts() map[string]mockFactory {
 	return map[string]mockFactory{
 		"coding-agent": {
 			inputs: map[string]definition.InputPort{
@@ -174,15 +174,15 @@ func fullstackContracts() map[string]mockFactory {
 	}
 }
 
-// fullstackDefinitionNames 是链路引用的 Node Definition 顺序。
-func fullstackDefinitionNames() []string {
+// chainDefinitionNames 是链路引用的 Node Definition 顺序。
+func chainDefinitionNames() []string {
 	return []string{"coding-agent", "openapi-generator"}
 }
 
-// fullstackFactories 构造 fullstack 场景的全部 ExecutorFactory
+// chainFactories 构造最小链场景的全部 ExecutorFactory
 // （onRun 传入执行记录器；nil 表示不记录）。
-func fullstackFactories(onRun func(nodeType string, inputs map[string]artifact.ArtifactRef)) []node.ExecutorFactory {
-	contracts := fullstackContracts()
+func chainFactories(onRun func(nodeType string, inputs map[string]artifact.ArtifactRef)) []node.ExecutorFactory {
+	contracts := chainContracts()
 	var factories []node.ExecutorFactory
 	for _, def := range []string{"requirement-analysis", "architecture-design", "coding-agent", "openapi-generator"} {
 		f := contracts[def]
@@ -193,14 +193,14 @@ func fullstackFactories(onRun func(nodeType string, inputs map[string]artifact.A
 	return factories
 }
 
-// newFullstackEngine 构造带 fullstack Node 契约的引擎与执行记录器。
-func newFullstackEngine(t *testing.T, mods ...func(nodeType string, f *mockFactory)) (*Engine, *recorder) {
+// newChainEngine 构造带最小链 Node 契约的引擎与执行记录器。
+func newChainEngine(t *testing.T, mods ...func(nodeType string, f *mockFactory)) (*Engine, *recorder) {
 	t.Helper()
 
 	rec := new(recorder)
-	contracts := fullstackContracts()
+	contracts := chainContracts()
 	var factories []node.ExecutorFactory
-	for _, def := range fullstackDefinitionNames() {
+	for _, def := range chainDefinitionNames() {
 		f := contracts[def]
 		f.definition = def
 		for _, mod := range mods {
@@ -219,8 +219,8 @@ func newFullstackEngine(t *testing.T, mods ...func(nodeType string, f *mockFacto
 // 同一个 Workflow 定义可以多次 Run，每次产生独立的 WorkflowExecution
 // （#001、#002、#003...），运行对象互不影响、Artifact 各自独立。
 func TestRunCreatesIndependentExecutions(t *testing.T) {
-	e, _ := newFullstackEngine(t)
-	def := fullstackDef()
+	e, _ := newChainEngine(t)
+	def := chainDef()
 
 	var execs []*WorkflowExecution
 	for i := 0; i < 3; i++ {
@@ -279,8 +279,8 @@ func TestRunCreatesIndependentExecutions(t *testing.T) {
 // 定义侧身份：NodeID 来自 Workflow 组合（"backend 这个节点"），
 // NodeType 是本次运行实际实例化的类型。
 func TestNodeExecutionCarriesDefinitionIdentity(t *testing.T) {
-	e, _ := newFullstackEngine(t)
-	exec, err := e.Run(context.Background(), fullstackDef())
+	e, _ := newChainEngine(t)
+	exec, err := e.Run(context.Background(), chainDef())
 	if err != nil {
 		t.Fatalf("Run() unexpected error: %v", err)
 	}
@@ -300,9 +300,9 @@ func TestNodeExecutionCarriesDefinitionIdentity(t *testing.T) {
 	}
 }
 
-func TestRunFullstack(t *testing.T) {
-	e, rec := newFullstackEngine(t)
-	exec, err := e.Run(context.Background(), fullstackDef())
+func TestRunMinimalChain(t *testing.T) {
+	e, rec := newChainEngine(t)
+	exec, err := e.Run(context.Background(), chainDef())
 	if err != nil {
 		t.Fatalf("Run() unexpected error: %v", err)
 	}
@@ -395,13 +395,13 @@ func TestRunControlDependency(t *testing.T) {
 }
 
 func TestRunNodeFailure(t *testing.T) {
-	e, _ := newFullstackEngine(t, func(nodeType string, f *mockFactory) {
+	e, _ := newChainEngine(t, func(nodeType string, f *mockFactory) {
 		if nodeType == "coding-agent" {
 			f.fail = true
 		}
 	})
 
-	exec, err := e.Run(context.Background(), fullstackDef())
+	exec, err := e.Run(context.Background(), chainDef())
 	if err == nil {
 		t.Fatal("Run() = nil error, want failure")
 	}
@@ -522,12 +522,12 @@ func TestRunUndeclaredOutput(t *testing.T) {
 }
 
 func TestRunContextCanceled(t *testing.T) {
-	e, _ := newFullstackEngine(t)
+	e, _ := newChainEngine(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	exec, err := e.Run(ctx, fullstackDef())
+	exec, err := e.Run(ctx, chainDef())
 	if err == nil {
 		t.Fatal("Run() = nil error, want cancellation")
 	}

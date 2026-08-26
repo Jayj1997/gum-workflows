@@ -301,13 +301,13 @@ func TestParallelSerialFallback(t *testing.T) {
 	}
 }
 
-// TestParallelFullstackSucceeds：并行模式跑完整 fullstack（链路本身无并行度，
+// TestParallelChainSucceeds：并行模式跑完整最小链（链路本身无并行度，
 // 验证并行路径不破坏依赖正确性）。
-func TestParallelFullstackSucceeds(t *testing.T) {
-	dr, er := newTestRegistries(t, fullstackFactories(nil)...)
+func TestParallelChainSucceeds(t *testing.T) {
+	dr, er := newTestRegistries(t, chainFactories(nil)...)
 	e := NewEngine(er, dr, artifact.NewMemStore(), nil, WithParallelism(4))
 
-	exec, err := e.Run(context.Background(), fullstackDef())
+	exec, err := e.Run(context.Background(), chainDef())
 	if err != nil {
 		t.Fatalf("Run() unexpected error: %v", err)
 	}

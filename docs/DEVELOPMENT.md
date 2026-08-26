@@ -193,7 +193,7 @@ const (
 
 ## 5. YAML / CUE 规范
 
-- `workflow/v1` 的字段集合是**封闭**的：`apiVersion`、`kind`、`metadata`、`project`、`nodes.<id>.{type, inputs, dependsOn, config}`。新增字段 = 新版本（workflow/v2 或明确的 v1 扩展提案），需要先改设计文档。
+- `workflow/v1` 的字段集合是**封闭**的（设计文档 §3.5–§3.7）：`apiVersion`、`kind`、`metadata`、`projects`（列表：`name`/`repository`）、`nodes.<id>.{node, executor, llm, target_model, metadata, inputs, dependsOn, config}`。新增字段 = 新版本（workflow/v2 或明确的 v1 扩展提案），需要先改设计文档。
 - CUE Schema（`schema/workflow/v1.cue`）与 Go Struct（`internal/workflow/definition.go`）必须同步修改：改了其中一个而不改另一个的 PR 不予合并。
 - Loader 解析时必须严格模式（yaml.v3 `KnownFields(true)`），未知字段报错——避免 Schema 漂移。
 - examples/ 下的 YAML 是文档的一部分，必须始终可被 `workflow validate` 通过。

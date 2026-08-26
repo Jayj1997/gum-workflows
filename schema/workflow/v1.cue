@@ -22,11 +22,14 @@ nodes: {
 	[string]: {
 		node: string
 
-		executor?: string
-		llm?:      string
+		executor?:     string
+		llm?:          string
 		target_model?: string
 
-		metadata?: {...}
+		metadata?: {
+			name?:        string
+			description?: string
+		}
 
 		inputs?: {[string]: {
 			from: string

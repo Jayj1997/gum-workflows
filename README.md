@@ -182,7 +182,7 @@ schema/workflow       workflow/v1 CUE Schema（embed 进二进制）
 | M8 | Project Runtime（Workspace 正确创建） | ✅ |
 | M9 | OpenAPI Automation | ✅ Mock 实现 |
 | M10 | Coding Agent Adapter | ✅ Mock 实现 |
-| M11 | Demo（§42 全流程跑通，e2e 测试覆盖；fullstack demo 已随新 Schema 退役，当前为 examples/minimal） | ✅ |
+| M11 | Demo（§42 全流程跑通，e2e 测试覆盖；fullstack demo 已随新 Schema 退役，当前为 examples/minimal，完整 demo 待 T14 重写） | ✅ |
 
 ### 下一步（需先升级设计文档）
 

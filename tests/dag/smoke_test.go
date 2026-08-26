@@ -288,7 +288,7 @@ func sortedNodeIDs(def workflow.Definition) []string {
 // 无任何 dependsOn 的最小 human-free 链仅靠数据依赖即可完整执行，
 // 每个 Node 执行时其输入 Artifact 全部就绪、Kind 匹配。
 func TestSmokeChainDataDriven(t *testing.T) {
-	path := filepath.Join("..", "..", "internal", "validation", "testdata", "valid", "fullstack.yaml")
+	path := filepath.Join("..", "..", "internal", "validation", "testdata", "valid", "minimal.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)

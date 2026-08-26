@@ -100,12 +100,12 @@ func TestEnginePersistsWithStateDir(t *testing.T) {
 	root := t.TempDir()
 
 	t.Run("failed run persists", func(t *testing.T) {
-		e, _ := newFullstackEngine(t, func(nodeType string, f *mockFactory) {
+		e, _ := newChainEngine(t, func(nodeType string, f *mockFactory) {
 			if nodeType == "coding-agent" {
 				f.fail = true
 			}
 		})
-		exec, err := e.Run(context.Background(), fullstackDef())
+		exec, err := e.Run(context.Background(), chainDef())
 		if err == nil {
 			t.Fatal("Run() = nil error, want failure")
 		}
@@ -116,9 +116,9 @@ func TestEnginePersistsWithStateDir(t *testing.T) {
 	})
 
 	t.Run("successful run persists", func(t *testing.T) {
-		dr, er := newTestRegistries(t, fullstackFactories(nil)...)
+		dr, er := newTestRegistries(t, chainFactories(nil)...)
 		e := NewEngine(er, dr, artifact.NewMemStore(), nil, WithStateDir(root))
-		exec, err := e.Run(context.Background(), fullstackDef())
+		exec, err := e.Run(context.Background(), chainDef())
 		if err != nil {
 			t.Fatalf("Run() unexpected error: %v", err)
 		}
