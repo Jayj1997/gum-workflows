@@ -1,0 +1,8 @@
+apiVersion: nodeExecutor/v1
+kind: nodeExecutor
+metadata:
+  name: coding-agent-v1
+  description: coding-agent 首个执行器（Mock 实现）。
+node: coding-agent
+version: v1
+updates: 首个版本：Mock 编码 agent，写 .mock-agent/task.md 模拟改码。

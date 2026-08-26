@@ -1,0 +1,18 @@
+apiVersion: nodeDefinition/v1
+kind: nodeDefinition
+metadata:
+  name: requirement-analysis
+  description: 分析用户需求，产出合理度评分与结构化分析结果。
+type: agent
+requires: []
+inputs:
+  requirement:
+    type: markdown
+    description: 用户原始需求。
+outputs:
+  rationality:
+    type: int
+    description: 需求合理度评分。
+  analysis-output:
+    type: markdown
+    description: 结构化需求分析结果。

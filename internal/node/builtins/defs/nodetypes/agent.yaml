@@ -1,0 +1,6 @@
+apiVersion: nodeTypeDefinition/v1
+kind: nodeTypeDefinition
+metadata:
+  name: agent
+  description: 以 AI 执行的节点。执行需要大模型配置（llm.yaml 提供解析）。
+requires: [llm]

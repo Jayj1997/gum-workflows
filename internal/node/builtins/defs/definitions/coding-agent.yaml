@@ -1,0 +1,31 @@
+apiVersion: nodeDefinition/v1
+kind: nodeDefinition
+metadata:
+  name: coding-agent
+  description: 在项目 Workspace 中执行编码任务的 agent。
+type: agent
+requires: [project]
+inputs:
+  analysis-output:
+    type: markdown
+    optional: true
+    description: 需求分析结果。
+  architecture:
+    type: ArchitectureSpec
+    optional: true
+    description: 系统架构设计说明。
+  openapi:
+    type: OpenAPI
+    optional: true
+    description: OpenAPI 接口文档。
+  frontend-sdk:
+    type: FrontendSDK
+    optional: true
+    description: 前端 SDK。
+outputs:
+  source-code:
+    type: SourceCode
+    description: 产出的源码引用。
+  openapi:
+    type: OpenAPI
+    description: 产出的 OpenAPI 接口文档。

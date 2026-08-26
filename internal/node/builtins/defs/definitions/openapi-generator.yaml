@@ -1,0 +1,15 @@
+apiVersion: nodeDefinition/v1
+kind: nodeDefinition
+metadata:
+  name: openapi-generator
+  description: 依据 OpenAPI 文档生成前端 SDK。
+type: automation
+requires: []
+inputs:
+  openapi:
+    type: OpenAPI
+    description: OpenAPI 接口文档。
+outputs:
+  frontend-sdk:
+    type: FrontendSDK
+    description: 生成的前端 SDK。

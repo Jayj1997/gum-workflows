@@ -1,0 +1,8 @@
+apiVersion: nodeExecutor/v1
+kind: nodeExecutor
+metadata:
+  name: openapi-generator-v1
+  description: openapi-generator 首个执行器（Mock 实现）。
+node: openapi-generator
+version: v1
+updates: 首个版本：Mock SDK 生成，以 OpenAPI 数据构造 SDK 文本。

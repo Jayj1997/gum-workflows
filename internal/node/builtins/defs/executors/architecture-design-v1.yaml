@@ -1,0 +1,8 @@
+apiVersion: nodeExecutor/v1
+kind: nodeExecutor
+metadata:
+  name: architecture-design-v1
+  description: architecture-design 首个执行器（Mock 实现）。
+node: architecture-design
+version: v1
+updates: 首个版本：Mock 架构设计，产出固定三层架构说明。

@@ -1,0 +1,6 @@
+apiVersion: nodeTypeDefinition/v1
+kind: nodeTypeDefinition
+metadata:
+  name: automation
+  description: 以自动化脚本执行的节点，无需人类介入与大模型配置。
+requires: []

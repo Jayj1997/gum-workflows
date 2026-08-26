@@ -1,0 +1,6 @@
+apiVersion: nodeTypeDefinition/v1
+kind: nodeTypeDefinition
+metadata:
+  name: human
+  description: 依赖人工输入或审批推进的节点，前台交互承接需求与决策。
+requires: []

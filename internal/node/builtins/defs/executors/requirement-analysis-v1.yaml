@@ -1,0 +1,8 @@
+apiVersion: nodeExecutor/v1
+kind: nodeExecutor
+metadata:
+  name: requirement-analysis-v1
+  description: requirement-analysis 首个执行器（Mock 实现）。
+node: requirement-analysis
+version: v1
+updates: 首个版本：Mock 分析，按固定模板产出合理度评分与分析结果。

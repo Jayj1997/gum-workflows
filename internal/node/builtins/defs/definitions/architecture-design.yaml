@@ -1,0 +1,15 @@
+apiVersion: nodeDefinition/v1
+kind: nodeDefinition
+metadata:
+  name: architecture-design
+  description: 依据需求分析结果设计系统架构。
+type: agent
+requires: []
+inputs:
+  analysis-output:
+    type: markdown
+    description: 需求分析结果。
+outputs:
+  architecture:
+    type: ArchitectureSpec
+    description: 系统架构设计说明。
