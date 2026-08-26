@@ -6,7 +6,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 加载与校验：provider 名唯一、model 名 provider 内唯一、default 各至多一个、type ∈ {openai-compatible, anthropic}、url/apikey/models 必填、temperature 等生成参数挂 model 级（默认 0.2）
 - [x] `$VAR` 解析：环境变量缺失时错误含变量名；明文 apikey 也允许

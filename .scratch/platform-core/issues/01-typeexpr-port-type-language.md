@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 解析器覆盖：五种原子类型、`file:ext`（ext 为 [a-z0-9]+）、已注册 Kind、union（≥2 成员）、list（嵌套含 union 成员）
 - [x] 语法错误信息定位到表达式位置（如 `foo|` 缺成员、`[unclosed`）
