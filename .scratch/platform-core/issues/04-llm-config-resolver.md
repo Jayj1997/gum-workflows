@@ -8,8 +8,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] 加载与校验：provider 名唯一、model 名 provider 内唯一、default 各至多一个、type ∈ {openai-compatible, anthropic}、url/apikey/models 必填、temperature 等生成参数挂 model 级（默认 0.2）
-- [ ] `$VAR` 解析：环境变量缺失时错误含变量名；明文 apikey 也允许
-- [ ] XDG 寻址：两路径按序查找；文件不存在时返回可区分的哨兵错误（无 agent 节点的 workflow 合法地不需要它）
-- [ ] resolver 四象限全覆盖（表驱动）
-- [ ] 单测经临时 XDG_CONFIG_HOME 注入，不触真实 $HOME
+- [x] 加载与校验：provider 名唯一、model 名 provider 内唯一、default 各至多一个、type ∈ {openai-compatible, anthropic}、url/apikey/models 必填、temperature 等生成参数挂 model 级（默认 0.2）
+- [x] `$VAR` 解析：环境变量缺失时错误含变量名；明文 apikey 也允许
+- [x] XDG 寻址：两路径按序查找；文件不存在时返回可区分的哨兵错误（无 agent 节点的 workflow 合法地不需要它）
+- [x] resolver 四象限全覆盖（表驱动）
+- [x] 单测经临时 XDG_CONFIG_HOME 注入，不触真实 $HOME
