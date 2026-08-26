@@ -154,7 +154,7 @@ func TestSemanticInvalidFixtures(t *testing.T) {
 		},
 		{
 			fixture: filepath.Join("testdata", "invalid-output", "unknown-output.yaml"),
-			wantErr: `node "requirement" has no output "nonexistent-output"`,
+			wantErr: `node "analysis" has no output "nonexistent-output"`,
 		},
 		{
 			fixture: filepath.Join("testdata", "invalid-type", "kind-mismatch.yaml"),
@@ -188,15 +188,15 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 		Kind:       workflow.KindWorkflow,
 		Metadata:   workflow.Metadata{Name: "test"},
 		Nodes: map[string]workflow.NodeSpec{
-			"requirement": {Type: "requirement-analysis"},
+			"requirement": {Node: "requirement-analysis"},
 		},
 	}
 
 	t.Run("unknown dependsOn", func(t *testing.T) {
 		def := base
 		def.Nodes = map[string]workflow.NodeSpec{
-			"requirement": {Type: "requirement-analysis"},
-			"deploy":      {Type: "cd", DependsOn: []string{"nonexistent"}},
+			"requirement": {Node: "requirement-analysis"},
+			"deploy":      {Node: "cd", DependsOn: []string{"nonexistent"}},
 		}
 		err := testValidator(t).Validate(def)
 		if err == nil || !strings.Contains(err.Error(), `dependsOn unknown node "nonexistent"`) {
@@ -207,7 +207,7 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 	t.Run("unbound required input", func(t *testing.T) {
 		def := base
 		def.Nodes = map[string]workflow.NodeSpec{
-			"architecture": {Type: "architecture-design"},
+			"architecture": {Node: "architecture-design"},
 		}
 		err := testValidator(t).Validate(def)
 		if err == nil || !strings.Contains(err.Error(), `required input "analysis-output" is not bound`) {
@@ -218,9 +218,9 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 	t.Run("undeclared input name", func(t *testing.T) {
 		def := base
 		def.Nodes = map[string]workflow.NodeSpec{
-			"requirement": {Type: "requirement-analysis"},
+			"requirement": {Node: "requirement-analysis"},
 			"openapi": {
-				Type:   "openapi-generator",
+				Node:   "openapi-generator",
 				Inputs: map[string]workflow.InputBinding{"surprise": {From: "requirement.analysis-output"}},
 			},
 		}
@@ -258,7 +258,7 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 		v := NewSemanticValidator(executors, defs, artifact.NewRegistry())
 
 		def := base
-		def.Nodes = map[string]workflow.NodeSpec{"designer": {Type: "figma-exporter"}}
+		def.Nodes = map[string]workflow.NodeSpec{"designer": {Node: "figma-exporter"}}
 		err := v.Validate(def)
 		if err == nil || !strings.Contains(err.Error(), `unregistered artifact kind "FigmaDesign"`) {
 			t.Fatalf("Validate() error = %v, want unregistered artifact kind", err)
@@ -268,9 +268,9 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 	t.Run("multiple errors are aggregated", func(t *testing.T) {
 		def := base
 		def.Nodes = map[string]workflow.NodeSpec{
-			"requirement": {Type: "nonexistent"},
+			"requirement": {Node: "nonexistent"},
 			"architecture": {
-				Type:   "architecture-design",
+				Node:   "architecture-design",
 				Inputs: map[string]workflow.InputBinding{"requirement": {From: "requirement.requirement"}},
 			},
 		}

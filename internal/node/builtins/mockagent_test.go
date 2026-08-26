@@ -11,9 +11,8 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/project"
 )
 
-// mockAgent 是测试内 Agent：与 agent.MockCodingAgent 行为类似，
-// 但依据输入推断产出（收到 architecture -> 额外产出 openapi），
-// 以满足 fullstack 中 backend 节点的输出契约。
+// mockAgent 是测试内 Agent：与 agent.MockCodingAgent 行为一致，
+// 产出 source-code 与 openapi（满足最小链路的输出契约）。
 type mockAgent struct{}
 
 func newMockAgent() *mockAgent { return &mockAgent{} }
@@ -37,20 +36,12 @@ func (m *mockAgent) Execute(
 		return nil, err
 	}
 
-	out := []artifact.ArtifactRef{
+	openapiFile := filepath.Join(outDir, "openapi.yaml")
+	if err := os.WriteFile(openapiFile, []byte("openapi: 3.1.0\n"), 0o644); err != nil {
+		return nil, err
+	}
+	return []artifact.ArtifactRef{
 		{ID: "source-code", Kind: artifact.KindSourceCode, Version: "1", URI: taskFile},
-	}
-	for _, in := range inputs {
-		if in.Kind == artifact.KindArchitectureSpec {
-			openapiFile := filepath.Join(outDir, "openapi.yaml")
-			if err := os.WriteFile(openapiFile, []byte("openapi: 3.1.0\n"), 0o644); err != nil {
-				return nil, err
-			}
-			out = append(out, artifact.ArtifactRef{
-				ID: "openapi", Kind: artifact.KindOpenAPI, Version: "1", URI: openapiFile,
-			})
-			break
-		}
-	}
-	return out, nil
+		{ID: "openapi", Kind: artifact.KindOpenAPI, Version: "1", URI: openapiFile},
+	}, nil
 }

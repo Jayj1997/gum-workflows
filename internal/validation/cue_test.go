@@ -9,31 +9,59 @@ import (
 
 const validYAML = `
 apiVersion: workflow/v1
-kind: Workflow
+kind: workflow
 
 metadata:
-  name: fullstack-development
+  name: minimal-development
   version: "1.0"
 
-project:
-  repository: ./examples/order-system
-  branch: main
+projects:
+  - name: order-system
+    repository: ./examples/order-system
 
 nodes:
-  requirement:
-    type: requirement-analysis
-  backend:
-    type: coding-agent
+  coder:
+    node: coding-agent
+  sdk:
+    node: openapi-generator
     inputs:
-      requirement:
-        from: requirement.requirement
+      openapi:
+        from: coder.openapi
     dependsOn:
-      - requirement
+      - coder
 `
 
 func TestValidateSchemaAcceptsValid(t *testing.T) {
 	if err := ValidateSchema("test.yaml", []byte(validYAML)); err != nil {
 		t.Fatalf("ValidateSchema() unexpected error: %v", err)
+	}
+}
+
+func TestValidateSchemaAcceptsNodeInstanceOptionalFields(t *testing.T) {
+	// Node Instance 新形态：executor/llm/target_model/metadata 全部可选。
+	yaml := `
+apiVersion: workflow/v1
+kind: workflow
+metadata:
+  name: optional-fields
+projects:
+  - name: demo
+    repository: ./project
+nodes:
+  backend:
+    node: coding-agent
+    executor: v1
+    llm: openai
+    target_model: gpt-4o
+    metadata:
+      name: 后端实现
+      description: 依据需求与架构产出后端源码
+`
+	if err := ValidateSchema("test.yaml", []byte(yaml)); err != nil {
+		t.Fatalf("ValidateSchema() unexpected error: %v", err)
+	}
+	if _, err := workflow.Load([]byte(yaml)); err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
 	}
 }
 
@@ -45,47 +73,62 @@ func TestValidateSchemaRejectsStructuralErrors(t *testing.T) {
 	}{
 		{
 			name:    "wrong apiVersion",
-			yaml:    "apiVersion: workflow/v2\nkind: Workflow\nmetadata:\n  name: x\nproject:\n  repository: ./p\nnodes:\n  a:\n    type: t\n",
+			yaml:    "apiVersion: workflow/v2\nkind: workflow\nmetadata:\n  name: x\nprojects:\n  - name: p\n    repository: ./p\nnodes:\n  a:\n    node: t\n",
 			wantErr: "apiVersion",
 		},
 		{
 			name:    "wrong kind",
-			yaml:    "apiVersion: workflow/v1\nkind: Job\nmetadata:\n  name: x\nproject:\n  repository: ./p\nnodes:\n  a:\n    type: t\n",
+			yaml:    "apiVersion: workflow/v1\nkind: Workflow\nmetadata:\n  name: x\nprojects:\n  - name: p\n    repository: ./p\nnodes:\n  a:\n    node: t\n",
+			wantErr: "kind",
+		},
+		{
+			name:    "uppercase kind rejected",
+			yaml:    "apiVersion: workflow/v1\nkind: Workflow\nmetadata:\n  name: x\nprojects:\n  - name: p\n    repository: ./p\nnodes:\n  a:\n    node: t\n",
 			wantErr: "kind",
 		},
 		{
 			name:    "missing metadata.name",
-			yaml:    "apiVersion: workflow/v1\nkind: Workflow\nproject:\n  repository: ./p\nnodes:\n  a:\n    type: t\n",
+			yaml:    "apiVersion: workflow/v1\nkind: workflow\nprojects:\n  - name: p\n    repository: ./p\nnodes:\n  a:\n    node: t\n",
 			wantErr: "metadata",
 		},
 		{
-			name:    "missing project.repository",
-			yaml:    "apiVersion: workflow/v1\nkind: Workflow\nmetadata:\n  name: x\nproject:\n  branch: main\nnodes:\n  a:\n    type: t\n",
-			wantErr: "project",
+			name:    "project entry missing repository",
+			yaml:    "apiVersion: workflow/v1\nkind: workflow\nmetadata:\n  name: x\nprojects:\n  - name: p\nnodes:\n  a:\n    node: t\n",
+			wantErr: "repository",
 		},
 		{
-			name:    "missing node type",
-			yaml:    "apiVersion: workflow/v1\nkind: Workflow\nmetadata:\n  name: x\nproject:\n  repository: ./p\nnodes:\n  a:\n    inputs:\n      i:\n        from: b.o\n",
-			wantErr: "type",
+			name:    "projects not a list",
+			yaml:    "apiVersion: workflow/v1\nkind: workflow\nmetadata:\n  name: x\nprojects: ./p\nnodes:\n  a:\n    node: t\n",
+			wantErr: "projects",
 		},
 		{
-			name:    "node type wrong type",
-			yaml:    "apiVersion: workflow/v1\nkind: Workflow\nmetadata:\n  name: x\nproject:\n  repository: ./p\nnodes:\n  a:\n    type: 123\n",
-			wantErr: "type",
+			name:    "missing node reference",
+			yaml:    "apiVersion: workflow/v1\nkind: workflow\nmetadata:\n  name: x\nprojects:\n  - name: p\n    repository: ./p\nnodes:\n  a:\n    inputs:\n      i:\n        from: b.o\n",
+			wantErr: "node",
+		},
+		{
+			name:    "node reference wrong type",
+			yaml:    "apiVersion: workflow/v1\nkind: workflow\nmetadata:\n  name: x\nprojects:\n  - name: p\n    repository: ./p\nnodes:\n  a:\n    node: 123\n",
+			wantErr: "node",
 		},
 		{
 			name:    "input from wrong type",
-			yaml:    "apiVersion: workflow/v1\nkind: Workflow\nmetadata:\n  name: x\nproject:\n  repository: ./p\nnodes:\n  a:\n    type: t\n    inputs:\n      i:\n        from: 42\n",
+			yaml:    "apiVersion: workflow/v1\nkind: workflow\nmetadata:\n  name: x\nprojects:\n  - name: p\n    repository: ./p\nnodes:\n  a:\n    node: t\n    inputs:\n      i:\n        from: 42\n",
 			wantErr: "from",
 		},
 		{
 			name:    "dependsOn wrong element type",
-			yaml:    "apiVersion: workflow/v1\nkind: Workflow\nmetadata:\n  name: x\nproject:\n  repository: ./p\nnodes:\n  a:\n    type: t\n    dependsOn:\n      - 42\n",
+			yaml:    "apiVersion: workflow/v1\nkind: workflow\nmetadata:\n  name: x\nprojects:\n  - name: p\n    repository: ./p\nnodes:\n  a:\n    node: t\n    dependsOn:\n      - 42\n",
 			wantErr: "dependsOn",
 		},
 		{
+			name:    "executor wrong type",
+			yaml:    "apiVersion: workflow/v1\nkind: workflow\nmetadata:\n  name: x\nprojects:\n  - name: p\n    repository: ./p\nnodes:\n  a:\n    node: t\n    executor: 3\n",
+			wantErr: "executor",
+		},
+		{
 			name:    "malformed yaml syntax",
-			yaml:    "apiVersion: workflow/v1\n\tkind: Workflow\n",
+			yaml:    "apiVersion: workflow/v1\n\tkind: workflow\n",
 			wantErr: "",
 		},
 	}

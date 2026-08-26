@@ -1,19 +1,20 @@
 apiVersion: workflow/v1
-kind: Workflow
+kind: workflow
 
 metadata:
   name: invalid-output
 
-project:
-  repository: ./examples/order-system
+projects:
+  - name: order-system
+    repository: ./examples/order-system
 
 nodes:
-  requirement:
-    type: requirement-analysis
+  analysis:
+    node: requirement-analysis
 
   architecture:
-    type: architecture-design
+    node: architecture-design
 
     inputs:
       analysis-output:
-        from: requirement.nonexistent-output
+        from: analysis.nonexistent-output

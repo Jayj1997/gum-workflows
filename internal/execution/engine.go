@@ -34,7 +34,7 @@ func WithStateDir(dir string) Option {
 }
 
 // WithProjectContext 注入 Project Runtime 解析好的运行环境（含 Workspace）。
-// 未注入时 Engine 依据 YAML 的 project 段构造最小 Context（无 Workspace）。
+// 未注入时 Engine 依据 YAML 的 projects[0] 构造最小 Context（无 Workspace）。
 func WithProjectContext(ctx project.Context) Option {
 	return func(e *Engine) {
 		c := ctx
@@ -121,7 +121,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 	for _, id := range g.NodeIDs {
 		exec.Nodes[id] = &NodeExecution{
 			NodeID:   id,
-			NodeType: def.Nodes[id].Type,
+			NodeType: def.Nodes[id].Node,
 			Status:   StatusPending,
 		}
 	}
@@ -304,7 +304,7 @@ func (e *Engine) runNodeExecution(
 
 	// 输出契约检查（按 YAML 契约执行，设计文档 §6.9）：
 	// 返回的输出名必须已声明，且产出 Kind 落在声明类型的取值集合内。
-	declared, err := e.declaredOutputs(def.Nodes[id].Type)
+	declared, err := e.declaredOutputs(def.Nodes[id].Node)
 	if err != nil {
 		return fmt.Errorf("node %q: %w", id, err)
 	}
@@ -346,20 +346,22 @@ func (e *Engine) declaredOutputs(definitionName string) (map[string]definition.T
 }
 
 // projectContext 返回本次运行的 ProjectContext：优先使用注入的
-// Project Runtime 产物（含 Workspace），否则依据 YAML 声明构造最小 Context。
+// Project Runtime 产物（含 Workspace），否则依据 YAML 的 projects[0]
+// 构造最小 Context（无 projects 声明的定义在运行期不注入 Project 细节）。
 func (e *Engine) projectContext(def workflow.Definition) project.Context {
 	if e.projectCtx != nil {
 		return *e.projectCtx
 	}
-	return project.Context{
-		Repository: project.Repository{Path: def.Project.Repository},
-		Branch:     def.Project.Branch,
+	ctx := project.Context{}
+	if len(def.Projects) > 0 {
+		ctx.Repository = project.Repository{Path: def.Projects[0].Repository}
 	}
+	return ctx
 }
 
 // instantiate 依据 ExecutorRegistry 实例化全部 Node 定义：
-// 缺省解析取 Latest(definition)（显式 executor 版本字段属票 05 的
-// Schema 变更，届时接入 Get(definition, version)）。
+// 显式 executor 版本经 Get(definition, version) 固定，
+// 缺省解析取 Latest(definition)（设计文档 §3.6：版本解析后固定）。
 func (e *Engine) instantiate(def workflow.Definition) (map[string]node.Node, error) {
 	ids := make([]string, 0, len(def.Nodes))
 	for id := range def.Nodes {
@@ -370,17 +372,26 @@ func (e *Engine) instantiate(def workflow.Definition) (map[string]node.Node, err
 	nodes := make(map[string]node.Node, len(def.Nodes))
 	for _, id := range ids {
 		spec := def.Nodes[id]
-		if _, err := e.defs.Definition(spec.Type); err != nil {
+		if _, err := e.defs.Definition(spec.Node); err != nil {
 			return nil, fmt.Errorf("node %q: unknown node definition %q (registered: %v)",
-				id, spec.Type, e.defs.DefinitionNames())
+				id, spec.Node, e.defs.DefinitionNames())
 		}
-		f, err := e.executors.Latest(spec.Type)
-		if err != nil {
-			return nil, fmt.Errorf("node %q: %w", id, err)
+		var f node.ExecutorFactory
+		var err error
+		if spec.Executor != "" {
+			f, err = e.executors.Get(spec.Node, spec.Executor)
+			if err != nil {
+				return nil, fmt.Errorf("node %q: %w", id, err)
+			}
+		} else {
+			f, err = e.executors.Latest(spec.Node)
+			if err != nil {
+				return nil, fmt.Errorf("node %q: %w", id, err)
+			}
 		}
 		n, err := f.Create(node.Config(spec.Config))
 		if err != nil {
-			return nil, fmt.Errorf("node %q: create %q: %w", id, spec.Type, err)
+			return nil, fmt.Errorf("node %q: create %q: %w", id, spec.Node, err)
 		}
 		nodes[id] = n
 	}

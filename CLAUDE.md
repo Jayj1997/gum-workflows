@@ -7,7 +7,7 @@
 
 ## 当前状态
 
-**MVP 已全部完成**（设计计划 §44 开发顺序 ①-⑱）：Core Model、YAML Loader、CUE + 语义两层校验、Node/Artifact Registry、DAG Builder/Validator、串行与并行 Execution Engine、FilesystemArtifactStore + state.json 持久化、Project Runtime/Workspace、内置 Mock Node（requirement-analysis / architecture-design / coding-agent / openapi-generator）、`workflow validate` 与 `workflow run` CLI、fullstack Demo（`examples/fullstack`）与 e2e 测试。设计说明见 `docs/domain-model.md`。
+**MVP 已全部完成**（设计计划 §44 开发顺序 ①-⑱）：Core Model、YAML Loader、CUE + 语义两层校验、Node/Artifact Registry、DAG Builder/Validator、串行与并行 Execution Engine、FilesystemArtifactStore + state.json 持久化、Project Runtime/Workspace、内置 Mock Node（requirement-analysis / architecture-design / coding-agent / openapi-generator）、`workflow validate` 与 `workflow run` CLI、临时示例（`examples/minimal`，human-free 最小链）与 e2e 测试；旧 fullstack Demo 已随 Node Instance 新 Schema 退役（新契约下 requirement-analysis 有必填输入，human-input 入口节点属后续里程碑，完整 demo 待 P8 重写）。设计说明见 `docs/domain-model.md`。
 
 后续版本方向（需先升级设计文档）：真实 Coding Agent Adapter（替换 MockCodingAgent）、真实 OpenAPI Generator、Skipped 传播、重试/超时等 workflow/v2 字段。
 

@@ -101,7 +101,7 @@ func TestEnginePersistsWithStateDir(t *testing.T) {
 
 	t.Run("failed run persists", func(t *testing.T) {
 		e, _ := newFullstackEngine(t, func(nodeType string, f *mockFactory) {
-			if nodeType == "architecture-design" {
+			if nodeType == "coding-agent" {
 				f.fail = true
 			}
 		})
@@ -124,15 +124,15 @@ func TestEnginePersistsWithStateDir(t *testing.T) {
 		}
 
 		execDir := filepath.Join(root, exec.ID)
-		ne, err := LoadNodeState(execDir, "frontend")
+		ne, err := LoadNodeState(execDir, "sdk")
 		if err != nil {
-			t.Fatalf("LoadNodeState(frontend): %v", err)
+			t.Fatalf("LoadNodeState(sdk): %v", err)
 		}
 		if ne.Status != StatusSucceeded {
-			t.Errorf("frontend status = %s, want Succeeded", ne.Status)
+			t.Errorf("sdk status = %s, want Succeeded", ne.Status)
 		}
-		if len(ne.Outputs) != 2 {
-			t.Errorf("frontend outputs = %d, want 2", len(ne.Outputs))
+		if len(ne.Outputs) != 1 {
+			t.Errorf("sdk outputs = %d, want 1", len(ne.Outputs))
 		}
 	})
 }

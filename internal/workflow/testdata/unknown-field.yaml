@@ -1,10 +1,14 @@
 apiVersion: workflow/v1
-kind: Workflow
+kind: workflow
 
 metadata:
   name: unknown-field
 
+projects:
+  - name: demo
+    repository: ./project
+
 nodes:
   a:
-    type: requirement-analysis
+    node: coding-agent
     retry: 3

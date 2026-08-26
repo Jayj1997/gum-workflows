@@ -40,18 +40,18 @@ func (v *SemanticValidator) Validate(def workflow.Definition) error {
 	// 逐 Node 确认定义存在、Go 实现存在且 config 合法。
 	for _, id := range sortedKeys(def.Nodes) {
 		spec := def.Nodes[id]
-		if _, err := v.defs.Definition(spec.Type); err != nil {
+		if _, err := v.defs.Definition(spec.Node); err != nil {
 			errs = append(errs, fmt.Errorf("node %q: unknown node definition %q (registered: %s)",
-				id, spec.Type, strings.Join(v.defs.DefinitionNames(), ", ")))
+				id, spec.Node, strings.Join(v.defs.DefinitionNames(), ", ")))
 			continue
 		}
-		f, err := v.executors.Latest(spec.Type)
+		f, err := v.executors.Latest(spec.Node)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("node %q: no executor for %q", id, spec.Type))
+			errs = append(errs, fmt.Errorf("node %q: no executor for %q", id, spec.Node))
 			continue
 		}
 		if _, err := f.Create(node.Config(spec.Config)); err != nil {
-			errs = append(errs, fmt.Errorf("node %q: create %q: %w", id, spec.Type, err))
+			errs = append(errs, fmt.Errorf("node %q: create %q: %w", id, spec.Node, err))
 		}
 	}
 	if len(errs) > 0 {
@@ -71,7 +71,7 @@ func (v *SemanticValidator) Validate(def workflow.Definition) error {
 // （含 optional 输入端口--修复旧实现漏检的问题）。
 func (v *SemanticValidator) checkContractKinds(def workflow.Definition, errs *ValidationErrors) {
 	for _, id := range sortedKeys(def.Nodes) {
-		d, err := v.defs.Definition(def.Nodes[id].Type)
+		d, err := v.defs.Definition(def.Nodes[id].Node)
 		if err != nil {
 			continue // 已在前面的实例化检查报出。
 		}
@@ -86,7 +86,7 @@ func (v *SemanticValidator) checkContractKinds(def workflow.Definition, errs *Va
 func (v *SemanticValidator) checkInputs(def workflow.Definition, errs *ValidationErrors) {
 	for _, id := range sortedKeys(def.Nodes) {
 		spec := def.Nodes[id]
-		consumer, err := v.defs.Definition(spec.Type)
+		consumer, err := v.defs.Definition(spec.Node)
 		if err != nil {
 			continue
 		}
@@ -113,7 +113,7 @@ func (v *SemanticValidator) checkInputs(def workflow.Definition, errs *Validatio
 				*errs = append(*errs, fmt.Errorf("node %q input %q: references unknown node %q", id, name, fromNode))
 				continue
 			}
-			producer, err := v.defs.Definition(producerSpec.Type)
+			producer, err := v.defs.Definition(producerSpec.Node)
 			if err != nil {
 				continue // 生产者定义未知已报出。
 			}
@@ -128,7 +128,7 @@ func (v *SemanticValidator) checkInputs(def workflow.Definition, errs *Validatio
 			inPort, declared := consumer.Inputs[name]
 			if !declared {
 				*errs = append(*errs, fmt.Errorf("node %q: input %q is not declared in the contract of definition %q",
-					id, name, spec.Type))
+					id, name, spec.Node))
 				continue
 			}
 			if !v.compatible(inPort.Type, outPort.Type) {

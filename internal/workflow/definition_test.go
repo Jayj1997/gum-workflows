@@ -11,14 +11,12 @@ func validDefinition() Definition {
 		APIVersion: APIVersionV1,
 		Kind:       KindWorkflow,
 		Metadata:   Metadata{Name: "fullstack-development", Version: "1.0"},
-		Project:    ProjectSpec{Repository: "./examples/order-system", Branch: "main"},
+		Projects:   []ProjectSpec{{Name: "order-system", Repository: "./examples/order-system"}},
 		Nodes: map[string]NodeSpec{
-			"requirement": {Type: "requirement-analysis"},
-			"backend": {
-				Type: "coding-agent",
-				Inputs: map[string]InputBinding{
-					"requirement": {From: "requirement.requirement"},
-				},
+			"coder": {Node: "coding-agent"},
+			"sdk": {
+				Node:   "openapi-generator",
+				Inputs: map[string]InputBinding{"openapi": {From: "coder.openapi"}},
 			},
 		},
 	}
@@ -33,6 +31,17 @@ func TestDefinitionValidate(t *testing.T) {
 		{
 			name:   "valid definition",
 			mutate: func(d *Definition) {},
+		},
+		{
+			name: "valid with all optional node fields",
+			mutate: func(d *Definition) {
+				coder := d.Nodes["coder"]
+				coder.Executor = "v1"
+				coder.LLM = "openai"
+				coder.TargetModel = "gpt-4o"
+				coder.Metadata = InstanceMetadata{Name: "实现", Description: "编码节点"}
+				d.Nodes["coder"] = coder
+			},
 		},
 		{
 			name:    "empty apiVersion",
@@ -55,59 +64,73 @@ func TestDefinitionValidate(t *testing.T) {
 			wantErr: "nodes",
 		},
 		{
-			name: "empty node type",
+			name: "empty node reference",
 			mutate: func(d *Definition) {
-				d.Nodes["requirement"] = NodeSpec{}
+				d.Nodes["coder"] = NodeSpec{}
 			},
-			wantErr: `node "requirement": type`,
+			wantErr: `node "coder": node`,
 		},
 		{
 			name: "empty input from",
 			mutate: func(d *Definition) {
-				d.Nodes["backend"].Inputs["requirement"] = InputBinding{}
+				d.Nodes["sdk"].Inputs["openapi"] = InputBinding{}
 			},
-			wantErr: `node "backend" input "requirement": from`,
+			wantErr: `node "sdk" input "openapi": from`,
 		},
 		{
 			name: "malformed input from",
 			mutate: func(d *Definition) {
-				d.Nodes["backend"].Inputs["requirement"] = InputBinding{From: "no-dot-here"}
+				d.Nodes["sdk"].Inputs["openapi"] = InputBinding{From: "no-dot-here"}
 			},
-			wantErr: `node "backend" input "requirement"`,
+			wantErr: `node "sdk" input "openapi"`,
 		},
 		{
 			name: "node id contains dot",
 			mutate: func(d *Definition) {
-				d.Nodes["back.end"] = NodeSpec{Type: "coding-agent"}
+				d.Nodes["co.der"] = NodeSpec{Node: "coding-agent"}
 			},
-			wantErr: `node "back.end": ID must not contain`,
+			wantErr: `node "co.der": ID must not contain`,
+		},
+		{
+			name: "project name empty",
+			mutate: func(d *Definition) {
+				d.Projects = []ProjectSpec{{Repository: "./p"}}
+			},
+			wantErr: `projects[0]: name`,
+		},
+		{
+			name: "project repository empty",
+			mutate: func(d *Definition) {
+				d.Projects = []ProjectSpec{{Name: "demo", Repository: "  "}}
+			},
+			wantErr: `projects[0] "demo": repository`,
 		},
 		{
 			name: "self dependsOn",
 			mutate: func(d *Definition) {
-				spec := d.Nodes["requirement"]
-				spec.DependsOn = []string{"requirement"}
-				d.Nodes["requirement"] = spec
+				spec := d.Nodes["coder"]
+				spec.DependsOn = []string{"coder"}
+				d.Nodes["coder"] = spec
 			},
-			wantErr: `node "requirement": dependsOn must not include itself`,
+			wantErr: `node "coder": dependsOn must not include itself`,
 		},
 		{
 			name: "duplicate dependsOn",
 			mutate: func(d *Definition) {
-				spec := d.Nodes["backend"]
-				spec.DependsOn = []string{"requirement", "requirement"}
-				d.Nodes["backend"] = spec
+				spec := d.Nodes["sdk"]
+				spec.DependsOn = []string{"coder", "coder"}
+				d.Nodes["sdk"] = spec
 			},
-			wantErr: `node "backend": duplicate dependsOn entry "requirement"`,
+			wantErr: `node "sdk": duplicate dependsOn entry "coder"`,
 		},
 		{
 			name: "empty dependsOn entry",
 			mutate: func(d *Definition) {
-				spec := d.Nodes["backend"]
+				spec := d.Nodes["sdk"]
 				spec.DependsOn = []string{""}
-				d.Nodes["backend"] = spec
+				d.Nodes["sdk"] = spec
 			},
-			wantErr: `node "backend": dependsOn entries must not be empty`,
+			wantErr: `node "sdk": dependsOn entries must not be empty`,
 		},
 	}
 	for _, tt := range tests {

@@ -10,7 +10,7 @@ Requirement → Architecture → Backend Coding Agent → OpenAPI → OpenAPI Ge
 
 ## 当前状态
 
-**workflow/v1 MVP 已完成**：Core Model、YAML Loader、CUE + 语义两层校验、DAG Builder / Validator、串行与并行执行引擎、文件系统 Artifact Store 与状态持久化、Project Runtime / Workspace、CLI（`validate` / `run`）、fullstack 端到端示例。当前所有内置 Node 均为 Mock 实现（先跑通 Runtime，再接真实 Agent——见[项目规划](#项目规划与进展)）。
+**workflow/v1 MVP 已完成**：Core Model、YAML Loader、CUE + 语义两层校验、DAG Builder / Validator、串行与并行执行引擎、文件系统 Artifact Store 与状态持久化、Project Runtime / Workspace、CLI（`validate` / `run`）、端到端示例。当前所有内置 Node 均为 Mock 实现（先跑通 Runtime，再接真实 Agent——见[项目规划](#项目规划与进展)）。
 
 `go test ./...`（含 `-race`）全绿。
 
@@ -41,30 +41,24 @@ cd gum-workflows
 go build ./...
 
 # 校验 Workflow 定义（CUE 结构校验 + 语义校验）
-go run ./cmd/workflow validate examples/fullstack/workflow.yaml
-# fullstack-development: valid (workflow/v1)
+go run ./cmd/workflow validate examples/minimal/workflow.yaml
+# minimal-development: valid (workflow/v1)
 
 # 运行示例 Workflow
-go run ./cmd/workflow run examples/fullstack/workflow.yaml
+go run ./cmd/workflow run examples/minimal/workflow.yaml
 ```
 
 运行输出：
 
 ```text
-Workflow fullstack-development Succeeded (execution-000001)
+Workflow minimal-development Succeeded (execution-000001)
 Nodes:
-  architecture  Succeeded architecture-design
-  backend       Succeeded coding-agent
-  frontend      Succeeded coding-agent
-  openapi       Succeeded openapi-generator
-  requirement   Succeeded requirement-analysis
+  coder         Succeeded coding-agent
+  sdk           Succeeded openapi-generator
 Artifacts:
-  architecture  architecture    ArchitectureSpec
-  backend       openapi         OpenAPI
-  backend       source-code     SourceCode
-  frontend      source-code     SourceCode
-  openapi       frontend-sdk    FrontendSDK
-  requirement   requirement     RequirementSpec
+  coder         openapi         OpenAPI
+  coder         source-code     SourceCode
+  sdk           frontend-sdk    FrontendSDK
 ```
 
 每次 `run` 在 `.workflow/executions/<execution-id>/` 下产生完全独立的运行记录，同一 Workflow 可运行任意多次、互不干扰：
@@ -82,58 +76,32 @@ Artifacts:
 
 ## 定义一个 Workflow
 
-`examples/fullstack/workflow.yaml`：
+`examples/minimal/workflow.yaml`：
 
 ```yaml
 apiVersion: workflow/v1
-kind: Workflow
+kind: workflow
 
 metadata:
-  name: fullstack-development
+  name: minimal-development
   version: "1.0"
 
-project:
-  repository: ./project
-  branch: main
+projects:
+  - name: order-system
+    repository: ./project
 
 nodes:
 
-  requirement:
-    type: requirement-analysis
-
-  architecture:
-    type: architecture-design
-    inputs:
-      requirement:
-        from: requirement.requirement
-
-  backend:
-    type: coding-agent
+  coder:
+    node: coding-agent
     config:
-      task: 实现 order-system 后端：依据需求与架构产出源码与 OpenAPI 文档
-    inputs:
-      requirement:
-        from: requirement.requirement
-      architecture:
-        from: architecture.architecture
+      task: 实现 order-system：产出源码与 OpenAPI 文档
 
-  openapi:
-    type: openapi-generator
+  sdk:
+    node: openapi-generator
     inputs:
       openapi:
-        from: backend.openapi
-
-  frontend:
-    type: coding-agent
-    config:
-      task: 实现 order-system 前端：消费 OpenAPI 与生成的 Frontend SDK
-    inputs:
-      requirement:
-        from: requirement.requirement
-      openapi:
-        from: backend.openapi
-      frontend-sdk:
-        from: openapi.frontend-sdk
+        from: coder.openapi
 ```
 
 要点：
@@ -146,12 +114,12 @@ nodes:
 
 当前四个内置 Node 均为 Mock 实现（设计策略：先用 Mock 跑通 Runtime，真实 Adapter 是下一阶段）：
 
-| Node Type | 类别 | Input | Output |
+| Node Definition | 类别 | Input | Output |
 |---|---|---|---|
-| `requirement-analysis` | Mock | 无 | `requirement: RequirementSpec` |
-| `architecture-design` | Mock | `requirement: RequirementSpec` | `architecture: ArchitectureSpec` |
-| `coding-agent` | Agent（Mock） | 可选：requirement / architecture / openapi / frontend-sdk | `source-code: SourceCode`、`openapi: OpenAPI` |
-| `openapi-generator` | Automation（Mock） | `openapi: OpenAPI` | `frontend-sdk: FrontendSDK` |
+| `requirement-analysis` | agent | `requirement: markdown` | `rationality: int`、`analysis-output: markdown` |
+| `architecture-design` | agent | `analysis-output: markdown` | `architecture: ArchitectureSpec` |
+| `coding-agent` | agent | 可选：analysis-output / architecture / openapi / frontend-sdk | `source-code: SourceCode`、`openapi: OpenAPI` |
+| `openapi-generator` | automation | `openapi: OpenAPI` | `frontend-sdk: FrontendSDK` |
 
 MVP 定义的 Artifact Kind 共 7 种：`RequirementSpec`、`ArchitectureSpec`、`OpenAPI`、`FrontendSDK`、`SourceCode`、`TestReport`、`ApprovalResult`。`SourceCode` 只引用 repo path / commit / workspace 路径，不携带源码本体。
 
@@ -214,7 +182,7 @@ schema/workflow       workflow/v1 CUE Schema（embed 进二进制）
 | M8 | Project Runtime（Workspace 正确创建） | ✅ |
 | M9 | OpenAPI Automation | ✅ Mock 实现 |
 | M10 | Coding Agent Adapter | ✅ Mock 实现 |
-| M11 | Fullstack Demo（§42 全流程跑通，e2e 测试覆盖） | ✅ |
+| M11 | Demo（§42 全流程跑通，e2e 测试覆盖；fullstack demo 已随新 Schema 退役，当前为 examples/minimal） | ✅ |
 
 ### 下一步（需先升级设计文档）
 

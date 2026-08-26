@@ -304,6 +304,6 @@ workflow validate <workflow-file>
 - `workflow`：Loader（合法/未知字段/畸形 YAML/空文件）、`Definition.Validate()` 表驱动、Graph（Data/Control Edge、Roots、五种环场景）。
 - `node`：Registry（注册/查询/重复/空 Type）；`builtins`：四个内置 Node 的 Contract 与 Execute 行为（含 Workspace 写入、OpenAPI 路由回 Store）。
 - `validation`：CUE 结构校验（合法 + 9 种结构错误）、语义校验 fixture（对应设计计划 §36）+ 程序化用例。
-- `execution`：fullstack 顺序/输入数/独立性（多次 Run 零共享）、Control Edge、失败传播、未知 Type、缺输出、未声明输出、取消、状态机；并行（菱形并发峰值、串行回退、失败停止派发、并行 fullstack）与持久化布局。
+- `execution`：最小链顺序/输入数/独立性（多次 Run 零共享）、Control Edge、失败传播、未知定义、缺输出、未声明输出、取消、状态机；并行（菱形并发峰值、串行回退、失败停止派发）与持久化布局。
 - `project`：相对/绝对路径解析、Workspace 复制（.git/.workflow 排除）、Execution 间隔离、错误输入拒绝。
-- `cmd/workflow`、`tests/workflow`、`tests/e2e`：CLI validate/run 集成；e2e 编译真实二进制跑 examples/fullstack（§42 验收：6 类 Artifact、§28 目录布局、多次运行独立 Execution）。
+- `cmd/workflow`、`tests/workflow`、`tests/e2e`：CLI validate/run 集成；e2e 编译真实二进制跑 examples/minimal（临时 human-free 最小链：3 类 Artifact、§28 目录布局、多次运行独立 Execution）。

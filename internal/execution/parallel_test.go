@@ -75,10 +75,10 @@ func diamondDef() workflow.Definition {
 		Kind:       workflow.KindWorkflow,
 		Metadata:   workflow.Metadata{Name: "diamond"},
 		Nodes: map[string]workflow.NodeSpec{
-			"a": {Type: "x"},
-			"b": {Type: "x", Inputs: map[string]workflow.InputBinding{"in": {From: "a.out"}}},
-			"c": {Type: "x", Inputs: map[string]workflow.InputBinding{"in": {From: "a.out"}}},
-			"d": {Type: "join",
+			"a": {Node: "x"},
+			"b": {Node: "x", Inputs: map[string]workflow.InputBinding{"in": {From: "a.out"}}},
+			"c": {Node: "x", Inputs: map[string]workflow.InputBinding{"in": {From: "a.out"}}},
+			"d": {Node: "join",
 				Inputs: map[string]workflow.InputBinding{
 					"left":  {From: "b.out"},
 					"right": {From: "c.out"},
@@ -268,9 +268,9 @@ func TestParallelSerialFallback(t *testing.T) {
 		Kind:       workflow.KindWorkflow,
 		Metadata:   workflow.Metadata{Name: "fanout-serial"},
 		Nodes: map[string]workflow.NodeSpec{
-			"a": {Type: "staged"},
-			"b": {Type: "staged", Inputs: map[string]workflow.InputBinding{"in": {From: "a.out"}}},
-			"c": {Type: "staged", Inputs: map[string]workflow.InputBinding{"in": {From: "a.out"}}},
+			"a": {Node: "staged"},
+			"b": {Node: "staged", Inputs: map[string]workflow.InputBinding{"in": {From: "a.out"}}},
+			"c": {Node: "staged", Inputs: map[string]workflow.InputBinding{"in": {From: "a.out"}}},
 		},
 	}
 
@@ -349,9 +349,9 @@ func TestParallelFailureStopsDispatch(t *testing.T) {
 		Kind:       workflow.KindWorkflow,
 		Metadata:   workflow.Metadata{Name: "fail-fast"},
 		Nodes: map[string]workflow.NodeSpec{
-			"a": {Type: "fail"},
-			"b": {Type: "ok", Inputs: map[string]workflow.InputBinding{"in": {From: "a.out"}}},
-			"c": {Type: "ok", Inputs: map[string]workflow.InputBinding{"in": {From: "a.out"}}},
+			"a": {Node: "fail"},
+			"b": {Node: "ok", Inputs: map[string]workflow.InputBinding{"in": {From: "a.out"}}},
+			"c": {Node: "ok", Inputs: map[string]workflow.InputBinding{"in": {From: "a.out"}}},
 		},
 	}
 

@@ -1,4 +1,4 @@
-// Package project 提供 Project Runtime：把 Workflow YAML 的 project 声明
+// Package project 提供 Project Runtime：把 Workflow YAML 的 projects 声明
 // 解析为运行环境（ProjectContext + Workspace）。
 //
 // 计划 §15/§17：Workflow -> Project Resolver -> ProjectContext；
@@ -30,9 +30,8 @@ func NewRuntime(baseDir string) *Runtime {
 	return &Runtime{BaseDir: baseDir}
 }
 
-// Resolve 解析 Workflow 的 project 声明（计划 §15）：
-// repository 相对于 workflowFile 所在目录解析为绝对路径；
-// branch 仅记录（本地路径下 checkout 由 Coding Agent 或后续版本处理）。
+// Resolve 解析 Workflow 的 projects[0] 声明（计划 §15，设计文档 §3.5）：
+// repository 相对于 workflowFile 所在目录解析为绝对路径。
 func (r *Runtime) Resolve(workflowFile string, spec Spec) (Context, error) {
 	if strings.TrimSpace(spec.Repository) == "" {
 		return Context{}, fmt.Errorf("resolve project: repository must not be empty")
@@ -52,10 +51,7 @@ func (r *Runtime) Resolve(workflowFile string, spec Spec) (Context, error) {
 		return Context{}, fmt.Errorf("resolve project: %w", err)
 	}
 
-	return Context{
-		Repository: Repository{Path: absRepo},
-		Branch:     spec.Branch,
-	}, nil
+	return Context{Repository: Repository{Path: absRepo}}, nil
 }
 
 // CreateWorkspace 为指定 Execution 创建 Workspace 并把项目复制进去
@@ -131,9 +127,10 @@ func copyDir(src, dst string) error {
 	})
 }
 
-// Spec 是 Workflow YAML project 段的解析输入（与 workflow.ProjectSpec 解耦，
-// 避免基础包 project 反向依赖 workflow 包）。
+// Spec 是 Workflow YAML projects 条目的解析输入（与 workflow.ProjectSpec
+// 解耦，避免基础包 project 反向依赖 workflow 包）。
+// 本期无 branch（设计文档 §3.5）。
 type Spec struct {
+	Name       string
 	Repository string
-	Branch     string
 }

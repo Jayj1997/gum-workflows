@@ -26,7 +26,7 @@ func TestValidateCmd(t *testing.T) {
 	})
 
 	t.Run("example workflow passes full pipeline", func(t *testing.T) {
-		if err := validateCmd(filepath.Join("..", "..", "examples", "fullstack", "workflow.yaml")); err != nil {
+		if err := validateCmd(filepath.Join("..", "..", "examples", "minimal", "workflow.yaml")); err != nil {
 			t.Fatalf("validateCmd(example) unexpected error: %v", err)
 		}
 	})

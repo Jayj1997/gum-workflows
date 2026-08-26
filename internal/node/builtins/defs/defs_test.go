@@ -85,11 +85,9 @@ func TestSeedsContracts(t *testing.T) {
 	}
 
 	ra, _ := r.Definition("requirement-analysis")
-	// requirement-analysis 是源节点（无输入，§12：输入列「-」由
-	// human-input 之前的 MVP 演示链承担入口）。
-	if len(ra.Inputs) != 0 {
-		t.Errorf("requirement-analysis inputs = %v, want none (source node)", ra.Inputs)
-	}
+	// requirement-analysis 按 §12 定稿契约接收 requirement: markdown
+	// （human-input 入口产出一轮需求文本；T09 落地入口节点）。
+	assertPort(t, ra.Inputs, "requirement-analysis", "requirement", "markdown", false)
 	if got := ra.Outputs["rationality"].Type; got != "int" {
 		t.Errorf("requirement-analysis rationality type = %q, want int", got)
 	}

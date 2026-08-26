@@ -24,14 +24,16 @@ func runCmd(path string) error {
 		return err
 	}
 
-	// ③ Project Runtime：解析 project 声明并创建本次 Execution 的 Workspace。
+	// ③ Project Runtime：解析 projects[0] 声明并创建本次 Execution 的 Workspace。
 	// Execution ID 由 execution.NextExecutionID 分配（唯一来源），
 	// workspace / artifacts / 状态目录与 Engine 使用同一 ID。
+	// projects 的「恰好 1 个」校验属票 06；此处取第一个条目。
 	runtime := project.NewRuntime(filepath.Join(".workflow", "executions"))
-	projCtx, err := runtime.Resolve(path, project.Spec{
-		Repository: def.Project.Repository,
-		Branch:     def.Project.Branch,
-	})
+	projSpec := project.Spec{}
+	if len(def.Projects) > 0 {
+		projSpec = project.Spec{Name: def.Projects[0].Name, Repository: def.Projects[0].Repository}
+	}
+	projCtx, err := runtime.Resolve(path, projSpec)
 	if err != nil {
 		return fmt.Errorf("resolve project: %w", err)
 	}

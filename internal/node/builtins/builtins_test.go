@@ -139,22 +139,15 @@ func TestOpenAPIGeneratorNode(t *testing.T) {
 	}
 }
 
-// fullstack 的 coding-agent 输出契约：backend 必须产出 openapi（否则 openapi
-// 节点无法运行）。Mock Agent 只产 source-code，因此 Mock 版补产 openapi。
-// 这里的策略：coding-agent 收到含 architecture 的输入时产出 openapi。
-func TestCodingAgentProducesOpenAPIForBackend(t *testing.T) {
+// 最小链路的 coding-agent 输出契约：必须产出 openapi（否则 openapi-generator
+// 节点无法运行）。Mock Agent 在源节点场景（无输入）即产出 source-code + openapi。
+func TestCodingAgentProducesOpenAPIAsSource(t *testing.T) {
 	ctx := newExecCtx(t, t.TempDir())
 
 	f := newCodingAgentExecutor(newMockAgent())
 	n, _ := f.Create(node.Config{"task": "实现后端"})
 
-	req, _ := ctx.Store.Put(artifact.Artifact{ID: "requirement", Kind: artifact.KindRequirementSpec})
-	arch, _ := ctx.Store.Put(artifact.Artifact{ID: "architecture", Kind: artifact.KindArchitectureSpec})
-
-	outputs, err := n.Execute(ctx, map[string]artifact.ArtifactRef{
-		"requirement":  req,
-		"architecture": arch,
-	})
+	outputs, err := n.Execute(ctx, nil)
 	if err != nil {
 		t.Fatalf("Execute() unexpected error: %v", err)
 	}

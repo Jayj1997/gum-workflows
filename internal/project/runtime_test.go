@@ -45,15 +45,12 @@ func TestResolveRelativeRepository(t *testing.T) {
 	}
 
 	r := NewRuntime("")
-	ctx, err := r.Resolve(filepath.Join(wfdir, "workflow.yaml"), Spec{Repository: "./project", Branch: "main"})
+	ctx, err := r.Resolve(filepath.Join(wfdir, "workflow.yaml"), Spec{Name: "demo", Repository: "./project"})
 	if err != nil {
 		t.Fatalf("Resolve() unexpected error: %v", err)
 	}
 	if ctx.Repository.Path != projdir {
 		t.Errorf("Repository.Path = %q, want %q", ctx.Repository.Path, projdir)
-	}
-	if ctx.Branch != "main" {
-		t.Errorf("Branch = %q", ctx.Branch)
 	}
 }
 

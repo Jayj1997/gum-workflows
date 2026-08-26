@@ -1,22 +1,23 @@
 apiVersion: workflow/v1
-kind: Workflow
+kind: workflow
 
 metadata:
   name: invalid-data-cycle
 
-project:
-  repository: ./examples/order-system
+projects:
+  - name: order-system
+    repository: ./examples/order-system
 
 nodes:
   backend:
-    type: coding-agent
+    node: coding-agent
 
     inputs:
       openapi:
         from: frontend.openapi
 
   frontend:
-    type: coding-agent
+    node: coding-agent
 
     inputs:
       openapi:

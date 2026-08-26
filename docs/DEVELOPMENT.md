@@ -72,7 +72,7 @@ gum-workflows/
 │       └── embed.go            # go:embed 将 Schema 内嵌进 Go Runtime
 │
 ├── examples/
-│   └── fullstack/
+│   └── minimal/                 # 临时最小 human-free 示例（完整 demo 待人工在环能力落地重写）
 │       ├── workflow.yaml
 │       └── project/
 │

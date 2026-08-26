@@ -1,4 +1,6 @@
-// tests/e2e 端到端验收：CLI 级运行 examples/fullstack（计划 §42 Milestone 11）。
+// tests/e2e 端到端验收：CLI 级运行 examples/minimal（计划 §42 Milestone 11）。
+// 旧 examples/fullstack 已退役（票 05）：新契约下 requirement-analysis 有必填输入，
+// human-input 入口节点要到 T09 才存在；新 demo（含审批循环）在 T14 重写。
 package e2e_test
 
 import (
@@ -10,12 +12,12 @@ import (
 
 func TestValidateExample(t *testing.T) {
 	tmp := t.TempDir()
-	src := absPath(t, filepath.Join("..", "..", "examples", "fullstack"))
-	if err := copyTree(t, src, filepath.Join(tmp, "fullstack")); err != nil {
+	src := absPath(t, filepath.Join("..", "..", "examples", "minimal"))
+	if err := copyTree(t, src, filepath.Join(tmp, "minimal")); err != nil {
 		t.Fatal(err)
 	}
 
-	out, err := runInDir(t, filepath.Join(tmp, "fullstack"), "validate", "workflow.yaml")
+	out, err := runInDir(t, filepath.Join(tmp, "minimal"), "validate", "workflow.yaml")
 	if err != nil {
 		t.Fatalf("validate failed: %s\n%s", err, out)
 	}
@@ -24,29 +26,26 @@ func TestValidateExample(t *testing.T) {
 	}
 }
 
-// TestRunFullstackDemo 是计划 §42 的最终验收：
-// 运行 fullstack Workflow，产出全部 6 个 Artifact，状态持久化正确。
-func TestRunFullstackDemo(t *testing.T) {
+// TestRunMinimalDemo 是当前 Schema 形态下的 CLI 级验收：
+// 运行最小 human-free 链（coder -> sdk），产出全部 3 个 Artifact，
+// 状态持久化正确。
+func TestRunMinimalDemo(t *testing.T) {
 	// 复制示例到临时目录运行（.workflow 落在临时目录，不污染仓库）。
 	tmp := t.TempDir()
-	src := absPath(t, filepath.Join("..", "..", "examples", "fullstack"))
-	if err := copyTree(t, src, filepath.Join(tmp, "fullstack")); err != nil {
+	src := absPath(t, filepath.Join("..", "..", "examples", "minimal"))
+	if err := copyTree(t, src, filepath.Join(tmp, "minimal")); err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(tmp, "fullstack")
+	dir := filepath.Join(tmp, "minimal")
 
 	out, err := runInDir(t, dir, "run", "workflow.yaml")
 	if err != nil {
 		t.Fatalf("run failed: %s\n%s", err, out)
 	}
 
-	// 输出包含 Succeeded 与全部 Artifact 类型（§42 验收清单按
-	// 种子契约更新：requirement-analysis 产出 markdown + int）。
+	// 输出包含 Succeeded 与全部 Artifact 类型。
 	for _, want := range []string{
 		"Succeeded",
-		"markdown",
-		"int",
-		"ArchitectureSpec",
 		"SourceCode",
 		"OpenAPI",
 		"FrontendSDK",
@@ -61,10 +60,12 @@ func TestRunFullstackDemo(t *testing.T) {
 	for _, rel := range []string{
 		"state.json",
 		"workflow.yaml",
-		"nodes/requirement/state.json",
-		"nodes/backend/state.json",
+		"nodes/coder/state.json",
+		"nodes/sdk/state.json",
 		"artifacts",
 		"workspace/project/README.md",
+		"workspace/project/.mock-agent/task.md",
+		"workspace/project/.mock-agent/openapi.yaml",
 	} {
 		if _, err := os.Stat(filepath.Join(execDir, rel)); err != nil {
 			t.Errorf("missing %s: %v", rel, err)
@@ -105,7 +106,7 @@ func TestRunFullstackDemo(t *testing.T) {
 		t.Errorf("execution-000001/state.json was overwritten by second run:\nbefore=%s\nafter=%s", firstState, afterSecond)
 	}
 	// 000002 有自己的完整状态目录。
-	if _, err := os.Stat(filepath.Join(secondDir, "nodes", "frontend", "state.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(secondDir, "nodes", "sdk", "state.json")); err != nil {
 		t.Errorf("second execution node state missing: %v", err)
 	}
 }

@@ -3,21 +3,30 @@
 // 与 internal/workflow/definition.go 的 Go Struct 必须同步修改（见 docs/DEVELOPMENT.md §5）。
 
 apiVersion: "workflow/v1"
-kind:       "Workflow"
+kind:       "workflow"
 
 metadata: {
-	name:    string
-	version?: string
+	name:        string
+	version?:    string
+	description?: string
 }
 
-project: {
+// projects 列表（设计文档 §3.5）：本期结构就位；
+// 「恰好 1 个」的校验属语义层（票 06）。
+projects: [...{
+	name:       string
 	repository: string
-	branch?:    string
-}
+}]
 
 nodes: {
 	[string]: {
-		type: string
+		node: string
+
+		executor?: string
+		llm?:      string
+		target_model?: string
+
+		metadata?: {...}
 
 		inputs?: {[string]: {
 			from: string

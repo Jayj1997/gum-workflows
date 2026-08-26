@@ -5,7 +5,10 @@ metadata:
   description: 分析用户需求，产出合理度评分与结构化分析结果。
 type: agent
 requires: []
-inputs: {}
+inputs:
+  requirement:
+    type: markdown
+    description: 用户需求（human-input 入口产出一轮需求文本）。
 outputs:
   rationality:
     type: int

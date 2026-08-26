@@ -5,36 +5,17 @@ import (
 	"testing"
 )
 
-// graphDefinition 返回与设计计划 §10 类似的 fullstack 定义（结构供构图测试使用）。
+// graphDefinition 返回纯数据依赖的双节点链（结构供构图测试使用）。
 func graphDefinition() Definition {
 	return Definition{
 		APIVersion: APIVersionV1,
 		Kind:       KindWorkflow,
 		Metadata:   Metadata{Name: "g"},
 		Nodes: map[string]NodeSpec{
-			"requirement": {Type: "requirement-analysis"},
-			"architecture": {
-				Type:   "architecture-design",
-				Inputs: map[string]InputBinding{"requirement": {From: "requirement.requirement"}},
-			},
-			"backend": {
-				Type: "coding-agent",
-				Inputs: map[string]InputBinding{
-					"requirement":  {From: "requirement.requirement"},
-					"architecture": {From: "architecture.architecture"},
-				},
-			},
-			"openapi": {
-				Type:   "openapi-generator",
-				Inputs: map[string]InputBinding{"openapi": {From: "backend.openapi"}},
-			},
-			"frontend": {
-				Type: "coding-agent",
-				Inputs: map[string]InputBinding{
-					"requirement":  {From: "requirement.requirement"},
-					"openapi":      {From: "backend.openapi"},
-					"frontend-sdk": {From: "openapi.frontend-sdk"},
-				},
+			"coder": {Node: "coding-agent"},
+			"sdk": {
+				Node:   "openapi-generator",
+				Inputs: map[string]InputBinding{"openapi": {From: "coder.openapi"}},
 			},
 		},
 	}
@@ -47,13 +28,7 @@ func TestBuildGraphDataEdges(t *testing.T) {
 	}
 
 	want := map[Edge]int{
-		{From: "requirement", To: "architecture", Type: DataEdge}: 1,
-		{From: "requirement", To: "backend", Type: DataEdge}:      1,
-		{From: "requirement", To: "frontend", Type: DataEdge}:     1,
-		{From: "architecture", To: "backend", Type: DataEdge}:     1,
-		{From: "backend", To: "openapi", Type: DataEdge}:          1,
-		{From: "backend", To: "frontend", Type: DataEdge}:         1,
-		{From: "openapi", To: "frontend", Type: DataEdge}:         1,
+		{From: "coder", To: "sdk", Type: DataEdge}: 1,
 	}
 	if len(g.Edges) != len(want) {
 		t.Fatalf("len(Edges) = %d, want %d: %+v", len(g.Edges), len(want), g.Edges)
@@ -77,8 +52,8 @@ func TestBuildGraphControlEdge(t *testing.T) {
 		Kind:       KindWorkflow,
 		Metadata:   Metadata{Name: "g"},
 		Nodes: map[string]NodeSpec{
-			"approval": {Type: "human-approval"},
-			"deploy":   {Type: "cd", DependsOn: []string{"approval"}},
+			"approval": {Node: "human-approval"},
+			"deploy":   {Node: "cd", DependsOn: []string{"approval"}},
 		},
 	}
 	g, err := BuildGraph(def)
@@ -115,8 +90,8 @@ func TestBuildGraphNoDependsOnIsNormal(t *testing.T) {
 			t.Fatalf("unexpected control edge %+v in data-only workflow", e)
 		}
 	}
-	if roots := g.Roots(); !reflect.DeepEqual(roots, []string{"requirement"}) {
-		t.Errorf("Roots() = %v, want [requirement]", roots)
+	if roots := g.Roots(); !reflect.DeepEqual(roots, []string{"coder"}) {
+		t.Errorf("Roots() = %v, want [coder]", roots)
 	}
 }
 
@@ -126,8 +101,8 @@ func TestBuildGraphRejectsMalformedFrom(t *testing.T) {
 		Kind:       KindWorkflow,
 		Metadata:   Metadata{Name: "g"},
 		Nodes: map[string]NodeSpec{
-			"a": {Type: "x"},
-			"b": {Type: "y", Inputs: map[string]InputBinding{"i": {From: "noseparator"}}},
+			"a": {Node: "x"},
+			"b": {Node: "y", Inputs: map[string]InputBinding{"i": {From: "noseparator"}}},
 		},
 	}
 	if _, err := BuildGraph(def); err == nil {
@@ -141,7 +116,7 @@ func TestCycle(t *testing.T) {
 		def  Definition
 	}{
 		{
-			name: "acyclic fullstack",
+			name: "acyclic chain",
 			def:  graphDefinition(),
 		},
 		{
@@ -149,8 +124,8 @@ func TestCycle(t *testing.T) {
 			def: Definition{
 				Metadata: Metadata{Name: "g"},
 				Nodes: map[string]NodeSpec{
-					"a": {Type: "x", Inputs: map[string]InputBinding{"i": {From: "b.out"}}},
-					"b": {Type: "y", Inputs: map[string]InputBinding{"i": {From: "a.out"}}},
+					"a": {Node: "x", Inputs: map[string]InputBinding{"i": {From: "b.out"}}},
+					"b": {Node: "y", Inputs: map[string]InputBinding{"i": {From: "a.out"}}},
 				},
 			},
 		},
@@ -159,8 +134,8 @@ func TestCycle(t *testing.T) {
 			def: Definition{
 				Metadata: Metadata{Name: "g"},
 				Nodes: map[string]NodeSpec{
-					"a": {Type: "x", DependsOn: []string{"b"}},
-					"b": {Type: "y", DependsOn: []string{"a"}},
+					"a": {Node: "x", DependsOn: []string{"b"}},
+					"b": {Node: "y", DependsOn: []string{"a"}},
 				},
 			},
 		},
@@ -169,8 +144,8 @@ func TestCycle(t *testing.T) {
 			def: Definition{
 				Metadata: Metadata{Name: "g"},
 				Nodes: map[string]NodeSpec{
-					"a": {Type: "x", Inputs: map[string]InputBinding{"i": {From: "b.out"}}},
-					"b": {Type: "y", DependsOn: []string{"a"}},
+					"a": {Node: "x", Inputs: map[string]InputBinding{"i": {From: "b.out"}}},
+					"b": {Node: "y", DependsOn: []string{"a"}},
 				},
 			},
 		},
@@ -179,7 +154,7 @@ func TestCycle(t *testing.T) {
 			def: Definition{
 				Metadata: Metadata{Name: "g"},
 				Nodes: map[string]NodeSpec{
-					"a": {Type: "x", Inputs: map[string]InputBinding{"i": {From: "a.out"}}},
+					"a": {Node: "x", Inputs: map[string]InputBinding{"i": {From: "a.out"}}},
 				},
 			},
 		},
@@ -191,7 +166,7 @@ func TestCycle(t *testing.T) {
 				t.Fatalf("BuildGraph() unexpected error: %v", err)
 			}
 			cycle := g.Cycle()
-			if tt.name == "acyclic fullstack" {
+			if tt.name == "acyclic chain" {
 				if cycle != nil {
 					t.Fatalf("Cycle() = %v, want nil", cycle)
 				}

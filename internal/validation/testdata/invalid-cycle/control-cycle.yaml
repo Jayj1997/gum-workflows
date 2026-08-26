@@ -1,19 +1,20 @@
 apiVersion: workflow/v1
-kind: Workflow
+kind: workflow
 
 metadata:
   name: invalid-control-cycle
 
-project:
-  repository: ./examples/order-system
+projects:
+  - name: order-system
+    repository: ./examples/order-system
 
 nodes:
   approval:
-    type: human-approval
+    node: human-approval
     dependsOn:
       - deploy
 
   deploy:
-    type: cd
+    node: cd
     dependsOn:
       - approval

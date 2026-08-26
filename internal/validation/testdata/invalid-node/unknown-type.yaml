@@ -1,12 +1,13 @@
 apiVersion: workflow/v1
-kind: Workflow
+kind: workflow
 
 metadata:
   name: invalid-node
 
-project:
-  repository: ./examples/order-system
+projects:
+  - name: order-system
+    repository: ./examples/order-system
 
 nodes:
   requirement:
-    type: nonexistent-node
+    node: nonexistent-node

@@ -41,6 +41,6 @@ yarn-error.log*
 
 # Claude Code local files
 .claude/
-# ...except the demo project's .claude/skills (part of the fullstack example)
-!examples/fullstack/project/.claude/
-!examples/fullstack/project/.claude/**
+# ...except the demo project's .claude/skills (part of the minimal example)
+!examples/minimal/project/.claude/
+!examples/minimal/project/.claude/**

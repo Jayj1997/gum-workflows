@@ -40,23 +40,23 @@ func loadValidatedWorkflow(t *testing.T) workflow.Definition {
 func TestValidatePipelineOnValidWorkflow(t *testing.T) {
 	def := loadValidatedWorkflow(t)
 
-	// 数据依赖应能完整构建 DAG：requirement 是唯一源节点。
+	// 数据依赖应能完整构建 DAG：coder 是唯一源节点。
 	g, err := workflow.BuildGraph(def)
 	if err != nil {
 		t.Fatalf("BuildGraph() unexpected error: %v", err)
 	}
-	if roots := g.Roots(); len(roots) != 1 || roots[0] != "requirement" {
-		t.Errorf("Roots() = %v, want [requirement]", roots)
+	if roots := g.Roots(); len(roots) != 1 || roots[0] != "coder" {
+		t.Errorf("Roots() = %v, want [coder]", roots)
 	}
 	if cycle := g.Cycle(); cycle != nil {
 		t.Errorf("Cycle() = %v, want nil", cycle)
 	}
 }
 
-// TestDAGBuilderFullstack 是 DAG Builder（M4）的管线级验收：
+// TestDAGBuilderMinimalChain 是 DAG Builder（M4）的管线级验收：
 // 输入为已通过 Validator 的 Workflow，输出为 Execution DAG。
 // 依据设计计划 §10：无需任何 dependsOn，数据关系完整表达执行关系。
-func TestDAGBuilderFullstack(t *testing.T) {
+func TestDAGBuilderMinimalChain(t *testing.T) {
 	def := loadValidatedWorkflow(t)
 
 	g, err := workflow.BuildGraph(def)
@@ -66,13 +66,7 @@ func TestDAGBuilderFullstack(t *testing.T) {
 
 	// 期望的完整边集（字典序）：全部为 Data Edge，无一条 Control Edge（计划 §10 的核心主张）。
 	want := []workflow.Edge{
-		{From: "architecture", To: "backend", Type: workflow.DataEdge},
-		{From: "backend", To: "frontend", Type: workflow.DataEdge},
-		{From: "backend", To: "openapi", Type: workflow.DataEdge},
-		{From: "openapi", To: "frontend", Type: workflow.DataEdge},
-		{From: "requirement", To: "architecture", Type: workflow.DataEdge},
-		{From: "requirement", To: "backend", Type: workflow.DataEdge},
-		{From: "requirement", To: "frontend", Type: workflow.DataEdge},
+		{From: "coder", To: "sdk", Type: workflow.DataEdge},
 	}
 
 	got := append([]workflow.Edge(nil), g.Edges...)
@@ -92,8 +86,8 @@ func TestDAGBuilderFullstack(t *testing.T) {
 		}
 	}
 
-	if roots := g.Roots(); !reflect.DeepEqual(roots, []string{"requirement"}) {
-		t.Errorf("Roots() = %v, want [requirement]", roots)
+	if roots := g.Roots(); !reflect.DeepEqual(roots, []string{"coder"}) {
+		t.Errorf("Roots() = %v, want [coder]", roots)
 	}
 	if cycle := g.Cycle(); cycle != nil {
 		t.Errorf("Cycle() = %v, want nil", cycle)
@@ -103,9 +97,8 @@ func TestDAGBuilderFullstack(t *testing.T) {
 	for _, e := range got {
 		t.Logf("  %s --%s--> %s", e.From, e.Type, e.To)
 	}
-	t.Logf("roots: %v", g.Roots())
 	for _, id := range g.NodeIDs {
-		t.Logf("  %-13s preds=%v succs=%v", id, g.Predecessors(id), g.Successors(id))
+		t.Logf("  %-8s preds=%v succs=%v", id, g.Predecessors(id), g.Successors(id))
 	}
 }
 
@@ -117,9 +110,9 @@ func TestDAGBuilderControlEdge(t *testing.T) {
 		Kind:       workflow.KindWorkflow,
 		Metadata:   workflow.Metadata{Name: "deploy"},
 		Nodes: map[string]workflow.NodeSpec{
-			"test":     {Type: "external-test"},
-			"approval": {Type: "human-approval"},
-			"deploy":   {Type: "external-cd", DependsOn: []string{"approval"}},
+			"test":     {Node: "external-test"},
+			"approval": {Node: "human-approval"},
+			"deploy":   {Node: "external-cd", DependsOn: []string{"approval"}},
 		},
 	}
 	if err := def.Validate(); err != nil {
@@ -137,7 +130,7 @@ func TestDAGBuilderControlEdge(t *testing.T) {
 	}
 
 	// approval 与 test 无入边是源节点；deploy 有来自 approval 的 Control Edge 入边，
-	// 不是源节点——它必须等 approval 完成后才允许执行（计划 §6）。
+	// 不是源节点--它必须等 approval 完成后才允许执行（计划 §6）。
 	if roots := g.Roots(); !reflect.DeepEqual(roots, []string{"approval", "test"}) {
 		t.Errorf("Roots() = %v, want [approval test]", roots)
 	}

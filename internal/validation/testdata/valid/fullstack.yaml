@@ -1,49 +1,22 @@
 apiVersion: workflow/v1
-kind: Workflow
+kind: workflow
 
 metadata:
-  name: fullstack-development
+  name: minimal-development
   version: "1.0"
 
-project:
-  repository: ./examples/order-system
-  branch: main
+projects:
+  - name: order-system
+    repository: ./examples/order-system
 
 nodes:
 
-  requirement:
-    type: requirement-analysis
+  coder:
+    node: coding-agent
 
-  architecture:
-    type: architecture-design
-
-    inputs:
-      analysis-output:
-        from: requirement.analysis-output
-
-  backend:
-    type: coding-agent
-
-    inputs:
-      analysis-output:
-        from: requirement.analysis-output
-      architecture:
-        from: architecture.architecture
-
-  openapi:
-    type: openapi-generator
+  sdk:
+    node: openapi-generator
 
     inputs:
       openapi:
-        from: backend.openapi
-
-  frontend:
-    type: coding-agent
-
-    inputs:
-      analysis-output:
-        from: requirement.analysis-output
-      openapi:
-        from: backend.openapi
-      frontend-sdk:
-        from: openapi.frontend-sdk
+        from: coder.openapi

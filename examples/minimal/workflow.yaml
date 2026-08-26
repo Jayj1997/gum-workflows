@@ -2,17 +2,22 @@ apiVersion: workflow/v1
 kind: workflow
 
 metadata:
-  name: fullstack-development
+  name: minimal-development
   version: "1.0"
+  description: 最小 human-free 临时示例：coding-agent 全 optional 输入当源节点 -> openapi-generator。
 
 projects:
   - name: order-system
-    repository: ./examples/order-system
+    repository: ./project
 
 nodes:
 
   coder:
     node: coding-agent
+
+    metadata:
+      name: 编码
+      description: 依据任务在项目 Workspace 内产出源码与 OpenAPI 文档
 
     config:
       task: 实现 order-system：产出源码与 OpenAPI 文档

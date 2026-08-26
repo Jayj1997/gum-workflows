@@ -53,21 +53,10 @@ func (n fakeNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.
 	return nil, nil
 }
 
-// fullstackFactories 是 fullstack 冒烟场景所需的 Node 定义与契约。
-func fullstackFactories() []node.ExecutorFactory {
+// chainFactories 是最小 human-free 链（coder -> sdk）冒烟场景所需的
+// Node 定义与契约，外加 control-edge 场景的 human-approval 与 cd。
+func chainFactories() []node.ExecutorFactory {
 	return []node.ExecutorFactory{
-		fakeFactory{
-			definition: "requirement-analysis",
-			outputs: map[string]definition.OutputPort{
-				"rationality":     {Type: "int"},
-				"analysis-output": {Type: "markdown"},
-			},
-		},
-		fakeFactory{
-			definition: "architecture-design",
-			inputs:     map[string]definition.InputPort{"analysis-output": {Type: "markdown"}},
-			outputs:    map[string]definition.OutputPort{"architecture": {Type: "ArchitectureSpec"}},
-		},
 		fakeFactory{
 			definition: "coding-agent",
 			inputs: map[string]definition.InputPort{
@@ -75,8 +64,6 @@ func fullstackFactories() []node.ExecutorFactory {
 				"architecture":    {Type: "ArchitectureSpec", Optional: true},
 				"openapi":         {Type: "OpenAPI", Optional: true},
 				"frontend-sdk":    {Type: "FrontendSDK", Optional: true},
-				"test-report":     {Type: "TestReport", Optional: true},
-				"approval":        {Type: "ApprovalResult", Optional: true},
 			},
 			outputs: map[string]definition.OutputPort{
 				"source-code": {Type: "SourceCode"},
@@ -90,7 +77,7 @@ func fullstackFactories() []node.ExecutorFactory {
 		},
 		fakeFactory{
 			definition: "human-approval",
-			outputs:    map[string]definition.OutputPort{"approval": {Type: "ApprovalResult"}},
+			outputs:    map[string]definition.OutputPort{"approve": {Type: "bool"}},
 		},
 		fakeFactory{definition: "cd"},
 	}
@@ -140,9 +127,9 @@ func contractsFor(t *testing.T, defs *definition.Registry, def workflow.Definiti
 
 	contracts := make(map[string]definition.NodeDefinition, len(def.Nodes))
 	for id, spec := range def.Nodes {
-		d, err := defs.Definition(spec.Type)
+		d, err := defs.Definition(spec.Node)
 		if err != nil {
-			t.Fatalf("node %q: unknown node definition %q", id, spec.Type)
+			t.Fatalf("node %q: unknown node definition %q", id, spec.Node)
 		}
 		contracts[id] = d
 	}
@@ -297,10 +284,10 @@ func sortedNodeIDs(def workflow.Definition) []string {
 
 // ---- 冒烟场景 ----
 
-// TestSmokeFullstackDataDriven（计划 Case 1/3 + §10）：
-// 无任何 dependsOn 的 fullstack Workflow 仅靠数据依赖即可完整执行，
+// TestSmokeChainDataDriven（计划 Case 1/3 + §10）：
+// 无任何 dependsOn 的最小 human-free 链仅靠数据依赖即可完整执行，
 // 每个 Node 执行时其输入 Artifact 全部就绪、Kind 匹配。
-func TestSmokeFullstackDataDriven(t *testing.T) {
+func TestSmokeChainDataDriven(t *testing.T) {
 	path := filepath.Join("..", "..", "internal", "validation", "testdata", "valid", "fullstack.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -314,35 +301,32 @@ func TestSmokeFullstackDataDriven(t *testing.T) {
 		t.Fatalf("Load() unexpected error: %v", err)
 	}
 
-	defs, executors := newRegistries(t, fullstackFactories())
+	defs, executors := newRegistries(t, chainFactories())
 	v := validation.NewSemanticValidator(executors, defs, artifact.NewRegistry())
 	if err := v.Validate(def); err != nil {
 		t.Fatalf("semantic validation unexpected error:\n%v", err)
 	}
 	res := simulate(t, def, contractsFor(t, defs, def))
 
-	wantOrder := []string{"requirement", "architecture", "backend", "openapi", "frontend"}
+	wantOrder := []string{"coder", "sdk"}
 	if !reflect.DeepEqual(res.order, wantOrder) {
 		t.Fatalf("execution order = %v, want %v", res.order, wantOrder)
 	}
 
 	// 每个声明 Output 都产出了 Artifact（Mock 行为）：
-	// requirement 2 个、architecture/openapi 各 1 个，backend/frontend 各 2 个，共 8 个。
-	if len(res.artifacts) != 8 {
-		t.Fatalf("produced %d artifacts, want 8", len(res.artifacts))
+	// coder 2 个（source-code + openapi）、sdk 1 个（frontend-sdk），共 3 个。
+	if len(res.artifacts) != 3 {
+		t.Fatalf("produced %d artifacts, want 3", len(res.artifacts))
 	}
 
-	// 输入数量：backend 消费 2 个 Artifact，frontend 消费 3 个。
-	if res.inputCount["backend"] != 2 {
-		t.Errorf("backend inputs = %d, want 2", res.inputCount["backend"])
-	}
-	if res.inputCount["frontend"] != 3 {
-		t.Errorf("frontend inputs = %d, want 3", res.inputCount["frontend"])
+	// 输入数量：sdk 消费 1 个 Artifact。
+	if res.inputCount["sdk"] != 1 {
+		t.Errorf("sdk inputs = %d, want 1", res.inputCount["sdk"])
 	}
 
 	// 串行链路：任一时刻 Ready Queue 至多 1 个 Node。
 	if res.maxReady != 1 {
-		t.Errorf("maxReady = %d, want 1 (fullstack is a serial chain)", res.maxReady)
+		t.Errorf("maxReady = %d, want 1 (chain is serial)", res.maxReady)
 	}
 }
 
@@ -354,12 +338,12 @@ func TestSmokeControlDependency(t *testing.T) {
 		Kind:       workflow.KindWorkflow,
 		Metadata:   workflow.Metadata{Name: "deploy"},
 		Nodes: map[string]workflow.NodeSpec{
-			"approval": {Type: "human-approval"},
-			"deploy":   {Type: "cd", DependsOn: []string{"approval"}},
+			"approval": {Node: "human-approval"},
+			"deploy":   {Node: "cd", DependsOn: []string{"approval"}},
 		},
 	}
 
-	defs, executors := newRegistries(t, fullstackFactories())
+	defs, executors := newRegistries(t, chainFactories())
 	if err := validation.NewSemanticValidator(executors, defs, artifact.NewRegistry()).Validate(def); err != nil {
 		t.Fatalf("semantic validation unexpected error:\n%v", err)
 	}
@@ -382,7 +366,7 @@ func TestSmokeControlDependency(t *testing.T) {
 // TestSmokeParallelReadiness（计划 Case 2，为 M7 并行执行提供前提验证）：
 // 菱形 DAG（A -> B/C -> D）中 B 与 C 在 A 完成后同时 Ready，D 等待两者。
 func TestSmokeParallelReadiness(t *testing.T) {
-	factories := append(fullstackFactories(), fakeFactory{
+	factories := append(chainFactories(), fakeFactory{
 		definition: "code-reviewer",
 		inputs: map[string]definition.InputPort{
 			"left":  {Type: "SourceCode"},
@@ -396,17 +380,17 @@ func TestSmokeParallelReadiness(t *testing.T) {
 		Kind:       workflow.KindWorkflow,
 		Metadata:   workflow.Metadata{Name: "diamond"},
 		Nodes: map[string]workflow.NodeSpec{
-			"a": {Type: "requirement-analysis"},
+			"a": {Node: "coding-agent"},
 			"b": {
-				Type:   "coding-agent",
-				Inputs: map[string]workflow.InputBinding{"analysis-output": {From: "a.analysis-output"}},
+				Node:   "coding-agent",
+				Inputs: map[string]workflow.InputBinding{"openapi": {From: "a.openapi"}},
 			},
 			"c": {
-				Type:   "coding-agent",
-				Inputs: map[string]workflow.InputBinding{"analysis-output": {From: "a.analysis-output"}},
+				Node:   "coding-agent",
+				Inputs: map[string]workflow.InputBinding{"openapi": {From: "a.openapi"}},
 			},
 			"d": {
-				Type: "code-reviewer",
+				Node: "code-reviewer",
 				Inputs: map[string]workflow.InputBinding{
 					"left":  {From: "b.source-code"},
 					"right": {From: "c.source-code"},

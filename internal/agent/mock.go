@@ -18,9 +18,9 @@ type MockCodingAgent struct{}
 // NewMockCodingAgent 创建 Mock Agent。
 func NewMockCodingAgent() *MockCodingAgent { return &MockCodingAgent{} }
 
-// Execute 在 Workspace 写入 .mock-agent/<task>.md 并产出 SourceCode 引用；
-// 若输入包含 ArchitectureSpec（后端语义），补产 OpenAPI 引用，
-// 使 fullstack 的 backend 节点满足 openapi-generator 的输入契约（计划 §10）。
+// Execute 在 Workspace 写入 .mock-agent/task.md 并产出 SourceCode 引用；
+// 另补产 OpenAPI 引用（源节点场景下没有 ArchitectureSpec 输入，
+// 使最小链路的 coding-agent 满足 openapi-generator 的输入契约，计划 §10）。
 func (m *MockCodingAgent) Execute(
 	ctx context.Context,
 	task Task,
@@ -45,29 +45,24 @@ func (m *MockCodingAgent) Execute(
 		return nil, fmt.Errorf("mock agent: write task file: %w", err)
 	}
 
-	refs := []artifact.ArtifactRef{
+	openapiFile := filepath.Join(outDir, "openapi.yaml")
+	spec := "openapi: 3.1.0\npaths:\n  /orders:\n    get: {}\n"
+	if err := os.WriteFile(openapiFile, []byte(spec), 0o644); err != nil {
+		return nil, fmt.Errorf("mock agent: write openapi: %w", err)
+	}
+
+	return []artifact.ArtifactRef{
 		{
 			ID:      "source-code",
 			Kind:    artifact.KindSourceCode,
 			Version: "1",
 			URI:     taskFile,
 		},
-	}
-	for _, in := range inputs {
-		if in.Kind == artifact.KindArchitectureSpec {
-			openapiFile := filepath.Join(outDir, "openapi.yaml")
-			spec := "openapi: 3.1.0\npaths:\n  /orders:\n    get: {}\n"
-			if err := os.WriteFile(openapiFile, []byte(spec), 0o644); err != nil {
-				return nil, fmt.Errorf("mock agent: write openapi: %w", err)
-			}
-			refs = append(refs, artifact.ArtifactRef{
-				ID:      "openapi",
-				Kind:    artifact.KindOpenAPI,
-				Version: "1",
-				URI:     openapiFile,
-			})
-			break
-		}
-	}
-	return refs, nil
+		{
+			ID:      "openapi",
+			Kind:    artifact.KindOpenAPI,
+			Version: "1",
+			URI:     openapiFile,
+		},
+	}, nil
 }

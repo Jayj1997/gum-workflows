@@ -11,9 +11,9 @@ type Repository struct {
 }
 
 // Context 是计划中的 ProjectContext：一次 Execution 的项目运行环境。
-// Workflow YAML 的 project 段（repository/branch）经 Resolver 解析后得到本结构。
+// Workflow YAML 的 projects 列表（name/repository）经 Resolver 解析后得到本结构。
+// 本期无 branch（设计文档 §3.5：本地项目无意义）。
 type Context struct {
 	Repository Repository
-	Branch     string
 	Workspace  string
 }
