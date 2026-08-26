@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
+	"github.com/Jayj1997/gum-workflows/internal/definition"
 	"github.com/Jayj1997/gum-workflows/internal/node"
 	"github.com/Jayj1997/gum-workflows/internal/project"
 	"github.com/Jayj1997/gum-workflows/internal/workflow"
@@ -61,7 +62,8 @@ func WithParallelism(n int) Option {
 // Engine 串行执行 Workflow：Ready 的 Node 依次执行，
 // 完成后推进依赖计数并将新 Ready 的 Node 入队，直至完成或首个失败。
 type Engine struct {
-	registry    *node.Registry
+	executors   *node.ExecutorRegistry
+	defs        *definition.Registry
 	store       artifact.Store
 	logger      *slog.Logger
 	stateDir    string
@@ -70,12 +72,13 @@ type Engine struct {
 	executionID string
 }
 
-// NewEngine 创建引擎。logger 为 nil 时丢弃日志。
-func NewEngine(registry *node.Registry, store artifact.Store, logger *slog.Logger, opts ...Option) *Engine {
+// NewEngine 创建引擎。契约（inputs/outputs）从 defs（Node Definition
+// YAML）读取；Go 实现经 executors 实例化。logger 为 nil 时丢弃日志。
+func NewEngine(executors *node.ExecutorRegistry, defs *definition.Registry, store artifact.Store, logger *slog.Logger, opts ...Option) *Engine {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	e := &Engine{registry: registry, store: store, logger: logger}
+	e := &Engine{executors: executors, defs: defs, store: store, logger: logger}
 	for _, opt := range opts {
 		opt(e)
 	}
@@ -299,15 +302,19 @@ func (e *Engine) runNodeExecution(
 		return fmt.Errorf("node %q failed: %w", id, err)
 	}
 
-	// 输出契约检查：返回的输出名必须已声明，且 Kind 与声明一致。
-	declared := nodes[id].OutputSchema().Outputs
+	// 输出契约检查（按 YAML 契约执行，设计文档 §6.9）：
+	// 返回的输出名必须已声明，且产出 Kind 落在声明类型的取值集合内。
+	declared, err := e.declaredOutputs(def.Nodes[id].Type)
+	if err != nil {
+		return fmt.Errorf("node %q: %w", id, err)
+	}
 	for name, ref := range outputs {
 		want, ok := declared[name]
 		if !ok {
 			return fmt.Errorf("node %q returned undeclared output %q", id, name)
 		}
-		if ref.Kind != want {
-			return fmt.Errorf("node %q output %q has kind %q, want %q", id, name, ref.Kind, want)
+		if !definition.MatchesKind(want, string(ref.Kind)) {
+			return fmt.Errorf("node %q output %q has kind %q, want %q", id, name, ref.Kind, want.String())
 		}
 	}
 
@@ -318,6 +325,24 @@ func (e *Engine) runNodeExecution(
 
 	e.logger.Info("node succeeded", "execution", exec.ID, "node", id, "outputs", len(outputs))
 	return nil
+}
+
+// declaredOutputs 解析 Node Definition 的输出契约：输出名 -> 已解析的
+// TypeExpr。契约语法非法在定义层校验报出；此处解析失败即运行期错误。
+func (e *Engine) declaredOutputs(definitionName string) (map[string]definition.TypeExpr, error) {
+	d, err := e.defs.Definition(definitionName)
+	if err != nil {
+		return nil, err
+	}
+	declared := make(map[string]definition.TypeExpr, len(d.Outputs))
+	for name, port := range d.Outputs {
+		t, err := definition.ParseTypeExpr(port.Type)
+		if err != nil {
+			return nil, fmt.Errorf("output %q: %w", name, err)
+		}
+		declared[name] = t
+	}
+	return declared, nil
 }
 
 // projectContext 返回本次运行的 ProjectContext：优先使用注入的
@@ -332,7 +357,9 @@ func (e *Engine) projectContext(def workflow.Definition) project.Context {
 	}
 }
 
-// instantiate 依据 Registry 实例化全部 Node 定义。
+// instantiate 依据 ExecutorRegistry 实例化全部 Node 定义：
+// 缺省解析取 Latest(definition)（显式 executor 版本字段属票 05 的
+// Schema 变更，届时接入 Get(definition, version)）。
 func (e *Engine) instantiate(def workflow.Definition) (map[string]node.Node, error) {
 	ids := make([]string, 0, len(def.Nodes))
 	for id := range def.Nodes {
@@ -343,10 +370,13 @@ func (e *Engine) instantiate(def workflow.Definition) (map[string]node.Node, err
 	nodes := make(map[string]node.Node, len(def.Nodes))
 	for _, id := range ids {
 		spec := def.Nodes[id]
-		f, ok := e.registry.Get(spec.Type)
-		if !ok {
-			return nil, fmt.Errorf("node %q: unknown node type %q (registered: %v)",
-				id, spec.Type, e.registry.Types())
+		if _, err := e.defs.Definition(spec.Type); err != nil {
+			return nil, fmt.Errorf("node %q: unknown node definition %q (registered: %v)",
+				id, spec.Type, e.defs.DefinitionNames())
+		}
+		f, err := e.executors.Latest(spec.Type)
+		if err != nil {
+			return nil, fmt.Errorf("node %q: %w", id, err)
 		}
 		n, err := f.Create(node.Config(spec.Config))
 		if err != nil {

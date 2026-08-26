@@ -164,16 +164,17 @@ func (r *Registry) Latest(definition string) (NodeExecutorDefinition, error) {
 	}
 	latest := versions[0]
 	for _, v := range versions[1:] {
-		if compareVersion(v, latest) > 0 {
+		if CompareVersions(v, latest) > 0 {
 			latest = v
 		}
 	}
 	return r.execs[definition][latest], nil
 }
 
-// compareVersion 比较两个版本字符串：先比 v 前缀（按字典序），
-// 再比数字部分（按数值）。返回 -1/0/1。
-func compareVersion(a, b string) int {
+// CompareVersions 比较两个版本字符串（v1、v2……）：先比 v 前缀
+// （按字典序），再比数字部分（按数值）。返回 -1/0/1。
+// 供 definition 与 node 两层注册表的 Latest 解析共用。
+func CompareVersions(a, b string) int {
 	aPrefix, aNum, aOK := splitVersion(a)
 	bPrefix, bNum, bOK := splitVersion(b)
 	if aOK && bOK && aPrefix == bPrefix {

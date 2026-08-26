@@ -38,8 +38,8 @@ func TestValidateCmd(t *testing.T) {
 		if err == nil {
 			t.Fatal("validateCmd(unknown-type) = nil error, want semantic rejection")
 		}
-		if !strings.Contains(err.Error(), "unknown node type") {
-			t.Errorf("error %q should mention unknown node type", err)
+		if !strings.Contains(err.Error(), "unknown node definition") {
+			t.Errorf("error %q should mention unknown node definition", err)
 		}
 	})
 

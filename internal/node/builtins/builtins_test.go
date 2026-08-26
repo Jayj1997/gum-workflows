@@ -8,59 +8,17 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
 	"github.com/Jayj1997/gum-workflows/internal/node"
 	"github.com/Jayj1997/gum-workflows/internal/project"
-	"github.com/Jayj1997/gum-workflows/internal/workflow"
 )
 
-// registryWithBuiltins 返回已注册全部内置 Node 的 Registry，
-// 并走一遍语义校验（内置 Node 的 Schema 必须自洽）。
-func registryWithBuiltins(t *testing.T) *node.Registry {
+// executorsWithBuiltins 返回已注册全部内置 Executor 的注册表。
+func executorsWithBuiltins(t *testing.T) *node.ExecutorRegistry {
 	t.Helper()
 
-	reg := node.NewRegistry()
+	reg := node.NewExecutorRegistry()
 	if err := RegisterAll(reg); err != nil {
 		t.Fatalf("RegisterAll() unexpected error: %v", err)
 	}
 	return reg
-}
-
-// fullstackDef 与设计计划 §10/§42 的 Workflow 一致（零 dependsOn）。
-func fullstackDef() workflow.Definition {
-	return workflow.Definition{
-		APIVersion: workflow.APIVersionV1,
-		Kind:       workflow.KindWorkflow,
-		Metadata:   workflow.Metadata{Name: "fullstack-development"},
-		Project:    workflow.ProjectSpec{Repository: "./project"},
-		Nodes: map[string]workflow.NodeSpec{
-			"requirement": {Type: "requirement-analysis"},
-			"architecture": {
-				Type:   "architecture-design",
-				Inputs: map[string]workflow.InputBinding{"requirement": {From: "requirement.requirement"}},
-			},
-			"backend": {
-				Type: "coding-agent",
-				Config: map[string]any{
-					"task": "实现后端",
-				},
-				Inputs: map[string]workflow.InputBinding{
-					"requirement":  {From: "requirement.requirement"},
-					"architecture": {From: "architecture.architecture"},
-				},
-			},
-			"openapi": {
-				Type:   "openapi-generator",
-				Inputs: map[string]workflow.InputBinding{"openapi": {From: "backend.openapi"}},
-			},
-			"frontend": {
-				Type:   "coding-agent",
-				Config: map[string]any{"task": "实现前端"},
-				Inputs: map[string]workflow.InputBinding{
-					"requirement":  {From: "requirement.requirement"},
-					"openapi":      {From: "backend.openapi"},
-					"frontend-sdk": {From: "openapi.frontend-sdk"},
-				},
-			},
-		},
-	}
 }
 
 // newExecCtx 构造带 Workspace 的 ExecutionContext（Mock Agent 需要）。
@@ -78,11 +36,11 @@ func newExecCtx(t *testing.T, ws string) node.ExecutionContext {
 }
 
 func TestRegisterAllRegistersMVPNodeTypes(t *testing.T) {
-	reg := registryWithBuiltins(t)
+	reg := executorsWithBuiltins(t)
 
-	for _, typ := range []string{"requirement-analysis", "architecture-design", "coding-agent", "openapi-generator"} {
-		if _, ok := reg.Get(typ); !ok {
-			t.Errorf("type %q not registered", typ)
+	for _, def := range []string{"requirement-analysis", "architecture-design", "coding-agent", "openapi-generator"} {
+		if _, err := reg.Get(def, "v1"); err != nil {
+			t.Errorf("executor (%s, v1) not registered: %v", def, err)
 		}
 	}
 	// 重复注册报错。
@@ -93,29 +51,33 @@ func TestRegisterAllRegistersMVPNodeTypes(t *testing.T) {
 
 func TestRequirementNode(t *testing.T) {
 	ctx := newExecCtx(t, t.TempDir())
-	n, _ := requirementFactory{}.Create(nil)
+	n, _ := requirementExecutor{}.Create(nil)
 
 	outputs, err := n.Execute(ctx, nil)
 	if err != nil {
 		t.Fatalf("Execute() unexpected error: %v", err)
 	}
-	if ref, ok := outputs["requirement"]; !ok || ref.Kind != artifact.KindRequirementSpec {
-		t.Fatalf("outputs = %+v, want requirement/RequirementSpec", outputs)
+	if ref, ok := outputs["rationality"]; !ok {
+		t.Fatalf("outputs = %+v, want rationality", outputs)
+	} else if _, err := ctx.Store.Get(ref); err != nil {
+		t.Errorf("Get(rationality): %v", err)
 	}
-	if _, err := ctx.Store.Get(outputs["requirement"]); err != nil {
-		t.Errorf("Get(): %v", err)
+	if ref, ok := outputs["analysis-output"]; !ok {
+		t.Fatalf("outputs = %+v, want analysis-output", outputs)
+	} else if _, err := ctx.Store.Get(ref); err != nil {
+		t.Errorf("Get(analysis-output): %v", err)
 	}
 }
 
 func TestArchitectureNode(t *testing.T) {
 	ctx := newExecCtx(t, t.TempDir())
-	req, err := ctx.Store.Put(artifact.Artifact{ID: "requirement", Kind: artifact.KindRequirementSpec})
+	req, err := ctx.Store.Put(artifact.Artifact{ID: "analysis-output", Kind: artifact.KindArchitectureSpec})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	n, _ := architectureFactory{}.Create(nil)
-	outputs, err := n.Execute(ctx, map[string]artifact.ArtifactRef{"requirement": req})
+	n, _ := architectureExecutor{}.Create(nil)
+	outputs, err := n.Execute(ctx, map[string]artifact.ArtifactRef{"analysis-output": req})
 	if err != nil {
 		t.Fatalf("Execute() unexpected error: %v", err)
 	}
@@ -128,7 +90,7 @@ func TestCodingAgentNodeWritesTaskInWorkspace(t *testing.T) {
 	ws := t.TempDir()
 	ctx := newExecCtx(t, ws)
 
-	f := newCodingAgentFactory(newMockAgent())
+	f := newCodingAgentExecutor(newMockAgent())
 	n, err := f.Create(node.Config{"task": "实现订单系统后端"})
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +121,7 @@ func TestOpenAPIGeneratorNode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, _ := openapiGeneratorFactory{}.Create(nil)
+	n, _ := openapiGeneratorExecutor{}.Create(nil)
 	outputs, err := n.Execute(ctx, map[string]artifact.ArtifactRef{"openapi": spec})
 	if err != nil {
 		t.Fatalf("Execute() unexpected error: %v", err)
@@ -183,7 +145,7 @@ func TestOpenAPIGeneratorNode(t *testing.T) {
 func TestCodingAgentProducesOpenAPIForBackend(t *testing.T) {
 	ctx := newExecCtx(t, t.TempDir())
 
-	f := newCodingAgentFactory(newMockAgent())
+	f := newCodingAgentExecutor(newMockAgent())
 	n, _ := f.Create(node.Config{"task": "实现后端"})
 
 	req, _ := ctx.Store.Put(artifact.Artifact{ID: "requirement", Kind: artifact.KindRequirementSpec})

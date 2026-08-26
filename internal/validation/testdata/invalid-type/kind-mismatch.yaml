@@ -16,4 +16,4 @@ nodes:
 
     inputs:
       openapi:
-        from: requirement.requirement
+        from: requirement.analysis-output

@@ -19,7 +19,7 @@ import (
 //	Load YAML -> CUE Validate -> Parse -> Semantic Validate ->
 //	Create Execution -> Initialize Project/Workspace -> Execute -> Persist
 func runCmd(path string) error {
-	def, data, registry, err := loadAndValidate(path)
+	def, data, executors, defsRegistry, err := loadAndValidate(path)
 	if err != nil {
 		return err
 	}
@@ -62,7 +62,8 @@ func runCmd(path string) error {
 	}
 
 	engine := execution.NewEngine(
-		registry,
+		executors,
+		defsRegistry,
 		store,
 		nil,
 		execution.WithStateDir(runtime.BaseDir),

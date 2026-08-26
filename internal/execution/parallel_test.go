@@ -10,20 +10,28 @@ import (
 	"time"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
+	"github.com/Jayj1997/gum-workflows/internal/definition"
 	"github.com/Jayj1997/gum-workflows/internal/node"
 	"github.com/Jayj1997/gum-workflows/internal/workflow"
 )
 
 // slowNodeFactory 产出可阻塞的 Node：block 释放前 Execute 不返回。
 type slowNodeFactory struct {
-	nodeType string
-	schema   node.Schema
-	block    chan struct{}
-	running  *atomic.Int32 // 当前正在执行的实例数
-	maxSeen  *atomic.Int32 // 并发执行峰值
+	definition string
+	inputs     map[string]definition.InputPort
+	outputs    map[string]definition.OutputPort
+	block      chan struct{}
+	running    *atomic.Int32 // 当前正在执行的实例数
+	maxSeen    *atomic.Int32 // 并发执行峰值
 }
 
-func (f *slowNodeFactory) Type() string { return f.nodeType }
+func (f *slowNodeFactory) Definition() string { return f.definition }
+func (f *slowNodeFactory) Version() string    { return "v1" }
+
+// Contract 声明端口契约（newTestRegistries 注册进内存 definition.Registry）。
+func (f *slowNodeFactory) Contract() (map[string]definition.InputPort, map[string]definition.OutputPort) {
+	return f.inputs, f.outputs
+}
 
 func (f *slowNodeFactory) Create(config node.Config) (node.Node, error) {
 	return slowNode{f: f}, nil
@@ -31,12 +39,6 @@ func (f *slowNodeFactory) Create(config node.Config) (node.Node, error) {
 
 type slowNode struct {
 	f *slowNodeFactory
-}
-
-func (n slowNode) Type() string             { return n.f.nodeType }
-func (n slowNode) InputSchema() node.Schema { return n.f.schema }
-func (n slowNode) OutputSchema() node.Schema {
-	return n.f.schema
 }
 
 func (n slowNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
@@ -55,9 +57,9 @@ func (n slowNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.
 		return nil, ctx.Err()
 	}
 
-	outputs := make(map[string]artifact.ArtifactRef, len(n.f.schema.Outputs))
-	for name, kind := range n.f.schema.Outputs {
-		ref, err := ctx.Store.Put(artifact.Artifact{ID: name, Kind: kind})
+	outputs := make(map[string]artifact.ArtifactRef, len(n.f.outputs))
+	for name, port := range n.f.outputs {
+		ref, err := ctx.Store.Put(artifact.Artifact{ID: name, Kind: artifact.Kind(port.Type)})
 		if err != nil {
 			return nil, err
 		}
@@ -92,32 +94,23 @@ func newDiamondEngine(t *testing.T) (*Engine, *atomic.Int32, *atomic.Int32, chan
 	running, maxSeen := &atomic.Int32{}, &atomic.Int32{}
 	block := make(chan struct{})
 
-	reg := node.NewRegistry()
 	xFactory := &slowNodeFactory{
-		nodeType: "x",
-		schema: node.Schema{
-			Inputs:  map[string]artifact.Kind{"in": artifact.KindSourceCode},
-			Outputs: map[string]artifact.Kind{"out": artifact.KindSourceCode},
-		},
-		block: block, running: running, maxSeen: maxSeen,
+		definition: "x",
+		inputs:     map[string]definition.InputPort{"in": {Type: "SourceCode"}},
+		outputs:    map[string]definition.OutputPort{"out": {Type: "SourceCode"}},
+		block:      block, running: running, maxSeen: maxSeen,
 	}
 	joinFactory := &slowNodeFactory{
-		nodeType: "join",
-		schema: node.Schema{
-			Inputs: map[string]artifact.Kind{
-				"left":  artifact.KindSourceCode,
-				"right": artifact.KindSourceCode,
-			},
-			Outputs: map[string]artifact.Kind{"joined": artifact.KindSourceCode},
+		definition: "join",
+		inputs: map[string]definition.InputPort{
+			"left":  {Type: "SourceCode"},
+			"right": {Type: "SourceCode"},
 		},
-		block: block, running: running, maxSeen: maxSeen,
+		outputs: map[string]definition.OutputPort{"joined": {Type: "SourceCode"}},
+		block:   block, running: running, maxSeen: maxSeen,
 	}
-	for _, f := range []node.Factory{xFactory, joinFactory} {
-		if err := reg.Register(f); err != nil {
-			t.Fatalf("register %q: %v", f.Type(), err)
-		}
-	}
-	return NewEngine(reg, artifact.NewMemStore(), nil), running, maxSeen, block
+	dr, er := newTestRegistries(t, xFactory, joinFactory)
+	return NewEngine(er, dr, artifact.NewMemStore(), nil), running, maxSeen, block
 }
 
 // TestParallelDiamondRunsConcurrently（计划 Case 2 / §38）：
@@ -133,9 +126,8 @@ func TestParallelDiamondRunsConcurrently(t *testing.T) {
 
 	// 通过 config 无从区分节点位置，这里用输入数量区分：
 	// A 无输入（源），B/C 各 1 输入，D 2 输入。
-	reg := node.NewRegistry()
 	stageFactory := &stagedNodeFactory{
-		nodeType: "x",
+		definition: "x",
 		gates: func(inputs int) <-chan struct{} {
 			if inputs == 0 {
 				return gateA
@@ -143,27 +135,19 @@ func TestParallelDiamondRunsConcurrently(t *testing.T) {
 			return gateBC
 		},
 		running: running, maxSeen: maxSeen,
-		schema: node.Schema{
-			Inputs:  map[string]artifact.Kind{"in": artifact.KindSourceCode},
-			Outputs: map[string]artifact.Kind{"out": artifact.KindSourceCode},
-		},
+		inputs:  map[string]definition.InputPort{"in": {Type: "SourceCode"}},
+		outputs: map[string]definition.OutputPort{"out": {Type: "SourceCode"}},
 	}
 	joinFactory := &stagedNodeFactory{
-		nodeType: "join",
-		gates:    func(inputs int) <-chan struct{} { return gateBC },
-		running:  running, maxSeen: maxSeen,
-		schema: node.Schema{
-			Inputs:  map[string]artifact.Kind{"left": artifact.KindSourceCode, "right": artifact.KindSourceCode},
-			Outputs: map[string]artifact.Kind{"joined": artifact.KindSourceCode},
-		},
+		definition: "join",
+		gates:      func(inputs int) <-chan struct{} { return gateBC },
+		running:    running, maxSeen: maxSeen,
+		inputs:  map[string]definition.InputPort{"left": {Type: "SourceCode"}, "right": {Type: "SourceCode"}},
+		outputs: map[string]definition.OutputPort{"joined": {Type: "SourceCode"}},
 	}
-	for _, f := range []node.Factory{stageFactory, joinFactory} {
-		if err := reg.Register(f); err != nil {
-			t.Fatalf("register: %v", err)
-		}
-	}
+	dr, er := newTestRegistries(t, stageFactory, joinFactory)
 
-	e := NewEngine(reg, artifact.NewMemStore(), nil, WithParallelism(2))
+	e := NewEngine(er, dr, artifact.NewMemStore(), nil, WithParallelism(2))
 
 	done := make(chan struct{})
 	go func() {
@@ -207,28 +191,29 @@ func waitFor(t *testing.T, c *atomic.Int32, want int32, timeout time.Duration, w
 }
 
 // stagedNodeFactory 产出按「本次 Execute 收到的输入数量」选择闸门的 Node。
-// nodeType 由构造方给定（同一工厂逻辑可注册成不同 Type）。
+// definition 由构造方给定（同一工厂逻辑可注册成不同定义）。
 type stagedNodeFactory struct {
-	nodeType string
-	gates    func(inputs int) <-chan struct{}
-	running  *atomic.Int32
-	maxSeen  *atomic.Int32
-	schema   node.Schema
+	definition string
+	inputs     map[string]definition.InputPort
+	outputs    map[string]definition.OutputPort
+	gates      func(inputs int) <-chan struct{}
+	running    *atomic.Int32
+	maxSeen    *atomic.Int32
 }
 
-func (f *stagedNodeFactory) Type() string { return f.nodeType }
+func (f *stagedNodeFactory) Definition() string { return f.definition }
+func (f *stagedNodeFactory) Version() string    { return "v1" }
+
+// Contract 声明端口契约（newTestRegistries 注册进内存 definition.Registry）。
+func (f *stagedNodeFactory) Contract() (map[string]definition.InputPort, map[string]definition.OutputPort) {
+	return f.inputs, f.outputs
+}
 
 func (f *stagedNodeFactory) Create(config node.Config) (node.Node, error) {
 	return stagedNode{f: f}, nil
 }
 
 type stagedNode struct{ f *stagedNodeFactory }
-
-func (n stagedNode) Type() string             { return n.f.nodeType }
-func (n stagedNode) InputSchema() node.Schema { return n.f.schema }
-func (n stagedNode) OutputSchema() node.Schema {
-	return n.f.schema
-}
 
 func (n stagedNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
 	cur := n.f.running.Add(1)
@@ -248,7 +233,7 @@ func (n stagedNode) Execute(ctx node.ExecutionContext, inputs map[string]artifac
 
 	// 输出名与声明一致：join 输出 joined，其余输出 out。
 	outName := "out"
-	if _, ok := n.f.schema.Outputs["joined"]; ok {
+	if _, ok := n.f.outputs["joined"]; ok {
 		outName = "joined"
 	}
 	ref, err := ctx.Store.Put(artifact.Artifact{ID: outName, Kind: artifact.KindSourceCode})
@@ -265,9 +250,8 @@ func TestParallelSerialFallback(t *testing.T) {
 
 	// 三节点扇出（A -> B, A -> C），全部同一 Type；A 等待 gateA，
 	// B/C 等待 gateBC。串行模式下 A 阻塞期间 B/C 绝不能进入。
-	reg := node.NewRegistry()
-	if err := reg.Register(&stagedNodeFactory{
-		nodeType: "staged",
+	dr, er := newTestRegistries(t, &stagedNodeFactory{
+		definition: "staged",
 		gates: func(inputs int) <-chan struct{} {
 			if inputs == 0 {
 				return gateA
@@ -275,13 +259,9 @@ func TestParallelSerialFallback(t *testing.T) {
 			return gateBC
 		},
 		running: running, maxSeen: maxSeen,
-		schema: node.Schema{
-			Inputs:  map[string]artifact.Kind{"in": artifact.KindSourceCode},
-			Outputs: map[string]artifact.Kind{"out": artifact.KindSourceCode},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+		inputs:  map[string]definition.InputPort{"in": {Type: "SourceCode"}},
+		outputs: map[string]definition.OutputPort{"out": {Type: "SourceCode"}},
+	})
 
 	def := workflow.Definition{
 		APIVersion: workflow.APIVersionV1,
@@ -294,7 +274,7 @@ func TestParallelSerialFallback(t *testing.T) {
 		},
 	}
 
-	e := NewEngine(reg, artifact.NewMemStore(), nil) // 默认串行
+	e := NewEngine(er, dr, artifact.NewMemStore(), nil) // 默认串行
 	done := make(chan struct{})
 	go func() {
 		exec, err := e.Run(context.Background(), def)
@@ -324,8 +304,8 @@ func TestParallelSerialFallback(t *testing.T) {
 // TestParallelFullstackSucceeds：并行模式跑完整 fullstack（链路本身无并行度，
 // 验证并行路径不破坏依赖正确性）。
 func TestParallelFullstackSucceeds(t *testing.T) {
-	base, _ := newFullstackEngine(t)
-	e := NewEngine(base.registry, artifact.NewMemStore(), nil, WithParallelism(4))
+	dr, er := newTestRegistries(t, fullstackFactories(nil)...)
+	e := NewEngine(er, dr, artifact.NewMemStore(), nil, WithParallelism(4))
 
 	exec, err := e.Run(context.Background(), fullstackDef())
 	if err != nil {
@@ -343,27 +323,26 @@ func TestParallelFullstackSucceeds(t *testing.T) {
 
 // TestParallelFailureStopsDispatch：A 失败后，B/C 不得被执行（失败即停派发）。
 func TestParallelFailureStopsDispatch(t *testing.T) {
-	reg := node.NewRegistry()
-	if err := reg.Register(fnFactory{
-		nodeType: "fail",
-		create: func(config node.Config) (node.Node, error) {
-			return failingNode{}, nil
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
 	// 记录哪些下游 Node 真正执行过。
 	var mu sync.Mutex
 	ran := map[string]bool{}
-	if err := reg.Register(fnFactory{
-		nodeType: "ok",
-		create: func(config node.Config) (node.Node, error) {
-			return recordNode{ran: ran, mu: &mu, kind: artifact.KindSourceCode}, nil
+
+	dr, er := newTestRegistries(t,
+		fnFactory{
+			definition: "fail",
+			outputs:    map[string]definition.OutputPort{"out": {Type: "SourceCode"}},
+			create: func(config node.Config) (node.Node, error) {
+				return failingNode{}, nil
+			},
 		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+		fnFactory{
+			definition: "ok",
+			outputs:    map[string]definition.OutputPort{"out": {Type: "SourceCode"}},
+			create: func(config node.Config) (node.Node, error) {
+				return recordNode{ran: ran, mu: &mu, kind: artifact.KindSourceCode}, nil
+			},
+		},
+	)
 
 	def := workflow.Definition{
 		APIVersion: workflow.APIVersionV1,
@@ -376,7 +355,7 @@ func TestParallelFailureStopsDispatch(t *testing.T) {
 		},
 	}
 
-	e := NewEngine(reg, artifact.NewMemStore(), nil, WithParallelism(4))
+	e := NewEngine(er, dr, artifact.NewMemStore(), nil, WithParallelism(4))
 	exec, err := e.Run(context.Background(), def)
 	if err == nil {
 		t.Fatal("Run() = nil error, want failure")
@@ -405,12 +384,6 @@ type recordNode struct {
 	kind artifact.Kind
 }
 
-func (n recordNode) Type() string             { return "ok" }
-func (n recordNode) InputSchema() node.Schema { return node.Schema{} }
-func (n recordNode) OutputSchema() node.Schema {
-	return node.Schema{Outputs: map[string]artifact.Kind{"out": n.kind}}
-}
-
 func (n recordNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
 	n.mu.Lock()
 	n.ran["ok-node"] = true
@@ -424,12 +397,6 @@ func (n recordNode) Execute(ctx node.ExecutionContext, inputs map[string]artifac
 
 // failingNode 立即失败。
 type failingNode struct{}
-
-func (failingNode) Type() string             { return "fail" }
-func (failingNode) InputSchema() node.Schema { return node.Schema{} }
-func (failingNode) OutputSchema() node.Schema {
-	return node.Schema{Outputs: map[string]artifact.Kind{"out": artifact.KindSourceCode}}
-}
 
 func (failingNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
 	return nil, errors.New("planned failure")

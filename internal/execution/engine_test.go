@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
+	"github.com/Jayj1997/gum-workflows/internal/definition"
 	"github.com/Jayj1997/gum-workflows/internal/node"
 	"github.com/Jayj1997/gum-workflows/internal/workflow"
 )
@@ -15,38 +16,32 @@ import (
 // ---- 测试用可执行 Mock Node（仅测试内使用，内置 Mock Node 属后续里程碑）----
 
 type mockNode struct {
-	nodeType string
-	schema   node.Schema
-	fail     bool
+	definition string
+	outputs    map[string]definition.OutputPort
+	fail       bool
 	// skip 声明但不产出的输出名（模拟 Node 未产出某个声明过的产出）。
 	skip map[string]bool
 	// onRun 记录执行事件（含收到的输入），供顺序断言使用。
 	onRun func(nodeType string, inputs map[string]artifact.ArtifactRef)
 }
 
-func (m mockNode) Type() string             { return m.nodeType }
-func (m mockNode) InputSchema() node.Schema { return m.schema }
-func (m mockNode) OutputSchema() node.Schema {
-	return m.schema
-}
-
 func (m mockNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
 	if m.onRun != nil {
-		m.onRun(m.nodeType, inputs)
+		m.onRun(m.definition, inputs)
 	}
 	if m.fail {
-		return nil, fmt.Errorf("mock failure of %q", m.nodeType)
+		return nil, fmt.Errorf("mock failure of %q", m.definition)
 	}
-	outputs := make(map[string]artifact.ArtifactRef, len(m.schema.Outputs))
-	for name, kind := range m.schema.Outputs {
+	outputs := make(map[string]artifact.ArtifactRef, len(m.outputs))
+	for name, port := range m.outputs {
 		if m.skip[name] {
 			continue
 		}
 		ref, err := ctx.Store.Put(artifact.Artifact{
 			ID:      name,
-			Kind:    kind,
+			Kind:    artifact.Kind(port.Type),
 			Version: "1",
-			Data:    map[string]any{"nodeType": m.nodeType, "inputs": len(inputs)},
+			Data:    map[string]any{"nodeType": m.definition, "inputs": len(inputs)},
 		})
 		if err != nil {
 			return nil, fmt.Errorf("put output %q: %w", name, err)
@@ -57,32 +52,48 @@ func (m mockNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.
 }
 
 type mockFactory struct {
-	nodeType string
-	schema   node.Schema
-	fail     bool
-	skip     map[string]bool
-	onRun    func(nodeType string, inputs map[string]artifact.ArtifactRef)
+	definition string
+	inputs     map[string]definition.InputPort
+	outputs    map[string]definition.OutputPort
+	fail       bool
+	skip       map[string]bool
+	onRun      func(nodeType string, inputs map[string]artifact.ArtifactRef)
 }
 
-func (f mockFactory) Type() string { return f.nodeType }
+func (f mockFactory) Definition() string { return f.definition }
+func (f mockFactory) Version() string    { return "v1" }
+
+// Contract 声明端口契约（newTestRegistries 注册进内存 definition.Registry）。
+func (f mockFactory) Contract() (map[string]definition.InputPort, map[string]definition.OutputPort) {
+	return f.inputs, f.outputs
+}
 
 func (f mockFactory) Create(config node.Config) (node.Node, error) {
 	return mockNode{
-		nodeType: f.nodeType,
-		schema:   f.schema,
-		fail:     f.fail,
-		skip:     f.skip,
-		onRun:    f.onRun,
+		definition: f.definition,
+		outputs:    f.outputs,
+		fail:       f.fail,
+		skip:       f.skip,
+		onRun:      f.onRun,
 	}, nil
 }
 
-// fnFactory 用函数直接构造 Factory（测试辅助）。
+// fnFactory 用函数直接构造 Factory（测试辅助）；
+// inputs/outputs 直接携带端口契约（注册进内存 definition.Registry）。
 type fnFactory struct {
-	nodeType string
-	create   func(config node.Config) (node.Node, error)
+	definition string
+	inputs     map[string]definition.InputPort
+	outputs    map[string]definition.OutputPort
+	create     func(config node.Config) (node.Node, error)
 }
 
-func (f fnFactory) Type() string { return f.nodeType }
+func (f fnFactory) Definition() string { return f.definition }
+func (f fnFactory) Version() string    { return "v1" }
+
+// Contract 声明端口契约（newTestRegistries 注册进内存 definition.Registry）。
+func (f fnFactory) Contract() (map[string]definition.InputPort, map[string]definition.OutputPort) {
+	return f.inputs, f.outputs
+}
 
 func (f fnFactory) Create(config node.Config) (node.Node, error) {
 	return f.create(config)
@@ -133,13 +144,13 @@ func fullstackDef() workflow.Definition {
 			"requirement": {Type: "requirement-analysis"},
 			"architecture": {
 				Type:   "architecture-design",
-				Inputs: map[string]workflow.InputBinding{"requirement": {From: "requirement.requirement"}},
+				Inputs: map[string]workflow.InputBinding{"analysis-output": {From: "requirement.analysis-output"}},
 			},
 			"backend": {
 				Type: "coding-agent",
 				Inputs: map[string]workflow.InputBinding{
-					"requirement":  {From: "requirement.requirement"},
-					"architecture": {From: "architecture.architecture"},
+					"analysis-output": {From: "requirement.analysis-output"},
+					"architecture":    {From: "architecture.architecture"},
 				},
 			},
 			"openapi": {
@@ -149,65 +160,80 @@ func fullstackDef() workflow.Definition {
 			"frontend": {
 				Type: "coding-agent",
 				Inputs: map[string]workflow.InputBinding{
-					"requirement":  {From: "requirement.requirement"},
-					"openapi":      {From: "backend.openapi"},
-					"frontend-sdk": {From: "openapi.frontend-sdk"},
+					"analysis-output": {From: "requirement.analysis-output"},
+					"openapi":         {From: "backend.openapi"},
+					"frontend-sdk":    {From: "openapi.frontend-sdk"},
 				},
 			},
 		},
 	}
 }
 
-// newFullstackEngine 构造带 fullstack Node Type 的引擎与执行记录器。
+// fullstackContracts 是 fullstack 场景的端口契约（与种子
+// Node Definition YAML 同构；此处内联声明使测试不依赖内置节点集）。
+func fullstackContracts() map[string]mockFactory {
+	return map[string]mockFactory{
+		"requirement-analysis": {
+			outputs: map[string]definition.OutputPort{
+				"rationality":     {Type: "int"},
+				"analysis-output": {Type: "markdown"},
+			},
+		},
+		"architecture-design": {
+			inputs:  map[string]definition.InputPort{"analysis-output": {Type: "markdown"}},
+			outputs: map[string]definition.OutputPort{"architecture": {Type: "ArchitectureSpec"}},
+		},
+		"coding-agent": {
+			inputs: map[string]definition.InputPort{
+				"analysis-output": {Type: "markdown", Optional: true},
+				"architecture":    {Type: "ArchitectureSpec", Optional: true},
+				"openapi":         {Type: "OpenAPI", Optional: true},
+				"frontend-sdk":    {Type: "FrontendSDK", Optional: true},
+			},
+			outputs: map[string]definition.OutputPort{
+				"source-code": {Type: "SourceCode"},
+				"openapi":     {Type: "OpenAPI"},
+			},
+		},
+		"openapi-generator": {
+			inputs:  map[string]definition.InputPort{"openapi": {Type: "OpenAPI"}},
+			outputs: map[string]definition.OutputPort{"frontend-sdk": {Type: "FrontendSDK"}},
+		},
+	}
+}
+
+// fullstackFactories 构造 fullstack 场景的全部 ExecutorFactory
+// （onRun 传入执行记录器；nil 表示不记录）。
+func fullstackFactories(onRun func(nodeType string, inputs map[string]artifact.ArtifactRef)) []node.ExecutorFactory {
+	contracts := fullstackContracts()
+	var factories []node.ExecutorFactory
+	for _, def := range []string{"requirement-analysis", "architecture-design", "coding-agent", "openapi-generator"} {
+		f := contracts[def]
+		f.definition = def
+		f.onRun = onRun
+		factories = append(factories, f)
+	}
+	return factories
+}
+
+// newFullstackEngine 构造带 fullstack Node 契约的引擎与执行记录器。
 func newFullstackEngine(t *testing.T, mods ...func(nodeType string, f *mockFactory)) (*Engine, *recorder) {
 	t.Helper()
 
 	rec := new(recorder)
-	reg := node.NewRegistry()
-	for _, f := range []mockFactory{
-		{
-			nodeType: "requirement-analysis",
-			schema:   node.Schema{Outputs: map[string]artifact.Kind{"requirement": artifact.KindRequirementSpec}},
-		},
-		{
-			nodeType: "architecture-design",
-			schema: node.Schema{
-				Inputs:  map[string]artifact.Kind{"requirement": artifact.KindRequirementSpec},
-				Outputs: map[string]artifact.Kind{"architecture": artifact.KindArchitectureSpec},
-			},
-		},
-		{
-			nodeType: "coding-agent",
-			schema: node.Schema{
-				OptionalInputs: map[string]artifact.Kind{
-					"requirement":  artifact.KindRequirementSpec,
-					"architecture": artifact.KindArchitectureSpec,
-					"openapi":      artifact.KindOpenAPI,
-					"frontend-sdk": artifact.KindFrontendSDK,
-				},
-				Outputs: map[string]artifact.Kind{
-					"source-code": artifact.KindSourceCode,
-					"openapi":     artifact.KindOpenAPI,
-				},
-			},
-		},
-		{
-			nodeType: "openapi-generator",
-			schema: node.Schema{
-				Inputs:  map[string]artifact.Kind{"openapi": artifact.KindOpenAPI},
-				Outputs: map[string]artifact.Kind{"frontend-sdk": artifact.KindFrontendSDK},
-			},
-		},
-	} {
+	contracts := fullstackContracts()
+	var factories []node.ExecutorFactory
+	for _, def := range []string{"requirement-analysis", "architecture-design", "coding-agent", "openapi-generator"} {
+		f := contracts[def]
+		f.definition = def
 		for _, mod := range mods {
-			mod(f.nodeType, &f)
+			mod(def, &f)
 		}
 		f.onRun = rec.record
-		if err := reg.Register(f); err != nil {
-			t.Fatalf("register %q: %v", f.Type(), err)
-		}
+		factories = append(factories, f)
 	}
-	return NewEngine(reg, artifact.NewMemStore(), nil), rec
+	dr, er := newTestRegistries(t, factories...)
+	return NewEngine(er, dr, artifact.NewMemStore(), nil), rec
 }
 
 // ---- Engine 测试 ----
@@ -326,13 +352,14 @@ func TestRunFullstack(t *testing.T) {
 		}
 	}
 
-	// 输出数量：requirement/architecture/openapi 各 1，backend/frontend 各 2，共 7。
+	// 输出数量：requirement 2、architecture/openapi 各 1，backend/frontend 各 2，共 8
+	// （种子契约 requirement-analysis 产出 rationality + analysis-output）。
 	total := 0
 	for _, ns := range exec.Nodes {
 		total += len(ns.Outputs)
 	}
-	if total != 7 {
-		t.Errorf("total outputs = %d, want 7", total)
+	if total != 8 {
+		t.Errorf("total outputs = %d, want 8", total)
 	}
 
 	// 全部输出引用都能从 Store 取回且 Kind 一致。
@@ -358,15 +385,14 @@ func TestRunControlDependency(t *testing.T) {
 		order = append(order, nodeType)
 	}
 
-	reg := node.NewRegistry()
-	for _, f := range []mockFactory{
-		{nodeType: "approval", schema: node.Schema{Outputs: map[string]artifact.Kind{"approval": artifact.KindApprovalResult}}, onRun: record},
-		{nodeType: "cd", onRun: record},
-	} {
-		if err := reg.Register(f); err != nil {
-			t.Fatal(err)
-		}
-	}
+	dr, er := newTestRegistries(t,
+		mockFactory{
+			definition: "approval",
+			outputs:    map[string]definition.OutputPort{"approval": {Type: "ApprovalResult"}},
+			onRun:      record,
+		},
+		mockFactory{definition: "cd", onRun: record},
+	)
 
 	def := workflow.Definition{
 		APIVersion: workflow.APIVersionV1,
@@ -378,7 +404,7 @@ func TestRunControlDependency(t *testing.T) {
 		},
 	}
 
-	e := NewEngine(reg, artifact.NewMemStore(), nil)
+	e := NewEngine(er, dr, artifact.NewMemStore(), nil)
 	exec, err := e.Run(context.Background(), def)
 	if err != nil {
 		t.Fatalf("Run() unexpected error: %v", err)
@@ -425,8 +451,10 @@ func TestRunNodeFailure(t *testing.T) {
 	}
 }
 
-func TestRunUnknownNodeType(t *testing.T) {
-	e := NewEngine(node.NewRegistry(), artifact.NewMemStore(), nil)
+func TestRunUnknownNodeDefinition(t *testing.T) {
+	// 空定义注册表：workflow 引用的定义不存在。
+	dr, er := newTestRegistries(t)
+	e := NewEngine(er, dr, artifact.NewMemStore(), nil)
 
 	def := workflow.Definition{
 		APIVersion: workflow.APIVersionV1,
@@ -436,24 +464,26 @@ func TestRunUnknownNodeType(t *testing.T) {
 	}
 	_, err := e.Run(context.Background(), def)
 	if err == nil {
-		t.Fatal("Run() = nil error, want unknown node type")
+		t.Fatal("Run() = nil error, want unknown node definition")
 	}
-	if !strings.Contains(err.Error(), "unknown node type") {
-		t.Errorf("error %q should mention unknown node type", err)
+	if !strings.Contains(err.Error(), "unknown node definition") {
+		t.Errorf("error %q should mention unknown node definition", err)
 	}
 }
 
 func TestRunMissingOutput(t *testing.T) {
 	// 生产者声明了 out 但跳过产出，消费者绑定 out -> 执行期报错。
-	reg := node.NewRegistry()
-	for _, f := range []mockFactory{
-		{nodeType: "producer", schema: node.Schema{Outputs: map[string]artifact.Kind{"out": "KindA"}}, skip: map[string]bool{"out": true}},
-		{nodeType: "consumer", schema: node.Schema{Inputs: map[string]artifact.Kind{"in": "KindA"}}},
-	} {
-		if err := reg.Register(f); err != nil {
-			t.Fatal(err)
-		}
-	}
+	dr, er := newTestRegistries(t,
+		mockFactory{
+			definition: "producer",
+			outputs:    map[string]definition.OutputPort{"out": {Type: "KindA"}},
+			skip:       map[string]bool{"out": true},
+		},
+		mockFactory{
+			definition: "consumer",
+			inputs:     map[string]definition.InputPort{"in": {Type: "KindA"}},
+		},
+	)
 
 	def := workflow.Definition{
 		APIVersion: workflow.APIVersionV1,
@@ -465,7 +495,7 @@ func TestRunMissingOutput(t *testing.T) {
 		},
 	}
 
-	e := NewEngine(reg, artifact.NewMemStore(), nil)
+	e := NewEngine(er, dr, artifact.NewMemStore(), nil)
 	exec, err := e.Run(context.Background(), def)
 	if err == nil {
 		t.Fatal("Run() = nil error, want missing-output failure")
@@ -478,14 +508,8 @@ func TestRunMissingOutput(t *testing.T) {
 	}
 }
 
-// rogueNode 返回 OutputSchema 未声明的输出，验证引擎的输出契约检查。
+// rogueNode 返回契约未声明的输出，验证引擎按 YAML 契约的输出检查。
 type rogueNode struct{}
-
-func (rogueNode) Type() string             { return "rogue" }
-func (rogueNode) InputSchema() node.Schema { return node.Schema{} }
-func (rogueNode) OutputSchema() node.Schema {
-	return node.Schema{Outputs: map[string]artifact.Kind{"declared": "KindA"}}
-}
 
 func (rogueNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
 	ref, err := ctx.Store.Put(artifact.Artifact{ID: "surprise", Kind: "KindA"})
@@ -495,14 +519,20 @@ func (rogueNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.A
 	return map[string]artifact.ArtifactRef{"surprise": ref}, nil
 }
 
+// rogueFactory 的契约只声明 declared 输出，实现却产出 surprise。
+type rogueFactory struct{}
+
+func (rogueFactory) Definition() string { return "rogue" }
+func (rogueFactory) Version() string    { return "v1" }
+func (rogueFactory) Contract() (map[string]definition.InputPort, map[string]definition.OutputPort) {
+	return nil, map[string]definition.OutputPort{"declared": {Type: "KindA"}}
+}
+func (rogueFactory) Create(config node.Config) (node.Node, error) {
+	return rogueNode{}, nil
+}
+
 func TestRunUndeclaredOutput(t *testing.T) {
-	reg := node.NewRegistry()
-	if err := reg.Register(fnFactory{
-		nodeType: "rogue",
-		create:   func(config node.Config) (node.Node, error) { return rogueNode{}, nil },
-	}); err != nil {
-		t.Fatal(err)
-	}
+	dr, er := newTestRegistries(t, rogueFactory{})
 
 	def := workflow.Definition{
 		APIVersion: workflow.APIVersionV1,
@@ -511,7 +541,7 @@ func TestRunUndeclaredOutput(t *testing.T) {
 		Nodes:      map[string]workflow.NodeSpec{"a": {Type: "rogue"}},
 	}
 
-	e := NewEngine(reg, artifact.NewMemStore(), nil)
+	e := NewEngine(er, dr, artifact.NewMemStore(), nil)
 	_, err := e.Run(context.Background(), def)
 	if err == nil {
 		t.Fatal("Run() = nil error, want undeclared-output rejection")

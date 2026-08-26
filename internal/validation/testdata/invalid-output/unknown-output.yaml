@@ -15,5 +15,5 @@ nodes:
     type: architecture-design
 
     inputs:
-      requirement:
+      analysis-output:
         from: requirement.nonexistent-output

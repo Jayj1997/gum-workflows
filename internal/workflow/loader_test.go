@@ -34,8 +34,8 @@ func TestLoadValid(t *testing.T) {
 	if len(backend.Inputs) != 2 {
 		t.Errorf("len(backend.Inputs) = %d, want 2", len(backend.Inputs))
 	}
-	if got := backend.Inputs["requirement"].From; got != "requirement.requirement" {
-		t.Errorf("backend.Inputs[requirement].From = %q", got)
+	if got := backend.Inputs["analysis-output"].From; got != "requirement.analysis-output" {
+		t.Errorf("backend.Inputs[analysis-output].From = %q", got)
 	}
 
 	// dependsOn 是可选字段：valid.yaml 没有声明，应为 nil。

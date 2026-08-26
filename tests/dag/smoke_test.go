@@ -15,124 +15,138 @@ import (
 	"testing"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
+	"github.com/Jayj1997/gum-workflows/internal/definition"
 	"github.com/Jayj1997/gum-workflows/internal/node"
 	"github.com/Jayj1997/gum-workflows/internal/validation"
 	"github.com/Jayj1997/gum-workflows/internal/workflow"
 )
 
-// ---- 测试用 Node（Schema 与设计计划 §32 第一批 MVP Node 一致）----
+// ---- 测试用 Executor 与契约（与种子 Node Definition 同构）----
+
+// contractDeclarer 由携带端口契约的测试 factory 实现
+// （newRegistries 注册进内存 definition.Registry）。
+type contractDeclarer interface {
+	Contract() (map[string]definition.InputPort, map[string]definition.OutputPort)
+}
 
 type fakeFactory struct {
-	nodeType       string
-	inputs         map[string]artifact.Kind
-	optionalInputs map[string]artifact.Kind
-	outputs        map[string]artifact.Kind
+	definition string
+	inputs     map[string]definition.InputPort
+	outputs    map[string]definition.OutputPort
 }
 
-func (f fakeFactory) Type() string { return f.nodeType }
+func (f fakeFactory) Definition() string { return f.definition }
+func (f fakeFactory) Version() string    { return "v1" }
+
+// Contract 声明端口契约（newRegistries 注册进内存 definition.Registry）。
+func (f fakeFactory) Contract() (map[string]definition.InputPort, map[string]definition.OutputPort) {
+	return f.inputs, f.outputs
+}
 
 func (f fakeFactory) Create(config node.Config) (node.Node, error) {
-	return fakeNode{schema: node.Schema{
-		Inputs:         f.inputs,
-		OptionalInputs: f.optionalInputs,
-		Outputs:        f.outputs,
-	}}, nil
+	return fakeNode{}, nil
 }
 
-type fakeNode struct {
-	schema node.Schema
-}
-
-func (n fakeNode) Type() string             { return "" }
-func (n fakeNode) InputSchema() node.Schema { return n.schema }
-func (n fakeNode) OutputSchema() node.Schema {
-	return n.schema
-}
+type fakeNode struct{}
 
 func (n fakeNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
 	return nil, nil
 }
 
-// fullstackFactories 是 fullstack 冒烟场景所需的 Node Type
-// （Schema 与设计计划 §32 一致）。
-func fullstackFactories() []node.Factory {
-	return []node.Factory{
+// fullstackFactories 是 fullstack 冒烟场景所需的 Node 定义与契约。
+func fullstackFactories() []node.ExecutorFactory {
+	return []node.ExecutorFactory{
 		fakeFactory{
-			nodeType: "requirement-analysis",
-			outputs:  map[string]artifact.Kind{"requirement": artifact.KindRequirementSpec},
-		},
-		fakeFactory{
-			nodeType: "architecture-design",
-			inputs:   map[string]artifact.Kind{"requirement": artifact.KindRequirementSpec},
-			outputs:  map[string]artifact.Kind{"architecture": artifact.KindArchitectureSpec},
-		},
-		fakeFactory{
-			nodeType: "coding-agent",
-			optionalInputs: map[string]artifact.Kind{
-				"requirement":  artifact.KindRequirementSpec,
-				"architecture": artifact.KindArchitectureSpec,
-				"openapi":      artifact.KindOpenAPI,
-				"frontend-sdk": artifact.KindFrontendSDK,
-				"test-report":  artifact.KindTestReport,
-				"approval":     artifact.KindApprovalResult,
-			},
-			outputs: map[string]artifact.Kind{
-				"source-code": artifact.KindSourceCode,
-				"openapi":     artifact.KindOpenAPI,
+			definition: "requirement-analysis",
+			outputs: map[string]definition.OutputPort{
+				"rationality":     {Type: "int"},
+				"analysis-output": {Type: "markdown"},
 			},
 		},
 		fakeFactory{
-			nodeType: "openapi-generator",
-			inputs:   map[string]artifact.Kind{"openapi": artifact.KindOpenAPI},
-			outputs:  map[string]artifact.Kind{"frontend-sdk": artifact.KindFrontendSDK},
+			definition: "architecture-design",
+			inputs:     map[string]definition.InputPort{"analysis-output": {Type: "markdown"}},
+			outputs:    map[string]definition.OutputPort{"architecture": {Type: "ArchitectureSpec"}},
 		},
 		fakeFactory{
-			nodeType: "human-approval",
-			outputs:  map[string]artifact.Kind{"approval": artifact.KindApprovalResult},
+			definition: "coding-agent",
+			inputs: map[string]definition.InputPort{
+				"analysis-output": {Type: "markdown", Optional: true},
+				"architecture":    {Type: "ArchitectureSpec", Optional: true},
+				"openapi":         {Type: "OpenAPI", Optional: true},
+				"frontend-sdk":    {Type: "FrontendSDK", Optional: true},
+				"test-report":     {Type: "TestReport", Optional: true},
+				"approval":        {Type: "ApprovalResult", Optional: true},
+			},
+			outputs: map[string]definition.OutputPort{
+				"source-code": {Type: "SourceCode"},
+				"openapi":     {Type: "OpenAPI"},
+			},
 		},
 		fakeFactory{
-			nodeType: "cd",
+			definition: "openapi-generator",
+			inputs:     map[string]definition.InputPort{"openapi": {Type: "OpenAPI"}},
+			outputs:    map[string]definition.OutputPort{"frontend-sdk": {Type: "FrontendSDK"}},
 		},
+		fakeFactory{
+			definition: "human-approval",
+			outputs:    map[string]definition.OutputPort{"approval": {Type: "ApprovalResult"}},
+		},
+		fakeFactory{definition: "cd"},
 	}
 }
 
-// newRegistry 依据 factories 构造 Node Registry。
-func newRegistry(t *testing.T, factories ...node.Factory) *node.Registry {
+// newRegistries 依据 factories 构造内存 definition.Registry 与
+// ExecutorRegistry（冒烟测试不依赖内置节点集）。
+func newRegistries(t *testing.T, factories []node.ExecutorFactory) (*definition.Registry, *node.ExecutorRegistry) {
 	t.Helper()
 
-	reg := node.NewRegistry()
+	defs := definition.NewRegistry()
+	for _, nt := range []definition.NodeType{
+		definition.TypeAgent, definition.TypeAutomation, definition.TypeHuman,
+	} {
+		if err := defs.RegisterNodeType(definition.NodeTypeDefinition{
+			APIVersion: definition.NodeTypeAPIVersionV1,
+			Kind:       definition.NodeTypeDefinitionKind,
+			Metadata:   definition.Metadata{Name: string(nt), Description: "test"},
+		}); err != nil {
+			t.Fatalf("register node type %s: %v", nt, err)
+		}
+	}
+	executors := node.NewExecutorRegistry()
 	for _, f := range factories {
-		if err := reg.Register(f); err != nil {
-			t.Fatalf("register %q: %v", f.Type(), err)
+		d := definition.NodeDefinition{
+			APIVersion: definition.NodeDefinitionAPIVersionV1,
+			Kind:       definition.NodeDefinitionKind,
+			Metadata:   definition.Metadata{Name: f.Definition(), Description: "test"},
+			Type:       definition.TypeAgent,
+		}
+		if c, ok := f.(contractDeclarer); ok {
+			d.Inputs, d.Outputs = c.Contract()
+		}
+		if err := defs.RegisterDefinition(d); err != nil {
+			t.Fatalf("register definition %q: %v", f.Definition(), err)
+		}
+		if err := executors.Register(f); err != nil {
+			t.Fatalf("register executor %q: %v", f.Definition(), err)
 		}
 	}
-	return reg
+	return defs, executors
 }
 
-// validateAndInstantiate 走语义校验并实例化全部 Node。
-func validateAndInstantiate(t *testing.T, def workflow.Definition, factories []node.Factory) map[string]node.Node {
+// contractsFor 返回某 Node 定义的契约（冒烟调度器据此产出声明 Output）。
+func contractsFor(t *testing.T, defs *definition.Registry, def workflow.Definition) map[string]definition.NodeDefinition {
 	t.Helper()
 
-	reg := newRegistry(t, factories...)
-	v := validation.NewSemanticValidator(reg, artifact.NewRegistry())
-	if err := v.Validate(def); err != nil {
-		t.Fatalf("semantic validation unexpected error:\n%v", err)
-	}
-
-	instances := make(map[string]node.Node, len(def.Nodes))
-	for _, id := range sortedNodeIDs(def) {
-		spec := def.Nodes[id]
-		f, ok := reg.Get(spec.Type)
-		if !ok {
-			t.Fatalf("node %q: unknown node type %q", id, spec.Type)
-		}
-		n, err := f.Create(node.Config(spec.Config))
+	contracts := make(map[string]definition.NodeDefinition, len(def.Nodes))
+	for id, spec := range def.Nodes {
+		d, err := defs.Definition(spec.Type)
 		if err != nil {
-			t.Fatalf("node %q: create: %v", id, err)
+			t.Fatalf("node %q: unknown node definition %q", id, spec.Type)
 		}
-		instances[id] = n
+		contracts[id] = d
 	}
-	return instances
+	return contracts
 }
 
 // ---- 模拟调度器（设计计划 §26 的算法形态）----
@@ -149,11 +163,12 @@ type smokeResult struct {
 // 依次执行 Ready 的 Node，产出其全部声明 Output（Mock 行为，设计计划 §33），
 // 完成后递减后继的计数器并将新 Ready 的 Node 入队。
 //
+// 契约来自 contracts（Node Definition 内存形态，同构于种子 YAML）。
 // 每一步都在验证设计假设：
 //   - Node 执行时其全部前驱（Data + Control）已完成（计划 §8 Ready 条件）
-//   - 每个输入绑定都能解析到已存在的 Artifact，且 Kind 匹配
+//   - 每个输入绑定都能解析到已存在的 Artifact，且类型匹配
 //   - 全部 Node 都被执行（无 stall、无环）
-func simulate(t *testing.T, def workflow.Definition, instances map[string]node.Node) smokeResult {
+func simulate(t *testing.T, def workflow.Definition, contracts map[string]definition.NodeDefinition) smokeResult {
 	t.Helper()
 
 	g, err := workflow.BuildGraph(def)
@@ -198,16 +213,23 @@ func simulate(t *testing.T, def workflow.Definition, instances map[string]node.N
 			}
 		}
 
-		// 数据依赖解析：每个绑定必须已能取到 Artifact，且 Kind 匹配。
+		// 数据依赖解析：每个绑定必须已能取到 Artifact，且类型匹配。
 		spec := def.Nodes[id]
+		contract := contracts[id]
 		var gotInputs []string
 		for name, binding := range spec.Inputs {
 			ref, ok := res.artifacts[binding.From]
 			if !ok {
 				t.Fatalf("node %q input %q: artifact %q not available at execution time", id, name, binding.From)
 			}
-			if want := lookupInputKind(instances[id], name); want != "" && ref.Kind != want {
-				t.Fatalf("node %q input %q: artifact %q has kind %q, want %q", id, name, binding.From, ref.Kind, want)
+			if port, declared := contract.Inputs[name]; declared {
+				want, err := definition.ParseTypeExpr(port.Type)
+				if err != nil {
+					t.Fatalf("node %q input %q: parse contract type %q: %v", id, name, port.Type, err)
+				}
+				if !definition.MatchesKind(want, string(ref.Kind)) {
+					t.Fatalf("node %q input %q: artifact %q has kind %q, want %q", id, name, binding.From, ref.Kind, want.String())
+				}
 			}
 			gotInputs = append(gotInputs, name)
 		}
@@ -215,13 +237,12 @@ func simulate(t *testing.T, def workflow.Definition, instances map[string]node.N
 		res.inputCount[id] = len(gotInputs)
 
 		// Mock 行为：产出全部声明 Output（计划 §33）。
-		outputs := instances[id].OutputSchema().Outputs
 		var produced []string
-		for _, outName := range sortedKindKeys(outputs) {
+		for _, outName := range sortedPortKeys(contract.Outputs) {
 			key := id + "." + outName
 			res.artifacts[key] = artifact.ArtifactRef{
 				ID:      key,
-				Kind:    outputs[outName],
+				Kind:    artifact.Kind(contract.Outputs[outName].Type),
 				Version: "1",
 				URI:     "mem://" + key,
 			}
@@ -256,15 +277,7 @@ func simulate(t *testing.T, def workflow.Definition, instances map[string]node.N
 	return res
 }
 
-func lookupInputKind(n node.Node, name string) artifact.Kind {
-	s := n.InputSchema()
-	if k, ok := s.Inputs[name]; ok {
-		return k
-	}
-	return s.OptionalInputs[name]
-}
-
-func sortedKindKeys(m map[string]artifact.Kind) []string {
+func sortedPortKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -301,8 +314,12 @@ func TestSmokeFullstackDataDriven(t *testing.T) {
 		t.Fatalf("Load() unexpected error: %v", err)
 	}
 
-	instances := validateAndInstantiate(t, def, fullstackFactories())
-	res := simulate(t, def, instances)
+	defs, executors := newRegistries(t, fullstackFactories())
+	v := validation.NewSemanticValidator(executors, defs, artifact.NewRegistry())
+	if err := v.Validate(def); err != nil {
+		t.Fatalf("semantic validation unexpected error:\n%v", err)
+	}
+	res := simulate(t, def, contractsFor(t, defs, def))
 
 	wantOrder := []string{"requirement", "architecture", "backend", "openapi", "frontend"}
 	if !reflect.DeepEqual(res.order, wantOrder) {
@@ -310,9 +327,9 @@ func TestSmokeFullstackDataDriven(t *testing.T) {
 	}
 
 	// 每个声明 Output 都产出了 Artifact（Mock 行为）：
-	// requirement/architecture/openapi 各 1 个，backend/frontend 各 2 个，共 7 个。
-	if len(res.artifacts) != 7 {
-		t.Fatalf("produced %d artifacts, want 7", len(res.artifacts))
+	// requirement 2 个、architecture/openapi 各 1 个，backend/frontend 各 2 个，共 8 个。
+	if len(res.artifacts) != 8 {
+		t.Fatalf("produced %d artifacts, want 8", len(res.artifacts))
 	}
 
 	// 输入数量：backend 消费 2 个 Artifact，frontend 消费 3 个。
@@ -342,8 +359,11 @@ func TestSmokeControlDependency(t *testing.T) {
 		},
 	}
 
-	instances := validateAndInstantiate(t, def, fullstackFactories())
-	res := simulate(t, def, instances)
+	defs, executors := newRegistries(t, fullstackFactories())
+	if err := validation.NewSemanticValidator(executors, defs, artifact.NewRegistry()).Validate(def); err != nil {
+		t.Fatalf("semantic validation unexpected error:\n%v", err)
+	}
+	res := simulate(t, def, contractsFor(t, defs, def))
 
 	pos := map[string]int{}
 	for i, id := range res.order {
@@ -363,12 +383,12 @@ func TestSmokeControlDependency(t *testing.T) {
 // 菱形 DAG（A -> B/C -> D）中 B 与 C 在 A 完成后同时 Ready，D 等待两者。
 func TestSmokeParallelReadiness(t *testing.T) {
 	factories := append(fullstackFactories(), fakeFactory{
-		nodeType: "code-reviewer",
-		inputs: map[string]artifact.Kind{
-			"left":  artifact.KindSourceCode,
-			"right": artifact.KindSourceCode,
+		definition: "code-reviewer",
+		inputs: map[string]definition.InputPort{
+			"left":  {Type: "SourceCode"},
+			"right": {Type: "SourceCode"},
 		},
-		outputs: map[string]artifact.Kind{"report": artifact.KindTestReport},
+		outputs: map[string]definition.OutputPort{"report": {Type: "TestReport"}},
 	})
 
 	def := workflow.Definition{
@@ -379,11 +399,11 @@ func TestSmokeParallelReadiness(t *testing.T) {
 			"a": {Type: "requirement-analysis"},
 			"b": {
 				Type:   "coding-agent",
-				Inputs: map[string]workflow.InputBinding{"requirement": {From: "a.requirement"}},
+				Inputs: map[string]workflow.InputBinding{"analysis-output": {From: "a.analysis-output"}},
 			},
 			"c": {
 				Type:   "coding-agent",
-				Inputs: map[string]workflow.InputBinding{"requirement": {From: "a.requirement"}},
+				Inputs: map[string]workflow.InputBinding{"analysis-output": {From: "a.analysis-output"}},
 			},
 			"d": {
 				Type: "code-reviewer",
@@ -395,8 +415,11 @@ func TestSmokeParallelReadiness(t *testing.T) {
 		},
 	}
 
-	instances := validateAndInstantiate(t, def, factories)
-	res := simulate(t, def, instances)
+	defs, executors := newRegistries(t, factories)
+	if err := validation.NewSemanticValidator(executors, defs, artifact.NewRegistry()).Validate(def); err != nil {
+		t.Fatalf("semantic validation unexpected error:\n%v", err)
+	}
+	res := simulate(t, def, contractsFor(t, defs, def))
 
 	// A 完成后 B 与 C 同时 Ready：Ready Queue 峰值为 2。
 	if res.maxReady != 2 {

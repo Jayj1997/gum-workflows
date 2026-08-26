@@ -7,91 +7,115 @@ import (
 	"testing"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
+	"github.com/Jayj1997/gum-workflows/internal/definition"
 	"github.com/Jayj1997/gum-workflows/internal/node"
 	"github.com/Jayj1997/gum-workflows/internal/workflow"
 )
 
-// fakeFactory / fakeNode 提供语义校验测试所需的 Node Contract。
-// Schema 与设计计划 §32 的第一批 MVP Node 一致。
+// fakeFactory 提供语义校验测试所需的 Executor 与端口契约
+// （与种子 Node Definition 同构）。
 type fakeFactory struct {
-	nodeType       string
-	inputs         map[string]artifact.Kind
-	optionalInputs map[string]artifact.Kind
-	outputs        map[string]artifact.Kind
+	definition string
+	inputs     map[string]definition.InputPort
+	outputs    map[string]definition.OutputPort
 }
 
-func (f fakeFactory) Type() string { return f.nodeType }
+func (f fakeFactory) Definition() string { return f.definition }
+func (f fakeFactory) Version() string    { return "v1" }
+
+// Contract 声明端口契约（testValidator 注册进内存 definition.Registry）。
+func (f fakeFactory) Contract() (map[string]definition.InputPort, map[string]definition.OutputPort) {
+	return f.inputs, f.outputs
+}
 
 func (f fakeFactory) Create(config node.Config) (node.Node, error) {
-	return fakeNode{schema: node.Schema{
-		Inputs:         f.inputs,
-		OptionalInputs: f.optionalInputs,
-		Outputs:        f.outputs,
-	}}, nil
+	return fakeNode{}, nil
 }
 
-type fakeNode struct {
-	schema node.Schema
-}
-
-func (n fakeNode) Type() string              { return "" }
-func (n fakeNode) InputSchema() node.Schema  { return n.schema }
-func (n fakeNode) OutputSchema() node.Schema { return n.schema }
+type fakeNode struct{}
 
 func (n fakeNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
 	return nil, nil
 }
 
-// testValidator 返回带全部计划内 Node Type 的校验器。
+// testValidator 返回带全部计划内 Node 定义的校验器
+// （契约与种子 Node Definition 同构；见 fakeFactory）。
 func testValidator(t *testing.T) *SemanticValidator {
 	t.Helper()
 
 	kinds := artifact.NewRegistry()
-	reg := node.NewRegistry()
-	factories := []node.Factory{
-		fakeFactory{
-			nodeType: "requirement-analysis",
-			outputs:  map[string]artifact.Kind{"requirement": artifact.KindRequirementSpec},
-		},
-		fakeFactory{
-			nodeType: "architecture-design",
-			inputs:   map[string]artifact.Kind{"requirement": artifact.KindRequirementSpec},
-			outputs:  map[string]artifact.Kind{"architecture": artifact.KindArchitectureSpec},
-		},
-		fakeFactory{
-			nodeType: "coding-agent",
-			optionalInputs: map[string]artifact.Kind{
-				"requirement":  artifact.KindRequirementSpec,
-				"architecture": artifact.KindArchitectureSpec,
-				"openapi":      artifact.KindOpenAPI,
-				"frontend-sdk": artifact.KindFrontendSDK,
-				"test-report":  artifact.KindTestReport,
-				"approval":     artifact.KindApprovalResult,
-			},
-			outputs: map[string]artifact.Kind{
-				"source-code": artifact.KindSourceCode,
-				"openapi":     artifact.KindOpenAPI,
+	factories := []fakeFactory{
+		{
+			definition: "requirement-analysis",
+			outputs: map[string]definition.OutputPort{
+				"rationality":     {Type: "int"},
+				"analysis-output": {Type: "markdown"},
 			},
 		},
-		fakeFactory{
-			nodeType: "openapi-generator",
-			inputs:   map[string]artifact.Kind{"openapi": artifact.KindOpenAPI},
-			outputs:  map[string]artifact.Kind{"frontend-sdk": artifact.KindFrontendSDK},
+		{
+			definition: "architecture-design",
+			inputs:     map[string]definition.InputPort{"analysis-output": {Type: "markdown"}},
+			outputs:    map[string]definition.OutputPort{"architecture": {Type: "ArchitectureSpec"}},
 		},
-		fakeFactory{
-			nodeType: "human-approval",
-			outputs:  map[string]artifact.Kind{"approval": artifact.KindApprovalResult},
+		{
+			definition: "coding-agent",
+			inputs: map[string]definition.InputPort{
+				"analysis-output": {Type: "markdown", Optional: true},
+				"architecture":    {Type: "ArchitectureSpec", Optional: true},
+				"openapi":         {Type: "OpenAPI", Optional: true},
+				"frontend-sdk":    {Type: "FrontendSDK", Optional: true},
+				"test-report":     {Type: "TestReport", Optional: true},
+				"approval":        {Type: "ApprovalResult", Optional: true},
+			},
+			outputs: map[string]definition.OutputPort{
+				"source-code": {Type: "SourceCode"},
+				"openapi":     {Type: "OpenAPI"},
+			},
 		},
-		fakeFactory{
-			nodeType: "cd",
+		{
+			definition: "openapi-generator",
+			inputs:     map[string]definition.InputPort{"openapi": {Type: "OpenAPI"}},
+			outputs:    map[string]definition.OutputPort{"frontend-sdk": {Type: "FrontendSDK"}},
 		},
+		{
+			definition: "human-approval",
+			outputs: map[string]definition.OutputPort{
+				"approval": {Type: "ApprovalResult"},
+			},
+		},
+		{definition: "cd"},
 	}
-	for _, f := range factories {
-		if err := reg.Register(f); err != nil {
-			t.Fatalf("register %q: %v", f.Type(), err)
+
+	defs := definition.NewRegistry()
+	for _, nt := range []definition.NodeType{
+		definition.TypeAgent, definition.TypeAutomation, definition.TypeHuman,
+	} {
+		if err := defs.RegisterNodeType(definition.NodeTypeDefinition{
+			APIVersion: definition.NodeTypeAPIVersionV1,
+			Kind:       definition.NodeTypeDefinitionKind,
+			Metadata:   definition.Metadata{Name: string(nt), Description: "test"},
+		}); err != nil {
+			t.Fatalf("register node type %s: %v", nt, err)
 		}
 	}
-	return NewSemanticValidator(reg, kinds)
+	executors := node.NewExecutorRegistry()
+	for _, f := range factories {
+		d := definition.NodeDefinition{
+			APIVersion: definition.NodeDefinitionAPIVersionV1,
+			Kind:       definition.NodeDefinitionKind,
+			Metadata:   definition.Metadata{Name: f.definition, Description: "test"},
+			Type:       definition.TypeAgent,
+			Inputs:     f.inputs,
+			Outputs:    f.outputs,
+		}
+		if err := defs.RegisterDefinition(d); err != nil {
+			t.Fatalf("register definition %q: %v", f.definition, err)
+		}
+		if err := executors.Register(f); err != nil {
+			t.Fatalf("register executor %q: %v", f.definition, err)
+		}
+	}
+	return NewSemanticValidator(executors, defs, kinds)
 }
 
 // validateFixture 走完整管线：CUE -> Load -> Semantic。
@@ -126,7 +150,7 @@ func TestSemanticInvalidFixtures(t *testing.T) {
 	}{
 		{
 			fixture: filepath.Join("testdata", "invalid-node", "unknown-type.yaml"),
-			wantErr: `node "requirement": unknown node type "nonexistent-node"`,
+			wantErr: `node "requirement": unknown node definition "nonexistent-node"`,
 		},
 		{
 			fixture: filepath.Join("testdata", "invalid-output", "unknown-output.yaml"),
@@ -134,7 +158,7 @@ func TestSemanticInvalidFixtures(t *testing.T) {
 		},
 		{
 			fixture: filepath.Join("testdata", "invalid-type", "kind-mismatch.yaml"),
-			wantErr: "artifact kind mismatch",
+			wantErr: "artifact type mismatch",
 		},
 		{
 			fixture: filepath.Join("testdata", "invalid-cycle", "data-cycle.yaml"),
@@ -186,7 +210,7 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 			"architecture": {Type: "architecture-design"},
 		}
 		err := testValidator(t).Validate(def)
-		if err == nil || !strings.Contains(err.Error(), `required input "requirement" is not bound`) {
+		if err == nil || !strings.Contains(err.Error(), `required input "analysis-output" is not bound`) {
 			t.Fatalf("Validate() error = %v, want unbound required input", err)
 		}
 	})
@@ -197,7 +221,7 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 			"requirement": {Type: "requirement-analysis"},
 			"openapi": {
 				Type:   "openapi-generator",
-				Inputs: map[string]workflow.InputBinding{"surprise": {From: "requirement.requirement"}},
+				Inputs: map[string]workflow.InputBinding{"surprise": {From: "requirement.analysis-output"}},
 			},
 		}
 		err := testValidator(t).Validate(def)
@@ -207,14 +231,31 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 	})
 
 	t.Run("unregistered artifact kind", func(t *testing.T) {
-		reg := node.NewRegistry()
-		if err := reg.Register(fakeFactory{
-			nodeType: "figma-exporter",
-			outputs:  map[string]artifact.Kind{"design": "FigmaDesign"},
+		defs := definition.NewRegistry()
+		if err := defs.RegisterNodeType(definition.NodeTypeDefinition{
+			APIVersion: definition.NodeTypeAPIVersionV1,
+			Kind:       definition.NodeTypeDefinitionKind,
+			Metadata:   definition.Metadata{Name: string(definition.TypeAgent), Description: "test"},
 		}); err != nil {
 			t.Fatal(err)
 		}
-		v := NewSemanticValidator(reg, artifact.NewRegistry())
+		if err := defs.RegisterDefinition(definition.NodeDefinition{
+			APIVersion: definition.NodeDefinitionAPIVersionV1,
+			Kind:       definition.NodeDefinitionKind,
+			Metadata:   definition.Metadata{Name: "figma-exporter", Description: "test"},
+			Type:       definition.TypeAgent,
+			Outputs:    map[string]definition.OutputPort{"design": {Type: "FigmaDesign"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		executors := node.NewExecutorRegistry()
+		if err := executors.Register(fakeFactory{
+			definition: "figma-exporter",
+			outputs:    map[string]definition.OutputPort{"design": {Type: "FigmaDesign"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		v := NewSemanticValidator(executors, defs, artifact.NewRegistry())
 
 		def := base
 		def.Nodes = map[string]workflow.NodeSpec{"designer": {Type: "figma-exporter"}}

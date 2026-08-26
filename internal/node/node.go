@@ -1,7 +1,8 @@
 // Package node 定义 Workflow 的基本执行单位。
 //
-// Node 声明能力（Input/Output Contract + Executor），
-// 由 Registry 按 type 实例化，可被多个 Workflow 复用。
+// Node 只声明执行逻辑（Execute）；契约（Input/Output Contract）
+// 唯一来源是 Node Definition YAML（设计文档 §6.9），
+// ExecutorRegistry 按 (definition, version) 实例化，可被多个 Workflow 复用。
 package node
 
 import (
@@ -23,31 +24,11 @@ type ExecutionContext struct {
 	Logger  *slog.Logger
 }
 
-// Schema 是 Node 的 Input/Output Contract：
-// 输入/输出名称到 Artifact Kind 的映射。
-// 例如 coding-agent 的 OutputSchema 为 {source-code: SourceCode, openapi: OpenAPI}。
-//
-// Inputs 中的输入全部是 required（设计计划 §8：Node 可执行要求所有 required
-// Input 已存在，且语义校验要求它们全部被绑定）；OptionalInputs 仅声明可以绑定的
-// 可选输入（如 coding-agent 的「任意定义好的 Task Artifact」），可以不绑定。
-type Schema struct {
-	Inputs         map[string]artifact.Kind
-	OptionalInputs map[string]artifact.Kind
-	Outputs        map[string]artifact.Kind
-}
-
-// Node 是整个 MVP 最核心的接口（设计计划 §30，输出契约已修正，见下）。
+// Node 是整个 MVP 最核心的接口（设计计划 §30，设计文档 §6.9 瘦身版）。
 // 对 Runtime 来说 Agent/Automation/Human 三类 Node 没有区别。
+// 契约（inputs/outputs）不再由 Go 实现声明：唯一来源是
+// Node Definition YAML，Engine/校验器从 definition Registry 读取。
 type Node interface {
-	// Type 返回 Node Type 名称，与 Registry 注册名一致（如 "coding-agent"）。
-	Type() string
-
-	// InputSchema 声明全部 required Input 的名称与 Artifact Kind。
-	InputSchema() Schema
-
-	// OutputSchema 声明可能产出的 Output 名称与 Artifact Kind。
-	OutputSchema() Schema
-
 	// Execute 执行 Node 逻辑，返回「输出名 -> ArtifactRef」映射。
 	//
 	// 输出契约是对设计计划 §30 的修正：计划原定返回 []ArtifactRef，
@@ -60,11 +41,15 @@ type Node interface {
 // 由各 Node Type 自行解码，Runtime 不解释其内容。
 type Config map[string]any
 
-// Factory 按 Node Type 创建 Node 实例（设计计划 §12）。
-// Runtime 加载 YAML 后通过 Registry 找到对应 Factory 完成实例化。
-type Factory interface {
-	// Type 返回工厂负责的 Node Type 名称。
-	Type() string
+// ExecutorFactory 按 (Node Definition, version) 创建 Node 实例
+// （设计文档 §6.9）：契约（inputs/outputs）唯一来源是 Node Definition
+// YAML，Go 实现不再自带 Schema。同一定义多版本并存。
+type ExecutorFactory interface {
+	// Definition 返回所属 Node Definition 的 name（如 "coding-agent"）。
+	Definition() string
+
+	// Version 返回该执行器的版本（如 "v1"）。
+	Version() string
 
 	// Create 依据 config 创建 Node 实例，config 内容非法时返回错误。
 	Create(config Config) (Node, error)

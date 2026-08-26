@@ -18,8 +18,8 @@ nodes:
     type: architecture-design
 
     inputs:
-      requirement:
-        from: requirement.requirement
+      analysis-output:
+        from: requirement.analysis-output
 
   backend:
     type: coding-agent
@@ -28,8 +28,8 @@ nodes:
       task: 实现 order-system 后端：依据需求与架构产出源码与 OpenAPI 文档
 
     inputs:
-      requirement:
-        from: requirement.requirement
+      analysis-output:
+        from: requirement.analysis-output
       architecture:
         from: architecture.architecture
 
@@ -47,8 +47,8 @@ nodes:
       task: 实现 order-system 前端：消费 OpenAPI 与生成的 Frontend SDK
 
     inputs:
-      requirement:
-        from: requirement.requirement
+      analysis-output:
+        from: requirement.analysis-output
       openapi:
         from: backend.openapi
       frontend-sdk:

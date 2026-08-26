@@ -40,10 +40,12 @@ func TestRunFullstackDemo(t *testing.T) {
 		t.Fatalf("run failed: %s\n%s", err, out)
 	}
 
-	// 输出包含 Succeeded 与全部 Artifact Kind（§42 验收清单）。
+	// 输出包含 Succeeded 与全部 Artifact 类型（§42 验收清单按
+	// 种子契约更新：requirement-analysis 产出 markdown + int）。
 	for _, want := range []string{
 		"Succeeded",
-		"RequirementSpec",
+		"markdown",
+		"int",
 		"ArchitectureSpec",
 		"SourceCode",
 		"OpenAPI",

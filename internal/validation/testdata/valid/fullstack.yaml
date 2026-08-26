@@ -18,15 +18,15 @@ nodes:
     type: architecture-design
 
     inputs:
-      requirement:
-        from: requirement.requirement
+      analysis-output:
+        from: requirement.analysis-output
 
   backend:
     type: coding-agent
 
     inputs:
-      requirement:
-        from: requirement.requirement
+      analysis-output:
+        from: requirement.analysis-output
       architecture:
         from: architecture.architecture
 
@@ -41,8 +41,8 @@ nodes:
     type: coding-agent
 
     inputs:
-      requirement:
-        from: requirement.requirement
+      analysis-output:
+        from: requirement.analysis-output
       openapi:
         from: backend.openapi
       frontend-sdk:

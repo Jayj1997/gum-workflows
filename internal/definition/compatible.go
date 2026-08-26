@@ -63,3 +63,12 @@ func equal(a, b TypeExpr) bool {
 	}
 	return false
 }
+
+// MatchesKind 报告运行期产出值（以 Artifact Kind 名表示）是否落在
+// 声明类型 expr 的取值集合内（设计文档 §4 运行期输出契约检查）。
+// 语义 Kind 按字面匹配（含 union/list 成员递归）；原子类型
+// （string/int/bool/float/markdown/file）在运行期以同名 Kind 携带
+// 标量数据，同样按字面匹配。
+func MatchesKind(expr TypeExpr, kind string) bool {
+	return contains(expr, KindRef{Name: kind}) || contains(expr, Atomic{Name: AtomicName(kind)})
+}

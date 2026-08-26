@@ -116,8 +116,8 @@ func TestEnginePersistsWithStateDir(t *testing.T) {
 	})
 
 	t.Run("successful run persists", func(t *testing.T) {
-		base, _ := newFullstackEngine(t)
-		e := NewEngine(base.registry, artifact.NewMemStore(), nil, WithStateDir(root))
+		dr, er := newTestRegistries(t, fullstackFactories(nil)...)
+		e := NewEngine(er, dr, artifact.NewMemStore(), nil, WithStateDir(root))
 		exec, err := e.Run(context.Background(), fullstackDef())
 		if err != nil {
 			t.Fatalf("Run() unexpected error: %v", err)

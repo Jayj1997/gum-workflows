@@ -34,7 +34,7 @@ func run(args []string) error {
 
 // validateCmd 执行校验管线（设计计划 §21 两层校验），与 run 共用 loadAndValidate。
 func validateCmd(path string) error {
-	def, _, _, err := loadAndValidate(path)
+	def, _, _, _, err := loadAndValidate(path)
 	if err != nil {
 		return err
 	}
