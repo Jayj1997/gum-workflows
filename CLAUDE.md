@@ -21,7 +21,7 @@
 4. **Node 运行条件**：`Ready(Node) = InputsReady AND ControlDependenciesCompleted`。无输入无依赖的 Node 是合法的 Trigger/Source Node。
 5. **CLI 不接受业务参数**：只有 `workflow run <workflow-file>` 和 `workflow validate <workflow-file>`。所有配置必须来自 YAML。
 6. **Workflow 不管理 Skills**：Coding Agent 自行进入 Project Workspace 并发现 `.agents/skills/`、`.claude/skills/` 等项目约定。
-7. **两层 Validation**：CUE Schema（结构）→ Go Semantic Validator（语义：Node Type 存在、Output 存在、Artifact 类型匹配、无环）。错误信息必须指明具体 Node 与字段。
+7. **两层 Validation**：CUE Schema（结构）→ Go Semantic Validator（语义：Node Type 存在、Output 存在、Artifact 类型匹配、环仅提示）。错误信息必须指明具体 Node 与字段。
 8. **MVP 明确不做**（加入前必须先升级设计文档）：UI、Temporal、Redis/Kafka/Database、分布式调度、多租户、Skill/Agent Marketplace、复杂 Retry、Condition、Secret Management、workflow/v1 之外的 Schema 字段（retry/timeout/parallelism/environment/hooks 等）。
 
 ## 常用命令

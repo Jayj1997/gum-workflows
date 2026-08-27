@@ -38,6 +38,29 @@ Node Instance 的组合声明，附项目声明。一个 Workflow 可运行任�
 **LLM Model（模型）**:
 Provider 下可选用的具体模型（如 gpt-4o），携带可选生成参数（temperature 等）。默认解析链：默认 Provider（显式 default，缺省取第一个）-> 默认 Model（同理）。
 
+### 14 后产品侧（已确认、未实现）
+
+**LLM Config（大模型配置）**:
+用户级、跨 Workflow 复用的一条模型连接配置：名称 + 协议 + Base URL + API Key 引用 + 模型目录 + 默认模型。多个 Agent Node 可以选择同一条 LLM Config，不在各 Node 中重复填写连接信息。
+_Avoid_: 与某个 Agent Node 的普通 config 混称、把 API Key 写入 Node Instance。
+
+**LLM Selection（模型选择）**:
+Agent Node Instance 对一条 LLM Config 及其可选模型的引用；未显式选择模型时使用该 LLM Config 的默认模型。Run 启动时解析并固定，密钥不进入运行快照。
+_Avoid_: LLM Config（可复用配置本体）、LLM Model（配置下的模型）。
+
+**Workflow Draft（工作流草稿）**:
+一个 Workflow 当前可编辑的内容。自动保存只改变 Draft，不改变既有 Revision 或 Run。
+
+**Workflow Revision（工作流修订版）**:
+由 Draft 形成的不可变版本。每次 Run 绑定一个 Revision，同一 Workflow 可拥有多个 Revision。
+_Avoid_: 在 Run 启动后原地修改 Revision。
+
+**Run Snapshot（运行快照）**:
+Run 启动时固定的 Workflow Revision、Node Executor、LLM Selection 解析结果及有效配置；不包含 API Key 明文。
+
+**Workflow Preview（工作流预览）**:
+由 Draft 或 Revision 派生的只读结构视图，展示 Node、Data/Control Edge、循环组与诊断。自动布局坐标只服务显示，不属于 Workflow 执行语义。
+
 ### 运行侧（每次 run 独立）
 
 **WorkflowExecution / NodeExecution**:
