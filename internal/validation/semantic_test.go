@@ -200,17 +200,24 @@ func validateFixture(t *testing.T, path string) ([]Warning, error) {
 }
 
 func TestSemanticValidFullstack(t *testing.T) {
-	for _, fixture := range []string{
-		filepath.Join("testdata", "valid", "minimal.yaml"),
-		filepath.Join("testdata", "valid", "union-port.yaml"),
-	} {
-		warnings, err := validateFixture(t, fixture)
-		if err != nil {
-			t.Fatalf("Validate(%s) unexpected error:\n%v", fixture, err)
-		}
-		if len(warnings) != 0 {
-			t.Fatalf("Validate(%s) unexpected warnings:\n%v", fixture, warnings)
-		}
+	warnings, err := validateFixture(t, filepath.Join("testdata", "valid", "minimal.yaml"))
+	if err != nil {
+		t.Fatalf("Validate() unexpected error:\n%v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("Validate() unexpected warnings:\n%v", warnings)
+	}
+}
+
+// TestSemanticValidUnionPort 验证 TypeExpr 正向兼容（设计文档 §4）：
+// union 消费端（markdown|OpenAPI）接受 markdown 生产者。
+func TestSemanticValidUnionPort(t *testing.T) {
+	warnings, err := validateFixture(t, filepath.Join("testdata", "valid", "union-port.yaml"))
+	if err != nil {
+		t.Fatalf("Validate() unexpected error:\n%v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("Validate() unexpected warnings:\n%v", warnings)
 	}
 }
 
@@ -232,10 +239,12 @@ func TestSemanticInvalidFixtures(t *testing.T) {
 			wantErr: "artifact type mismatch",
 		},
 		{
+			// optional 端口同样做类型兼容检查（票 06：optional 端口同样校验）。
 			fixture: filepath.Join("testdata", "invalid-type", "optional-port-mismatch.yaml"),
-			wantErr: "artifact type mismatch",
+			wantErr: `node "coder" input "openapi": artifact type mismatch`,
 		},
 		{
+			// human 类节点以输入挂接流程但未声明 dependsOn（设计文档 §10 检查 #8）。
 			fixture: filepath.Join("testdata", "invalid-human", "input-without-depends-on.yaml"),
 			wantErr: `node "review": human node with inputs must declare dependsOn`,
 		},
@@ -252,10 +261,13 @@ func TestSemanticInvalidFixtures(t *testing.T) {
 			wantErr: `node "coder": llm: unknown provider "azure"`,
 		},
 		{
+			// Q3 象限：只填 target_model、属默认 provider 之外的模型
+			// -> resolver 提示补 llm 字段。
 			fixture: filepath.Join("testdata", "invalid-llm", "unknown-model.yaml"),
-			wantErr: `node "coder": target_model: default provider "openai" has no model "claude-sonnet-5"`,
+			wantErr: `node "coder": target_model: default provider "openai" has no model "claude-sonnet-5" (models: gpt-4o, gpt-4o-mini); add "llm" to select another provider`,
 		},
 		{
+			// Q1 象限：llm + target_model 但 model 不归属该 provider。
 			fixture: filepath.Join("testdata", "invalid-llm", "cross-provider-model.yaml"),
 			wantErr: `node "coder": target_model: provider "openai" has no model "claude-sonnet-5"`,
 		},

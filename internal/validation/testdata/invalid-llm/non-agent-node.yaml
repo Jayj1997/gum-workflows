@@ -8,12 +8,15 @@ projects:
   - name: order-system
     repository: ../examples/order-system
 
+# automation 类节点声明 llm 与 target_model 两个字段都不合法：
+# 两个错误各自定位到字段（聚合风格）。
 nodes:
   coder:
     node: coding-agent
 
   sdk:
     node: openapi-generator
+    llm: openai
     target_model: gpt-4o
 
     inputs:

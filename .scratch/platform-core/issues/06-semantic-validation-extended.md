@@ -15,21 +15,32 @@
 
 ## Comments
 
-**2026-08-27（agent 实施记录）**：
+**2026-08-27（agent 实施记录）：** 语义校验器按设计文档 §10 清单扩展（入口规则 #7 随 T09 落地，#8 human 节点 dependsOn 必填在本票一并补齐）。
 
 交付内容：
-1. `Validate` 签名改为 `([]Warning, error)`：环从错误降为提示（§6.7/§10 #10）--无 human 环 -> warning（含收敛保护兜底说明），含 human 环静默放行。新增 `Warning` 类型；CLI validate/run 共用 `printWarnings`（stderr 前缀 warning）。
-2. executor 显式版本检查（§10 #2）：`spec.Executor != ""` 时走 `executors.Get` 精确命中（此前语义层只做 Latest，显式版本写错要到 run 的 instantiate 才炸）。
-3. llm/target_model 检查（§10 #9）：非 agent 节点报错（逐字段定位）；agent 节点统一经 `llm.Config.Resolve` 默认链解析（含双空缺省解析）。`NewSemanticValidator` 增 `WithLLMConfig` / `WithWorkflowFile` Option；cmd 层经 `llm.LoadDefault` 注入，`ErrConfigNotFound` 时 nil 注入（无 agent 节点放行、有则聚合报错，错误列实际查找路径，取自新增 `llm.CandidatePaths()`）。
-4. projects 恰一 + 路径存在且为目录（§10 #11）：相对路径相对 workflow 文件；无文件锚点（内存形态）时跳过路径检查。
-5. human 非源节点 dependsOn 必填（§10 #8）：human 节点有 inputs 且无 dependsOn 时报错（入口规则 #7 仍归票 09）。
-6. fixture：`invalid-cycle/` 语义更新为 `warning-cycle/`（data/control 两份）；新增 invalid-executor / invalid-llm（非 agent 节点、未知 provider、默认链未知 model、跨 provider model）/ invalid-projects（0 条、目录不存在）/ invalid-type/optional-port-mismatch / invalid-human/input-without-depends-on / valid/union-port（正向 union 兼容）/ valid/human-cycle（合法审批回环）；全部 fixture 的 projects.repository 收敛到共享 `testdata/examples/order-system`。
-7. 同步文档：CLAUDE.md 约束 #7「无环」改「环仅提示」；DEVELOPMENT.md §6 fixture 目录表更新。
-8. 测试迁移：`Validate` 双返回值波及 tests/dag 冒烟与 CLI 测试；tests/dag 的 `newRegistries` 一并注入 llm 配置与 nodeType 分类。
+1. `SemanticValidator` 形态演进：`Validate` 返回 `([]Warning, error)`，环降为 warning（非 error）。新增 `Option` 注入机制（沿 execution 包模式）：`WithLLMConfig`（agent 节点解析链）、`WithWorkflowFile`（projects 相对路径锚点）。
+2. 新增检查：
+   - **检查 #2** executor 显式版本经 `ExecutorRegistry.Get` 精确命中，缺省经 `Latest` 解析；错误定位 `node <id> executor:`。
+   - **检查 #8** human 类节点带输入但无 dependsOn 报错（`checkHumanControlEdge`）。
+   - **检查 #9** `checkLLM`：llm/target_model 仅 agent 合法（逐字段定位，两非法字段各自报出）；agent 节点统一走默认链解析（含两字段都空）；llm.yaml 缺失时 workflow 含 agent 节点则报错、纯 automation/human 放行。查询路径经 `llm.CandidatePaths()`（新增导出）共享，避免查找顺序知识漂移。
+   - **检查 #11** `checkProjects`：恰好 1 个 + 相对路径相对 workflow 文件解析 + 路径存在且为目录；未注入文件锚点时跳过路径检查（数量检查仍生效）。
+   - **检查 #10** `checkCycle`：无 human 环 -> warning（含收敛保护兜底说明）；含 human 环 -> 合法迭代路径不提示。
+3. 端口类型兼容（§10 #4、#3）沿用既有 `definition.Compatible`（consumer ⊇ producer，无隐式子类型）；optional 端口经遍历 `spec.Inputs` 天然覆盖；Kind 注册检查（含 optional 输入）由 `ValidateKinds` 覆盖（已有，注释明确）。
+4. CLI 接线：`loadAndValidate` 加载 llm.yaml（`LoadDefault`，`ErrConfigNotFound` 以 nil 注入）并注入校验器；warning 经 `printWarnings`（validate/run 共用）输出到 stderr，不阻断。
 
-口径决定：
-1. **agent 节点统一走默认链解析**（含两字段全空）：缺省解析也是运行前提，留到 run 才失败就晚了；此为 §10 #9「llm 引用解析」的自然延伸，非新增检查项。
-2. **`llm.CandidatePaths()` 导出**：错误信息与 LoadDefault 共用查找路径知识，避免漂移（评审发现）。
-3. **`invalid-cycle` 改名 `warning-cycle`**：fixture 目录名承载「这是错误还是提示」的语义。
+fixture 全覆盖（`testdata/` 沿用 valid/invalid/warning 模式；`warning-cycle/` 替代旧 `invalid-cycle/` 反映环降提示）：
+- `warning-cycle/{data,control}-cycle.yaml`：无 human 环 -> warning（非 error）。
+- `valid/human-cycle.yaml`：含 human 环（coder→review control 边 + review.advise→coder data 边）-> 合法，不提示。
+- `valid/union-port.yaml`：TypeExpr 正向兼容（union `markdown|OpenAPI` 接受 OpenAPI 生产者）。
+- `invalid-executor/unknown-version.yaml`、`invalid-llm/{non-agent-node,unknown-provider,unknown-model,cross-provider-model}.yaml`、`invalid-projects/{zero-entries,missing-dir}.yaml`、`invalid-human/input-without-depends-on.yaml`、`invalid-type/optional-port-mismatch.yaml`。
+- 全部 fixture 的 `projects.repository` 统一指向共享 `testdata/examples/order-system`（真实目录）。
 
-测试：`go vet`、`gofmt -l`（空）、`go test ./...` 与 `-race` 全绿；CLI 手动验证 warning 展示、四类新增错误、无 llm.yaml 放行/拒绝、示例 run 不受影响。
+代码评审（Standards + Spec 双轴并行）修复：
+- `checkProjects` 的 `%v` 改 `%w`（DEVELOPMENT.md §4.2）；导出 `Warning.Message` 补 doc comment（§4.1）。
+- llm 查找路径知识收口到 `llm.CandidatePaths()`，消除 validation 内的硬编码重复。
+- `loadAndValidate` 返回值扁平化（去掉过度设计的 `validateOutcome` 包装）；`printWarnings` 抽出，消除 validate/run 重复。
+- 测试 `fakeFactory.NodeType()` 在 validation 与 tests/dag 两处同构（消除 nodeType 默认值逻辑重复）。
+- 文档同步：CLAUDE.md 约束 #7「无环」改「环仅提示」；DEVELOPMENT.md §6 fixture 目录清单更新（`warning-cycle/` 等）。
+- Spec 轴修复：原 `valid/human-cycle.yaml` 实为无环（测试空过）——重写为真实回环（coder↔review 双向边），豁免分支真正被覆盖；恢复误删的 `TestRunUsage`；补 §10 #8 检查与 fixture；补 TypeExpr 正向兼容 fixture 与可选端口不匹配 fixture；llm 四象限补齐 Q1（cross-provider）与 Q3（默认链提示补 llm）。
+
+测试：`go vet ./...`、`go test ./...`（含 `-race`）全绿；`workflow validate` 在 examples/minimal 与 warning-cycle fixture 上手动验证通过。

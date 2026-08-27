@@ -8,8 +8,8 @@ projects:
   - name: order-system
     repository: ../examples/order-system
 
-# union 消费端（markdown|OpenAPI）接受 markdown 生产者：
-# consumer ⊇ producer 的正向兼容（设计文档 §4）。
+# union 消费端（markdown|OpenAPI）接受 OpenAPI 生产者：
+# consumer ⊇ producer 的正向兼容（设计文档 §4：要宽就显式写 union）。
 nodes:
   coder:
     node: coding-agent
