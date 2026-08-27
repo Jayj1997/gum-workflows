@@ -8,6 +8,7 @@ import (
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
 	"github.com/Jayj1997/gum-workflows/internal/definition"
+	"github.com/Jayj1997/gum-workflows/internal/llm"
 	"github.com/Jayj1997/gum-workflows/internal/node"
 	"github.com/Jayj1997/gum-workflows/internal/workflow"
 )
@@ -16,12 +17,21 @@ import (
 // （与种子 Node Definition 同构）。
 type fakeFactory struct {
 	definition string
+	nodeType   definition.NodeType
 	inputs     map[string]definition.InputPort
 	outputs    map[string]definition.OutputPort
 }
 
 func (f fakeFactory) Definition() string { return f.definition }
 func (f fakeFactory) Version() string    { return "v1" }
+
+// NodeType 声明该定义的类别（缺省 agent，与 tests/dag 的 fakeFactory 同构）。
+func (f fakeFactory) NodeType() definition.NodeType {
+	if f.nodeType == "" {
+		return definition.TypeAgent
+	}
+	return f.nodeType
+}
 
 // Contract 声明端口契约（testValidator 注册进内存 definition.Registry）。
 func (f fakeFactory) Contract() (map[string]definition.InputPort, map[string]definition.OutputPort) {
@@ -38,15 +48,14 @@ func (n fakeNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.
 	return nil, nil
 }
 
-// testValidator 返回带全部计划内 Node 定义的校验器
-// （契约与种子 Node Definition 同构；见 fakeFactory）。
-func testValidator(t *testing.T) *SemanticValidator {
-	t.Helper()
-
-	kinds := artifact.NewRegistry()
-	factories := []fakeFactory{
+// testFactories 是语义校验测试的 Node 定义集（契约与种子 Node Definition 同构）。
+// cd/human-approval 两个额外定义承载 agent 以外的类别（llm 字段合法性）；
+// human-approval 为 human 类（环豁免判定用）。
+func testFactories() []fakeFactory {
+	return []fakeFactory{
 		{
 			definition: "requirement-analysis",
+			inputs:     map[string]definition.InputPort{"requirement": {Type: "markdown"}},
 			outputs: map[string]definition.OutputPort{
 				"rationality":     {Type: "int"},
 				"analysis-output": {Type: "markdown"},
@@ -60,12 +69,14 @@ func testValidator(t *testing.T) *SemanticValidator {
 		{
 			definition: "coding-agent",
 			inputs: map[string]definition.InputPort{
+				"requirement":     {Type: "markdown", Optional: true},
 				"analysis-output": {Type: "markdown", Optional: true},
 				"architecture":    {Type: "ArchitectureSpec", Optional: true},
 				"openapi":         {Type: "OpenAPI", Optional: true},
 				"frontend-sdk":    {Type: "FrontendSDK", Optional: true},
 				"test-report":     {Type: "TestReport", Optional: true},
 				"approval":        {Type: "ApprovalResult", Optional: true},
+				"advise":          {Type: "markdown", Optional: true},
 			},
 			outputs: map[string]definition.OutputPort{
 				"source-code": {Type: "SourceCode"},
@@ -74,17 +85,62 @@ func testValidator(t *testing.T) *SemanticValidator {
 		},
 		{
 			definition: "openapi-generator",
+			nodeType:   definition.TypeAutomation,
 			inputs:     map[string]definition.InputPort{"openapi": {Type: "OpenAPI"}},
 			outputs:    map[string]definition.OutputPort{"frontend-sdk": {Type: "FrontendSDK"}},
 		},
 		{
+			// union 消费端：验证 consumer ⊇ producer 的正向兼容
+			//（设计文档 §4：要宽就显式写 union）。
+			definition: "doc-writer",
+			nodeType:   definition.TypeAutomation,
+			inputs:     map[string]definition.InputPort{"content": {Type: "markdown|OpenAPI"}},
+			outputs:    map[string]definition.OutputPort{"doc": {Type: "markdown"}},
+		},
+		{
 			definition: "human-approval",
+			nodeType:   definition.TypeHuman,
 			outputs: map[string]definition.OutputPort{
-				"approval": {Type: "ApprovalResult"},
+				"approve": {Type: "bool"},
+				"advise":  {Type: "markdown"},
 			},
 		},
-		{definition: "cd"},
+		{definition: "cd", nodeType: definition.TypeAutomation},
 	}
+}
+
+// testLLMYAML 是语义校验测试注入的 llm.yaml 内容（openai 为默认 provider，
+// gpt-4o 为默认 model）。
+const testLLMYAML = `
+apiVersion: llm/v1
+kind: llm
+providers:
+  - name: openai
+    type: openai-compatible
+    url: https://api.openai.com/v1
+    apikey: plain-test-key
+    default: true
+    models:
+      - name: gpt-4o
+        default: true
+      - name: gpt-4o-mini
+  - name: anthropic
+    type: anthropic
+    url: https://anthropic
+    apikey: plain-test-key
+    models:
+      - name: claude-sonnet-5
+`
+
+// testValidator 返回带全部计划内 Node 定义的校验器
+// （契约与种子 Node Definition 同构；见 testFactories）。
+// llm 配置注入（agent 节点解析链）与 workflow 文件锚点（projects
+// 相对路径）由各用例按需叠加 Option。
+func testValidator(t *testing.T, opts ...Option) *SemanticValidator {
+	t.Helper()
+
+	kinds := artifact.NewRegistry()
+	factories := testFactories()
 
 	defs := definition.NewRegistry()
 	for _, nt := range []definition.NodeType{
@@ -104,7 +160,7 @@ func testValidator(t *testing.T) *SemanticValidator {
 			APIVersion: definition.NodeDefinitionAPIVersionV1,
 			Kind:       definition.NodeDefinitionKind,
 			Metadata:   definition.Metadata{Name: f.definition, Description: "test"},
-			Type:       definition.TypeAgent,
+			Type:       f.NodeType(),
 			Inputs:     f.inputs,
 			Outputs:    f.outputs,
 		}
@@ -115,11 +171,13 @@ func testValidator(t *testing.T) *SemanticValidator {
 			t.Fatalf("register executor %q: %v", f.definition, err)
 		}
 	}
-	return NewSemanticValidator(executors, defs, kinds)
+	return NewSemanticValidator(executors, defs, kinds, opts...)
 }
 
-// validateFixture 走完整管线：CUE -> Load -> Semantic。
-func validateFixture(t *testing.T, path string) error {
+// validateFixture 走完整管线：CUE -> Load -> Semantic（含 llm 注入与
+// projects 路径锚点，fixture 的 projects.repository 一律指向
+// testdata/examples/order-system）。
+func validateFixture(t *testing.T, path string) ([]Warning, error) {
 	t.Helper()
 
 	data, err := os.ReadFile(path)
@@ -133,13 +191,26 @@ func validateFixture(t *testing.T, path string) error {
 	if err != nil {
 		t.Fatalf("fixture %s should parse: %v", path, err)
 	}
-	return testValidator(t).Validate(def)
+
+	c, err := llm.Load([]byte(testLLMYAML))
+	if err != nil {
+		t.Fatalf("load test llm config: %v", err)
+	}
+	return testValidator(t, WithLLMConfig(&c), WithWorkflowFile(path)).Validate(def)
 }
 
 func TestSemanticValidFullstack(t *testing.T) {
-	err := validateFixture(t, filepath.Join("testdata", "valid", "minimal.yaml"))
-	if err != nil {
-		t.Fatalf("Validate() unexpected error:\n%v", err)
+	for _, fixture := range []string{
+		filepath.Join("testdata", "valid", "minimal.yaml"),
+		filepath.Join("testdata", "valid", "union-port.yaml"),
+	} {
+		warnings, err := validateFixture(t, fixture)
+		if err != nil {
+			t.Fatalf("Validate(%s) unexpected error:\n%v", fixture, err)
+		}
+		if len(warnings) != 0 {
+			t.Fatalf("Validate(%s) unexpected warnings:\n%v", fixture, warnings)
+		}
 	}
 }
 
@@ -161,17 +232,45 @@ func TestSemanticInvalidFixtures(t *testing.T) {
 			wantErr: "artifact type mismatch",
 		},
 		{
-			fixture: filepath.Join("testdata", "invalid-cycle", "data-cycle.yaml"),
-			wantErr: "dependency cycle detected",
+			fixture: filepath.Join("testdata", "invalid-type", "optional-port-mismatch.yaml"),
+			wantErr: "artifact type mismatch",
 		},
 		{
-			fixture: filepath.Join("testdata", "invalid-cycle", "control-cycle.yaml"),
-			wantErr: "dependency cycle detected",
+			fixture: filepath.Join("testdata", "invalid-human", "input-without-depends-on.yaml"),
+			wantErr: `node "review": human node with inputs must declare dependsOn`,
+		},
+		{
+			fixture: filepath.Join("testdata", "invalid-executor", "unknown-version.yaml"),
+			wantErr: `node "coder" executor: executor not found: executor "v9" of node definition "coding-agent" (versions: ["v1"])`,
+		},
+		{
+			fixture: filepath.Join("testdata", "invalid-llm", "non-agent-node.yaml"),
+			wantErr: `node "sdk": target_model is only valid on agent nodes (definition "openapi-generator" has type "automation")`,
+		},
+		{
+			fixture: filepath.Join("testdata", "invalid-llm", "unknown-provider.yaml"),
+			wantErr: `node "coder": llm: unknown provider "azure"`,
+		},
+		{
+			fixture: filepath.Join("testdata", "invalid-llm", "unknown-model.yaml"),
+			wantErr: `node "coder": target_model: default provider "openai" has no model "claude-sonnet-5"`,
+		},
+		{
+			fixture: filepath.Join("testdata", "invalid-llm", "cross-provider-model.yaml"),
+			wantErr: `node "coder": target_model: provider "openai" has no model "claude-sonnet-5"`,
+		},
+		{
+			fixture: filepath.Join("testdata", "invalid-projects", "zero-entries.yaml"),
+			wantErr: "projects: must contain exactly 1 entry, got 0",
+		},
+		{
+			fixture: filepath.Join("testdata", "invalid-projects", "missing-dir.yaml"),
+			wantErr: `projects[0] "order-system": repository`,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(filepath.Base(filepath.Dir(tt.fixture))+"/"+filepath.Base(tt.fixture), func(t *testing.T) {
-			err := validateFixture(t, tt.fixture)
+			_, err := validateFixture(t, tt.fixture)
 			if err == nil {
 				t.Fatalf("Validate() = nil error, want rejection containing %q", tt.wantErr)
 			}
@@ -182,11 +281,53 @@ func TestSemanticInvalidFixtures(t *testing.T) {
 	}
 }
 
+// TestSemanticCycleDowngradedToWarning 验证环降为提示（票 06 核心变更）：
+// 不含 human 节点的环 -> warning（非 error，validate 放行）；
+// 含 human 节点的环 -> 合法迭代路径，不提示。
+func TestSemanticCycleDowngradedToWarning(t *testing.T) {
+	t.Run("data cycle without human warns but passes", func(t *testing.T) {
+		warnings, err := validateFixture(t, filepath.Join("testdata", "warning-cycle", "data-cycle.yaml"))
+		if err != nil {
+			t.Fatalf("Validate() unexpected error (cycle must be a warning):\n%v", err)
+		}
+		if len(warnings) != 1 {
+			t.Fatalf("Validate() warnings = %v, want exactly 1", warnings)
+		}
+		if !strings.Contains(warnings[0].Message, "dependency cycle") {
+			t.Errorf("warning %q should describe the cycle", warnings[0].Message)
+		}
+		if !strings.Contains(warnings[0].Message, "convergence guard") {
+			t.Errorf("warning %q should mention the convergence guard safety net", warnings[0].Message)
+		}
+	})
+
+	t.Run("control cycle without human warns but passes", func(t *testing.T) {
+		warnings, err := validateFixture(t, filepath.Join("testdata", "warning-cycle", "control-cycle.yaml"))
+		if err != nil {
+			t.Fatalf("Validate() unexpected error (cycle must be a warning):\n%v", err)
+		}
+		if len(warnings) != 1 {
+			t.Fatalf("Validate() warnings = %v, want exactly 1", warnings)
+		}
+	})
+
+	t.Run("cycle containing human node is silent", func(t *testing.T) {
+		warnings, err := validateFixture(t, filepath.Join("testdata", "valid", "human-cycle.yaml"))
+		if err != nil {
+			t.Fatalf("Validate() unexpected error:\n%v", err)
+		}
+		if len(warnings) != 0 {
+			t.Fatalf("Validate() warnings = %v, want none (human cycle is a legal iteration path)", warnings)
+		}
+	})
+}
+
 func TestSemanticProgrammaticChecks(t *testing.T) {
 	base := workflow.Definition{
 		APIVersion: workflow.APIVersionV1,
 		Kind:       workflow.KindWorkflow,
 		Metadata:   workflow.Metadata{Name: "test"},
+		Projects:   []workflow.ProjectSpec{{Name: "p", Repository: "./examples/order-system"}},
 		Nodes: map[string]workflow.NodeSpec{
 			"requirement": {Node: "requirement-analysis"},
 		},
@@ -198,7 +339,7 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 			"requirement": {Node: "requirement-analysis"},
 			"deploy":      {Node: "cd", DependsOn: []string{"nonexistent"}},
 		}
-		err := testValidator(t).Validate(def)
+		_, err := testValidator(t).Validate(def)
 		if err == nil || !strings.Contains(err.Error(), `dependsOn unknown node "nonexistent"`) {
 			t.Fatalf("Validate() error = %v, want dependsOn unknown node", err)
 		}
@@ -209,7 +350,7 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 		def.Nodes = map[string]workflow.NodeSpec{
 			"architecture": {Node: "architecture-design"},
 		}
-		err := testValidator(t).Validate(def)
+		_, err := testValidator(t).Validate(def)
 		if err == nil || !strings.Contains(err.Error(), `required input "analysis-output" is not bound`) {
 			t.Fatalf("Validate() error = %v, want unbound required input", err)
 		}
@@ -224,7 +365,7 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 				Inputs: map[string]workflow.InputBinding{"surprise": {From: "requirement.analysis-output"}},
 			},
 		}
-		err := testValidator(t).Validate(def)
+		_, err := testValidator(t).Validate(def)
 		if err == nil || !strings.Contains(err.Error(), `input "surprise" is not declared`) {
 			t.Fatalf("Validate() error = %v, want undeclared input", err)
 		}
@@ -259,9 +400,60 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 
 		def := base
 		def.Nodes = map[string]workflow.NodeSpec{"designer": {Node: "figma-exporter"}}
-		err := v.Validate(def)
+		_, err := v.Validate(def)
 		if err == nil || !strings.Contains(err.Error(), `unregistered artifact kind "FigmaDesign"`) {
 			t.Fatalf("Validate() error = %v, want unregistered artifact kind", err)
+		}
+	})
+
+	t.Run("llm absent without agent nodes is fine", func(t *testing.T) {
+		def := base
+		def.Nodes = map[string]workflow.NodeSpec{
+			"sdk": {Node: "openapi-generator"},
+		}
+		// openapi-generator 有必填输入，改用无输入的 cd（automation）。
+		def.Nodes = map[string]workflow.NodeSpec{"deploy": {Node: "cd"}}
+		_, err := testValidator(t).Validate(def)
+		if err != nil {
+			t.Fatalf("Validate() unexpected error: %v", err)
+		}
+	})
+
+	t.Run("llm absent with agent nodes is rejected", func(t *testing.T) {
+		def := base
+		def.Nodes = map[string]workflow.NodeSpec{"coder": {Node: "coding-agent"}}
+		_, err := testValidator(t).Validate(def)
+		if err == nil || !strings.Contains(err.Error(), "no llm.yaml was found") {
+			t.Fatalf("Validate() error = %v, want missing llm.yaml rejection", err)
+		}
+	})
+
+	t.Run("agent llm defaults resolve without explicit fields", func(t *testing.T) {
+		c, err := llm.Load([]byte(testLLMYAML))
+		if err != nil {
+			t.Fatalf("load test llm config: %v", err)
+		}
+		def := base
+		def.Nodes = map[string]workflow.NodeSpec{"coder": {Node: "coding-agent"}}
+		if _, err := testValidator(t, WithLLMConfig(&c)).Validate(def); err != nil {
+			t.Fatalf("Validate() unexpected error: %v", err)
+		}
+	})
+
+	t.Run("projects path check needs a file anchor", func(t *testing.T) {
+		// 未注入 WithWorkflowFile 时跳过路径检查（内存形态无锚点），
+		// 数量检查仍然生效。
+		def := base
+		def.Nodes = map[string]workflow.NodeSpec{"deploy": {Node: "cd"}}
+		def.Projects = nil
+		_, err := testValidator(t).Validate(def)
+		if err == nil || !strings.Contains(err.Error(), "projects: must contain exactly 1 entry, got 0") {
+			t.Fatalf("Validate() error = %v, want exactly-one rejection", err)
+		}
+
+		def.Projects = []workflow.ProjectSpec{{Name: "p", Repository: "./no/such/dir"}}
+		if _, err := testValidator(t).Validate(def); err != nil {
+			t.Fatalf("Validate() unexpected error without file anchor: %v", err)
 		}
 	})
 
@@ -274,7 +466,7 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 				Inputs: map[string]workflow.InputBinding{"requirement": {From: "requirement.requirement"}},
 			},
 		}
-		err := testValidator(t).Validate(def)
+		_, err := testValidator(t).Validate(def)
 		if err == nil {
 			t.Fatal("Validate() = nil error, want rejection")
 		}

@@ -2,12 +2,13 @@ apiVersion: workflow/v1
 kind: workflow
 
 metadata:
-  name: invalid-node
+  name: invalid-llm-unknown-provider
 
 projects:
   - name: order-system
     repository: ../examples/order-system
 
 nodes:
-  requirement:
-    node: nonexistent-node
+  coder:
+    node: coding-agent
+    llm: azure

@@ -2,12 +2,13 @@ apiVersion: workflow/v1
 kind: workflow
 
 metadata:
-  name: invalid-node
+  name: invalid-executor-unknown-version
 
 projects:
   - name: order-system
     repository: ../examples/order-system
 
 nodes:
-  requirement:
-    node: nonexistent-node
+  coder:
+    node: coding-agent
+    executor: v9

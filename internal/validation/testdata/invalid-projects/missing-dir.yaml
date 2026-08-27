@@ -1,0 +1,13 @@
+apiVersion: workflow/v1
+kind: workflow
+
+metadata:
+  name: invalid-projects-missing-dir
+
+projects:
+  - name: order-system
+    repository: ../examples/no-such-dir
+
+nodes:
+  deploy:
+    node: cd

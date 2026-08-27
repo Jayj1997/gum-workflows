@@ -19,10 +19,11 @@ import (
 //	Load YAML -> CUE Validate -> Parse -> Semantic Validate ->
 //	Create Execution -> Initialize Project/Workspace -> Execute -> Persist
 func runCmd(path string) error {
-	def, data, executors, defsRegistry, err := loadAndValidate(path)
+	def, data, executors, defsRegistry, warnings, err := loadAndValidate(path)
 	if err != nil {
 		return err
 	}
+	printWarnings(warnings)
 
 	// ③ Project Runtime：解析 projects[0] 声明并创建本次 Execution 的 Workspace。
 	// Execution ID 由 execution.NextExecutionID 分配（唯一来源），

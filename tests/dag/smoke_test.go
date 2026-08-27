@@ -16,6 +16,7 @@ import (
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
 	"github.com/Jayj1997/gum-workflows/internal/definition"
+	"github.com/Jayj1997/gum-workflows/internal/llm"
 	"github.com/Jayj1997/gum-workflows/internal/node"
 	"github.com/Jayj1997/gum-workflows/internal/validation"
 	"github.com/Jayj1997/gum-workflows/internal/workflow"
@@ -31,12 +32,22 @@ type contractDeclarer interface {
 
 type fakeFactory struct {
 	definition string
+	nodeType   definition.NodeType
 	inputs     map[string]definition.InputPort
 	outputs    map[string]definition.OutputPort
 }
 
 func (f fakeFactory) Definition() string { return f.definition }
 func (f fakeFactory) Version() string    { return "v1" }
+
+// NodeType 声明该定义的类别（newRegistries 注册进 definition.Registry；
+// 缺省 agent，human-approval 显式声明 human）。
+func (f fakeFactory) NodeType() definition.NodeType {
+	if f.nodeType == "" {
+		return definition.TypeAgent
+	}
+	return f.nodeType
+}
 
 // Contract 声明端口契约（newRegistries 注册进内存 definition.Registry）。
 func (f fakeFactory) Contract() (map[string]definition.InputPort, map[string]definition.OutputPort) {
@@ -72,20 +83,23 @@ func chainFactories() []node.ExecutorFactory {
 		},
 		fakeFactory{
 			definition: "openapi-generator",
+			nodeType:   definition.TypeAutomation,
 			inputs:     map[string]definition.InputPort{"openapi": {Type: "OpenAPI"}},
 			outputs:    map[string]definition.OutputPort{"frontend-sdk": {Type: "FrontendSDK"}},
 		},
 		fakeFactory{
 			definition: "human-approval",
+			nodeType:   definition.TypeHuman,
 			outputs:    map[string]definition.OutputPort{"approve": {Type: "bool"}},
 		},
-		fakeFactory{definition: "cd"},
+		fakeFactory{definition: "cd", nodeType: definition.TypeAutomation},
 	}
 }
 
 // newRegistries 依据 factories 构造内存 definition.Registry 与
-// ExecutorRegistry（冒烟测试不依赖内置节点集）。
-func newRegistries(t *testing.T, factories []node.ExecutorFactory) (*definition.Registry, *node.ExecutorRegistry) {
+// ExecutorRegistry（冒烟测试不依赖内置节点集），并返回已注入测试
+// llm 配置的语义校验器（票 06 起 agent 节点需要 llm.yaml 解析链）。
+func newRegistries(t *testing.T, factories []node.ExecutorFactory) (*definition.Registry, *node.ExecutorRegistry, *validation.SemanticValidator) {
 	t.Helper()
 
 	defs := definition.NewRegistry()
@@ -102,11 +116,15 @@ func newRegistries(t *testing.T, factories []node.ExecutorFactory) (*definition.
 	}
 	executors := node.NewExecutorRegistry()
 	for _, f := range factories {
+		nodeType := definition.TypeAgent
+		if f, ok := f.(typedFactory); ok {
+			nodeType = f.NodeType()
+		}
 		d := definition.NodeDefinition{
 			APIVersion: definition.NodeDefinitionAPIVersionV1,
 			Kind:       definition.NodeDefinitionKind,
 			Metadata:   definition.Metadata{Name: f.Definition(), Description: "test"},
-			Type:       definition.TypeAgent,
+			Type:       nodeType,
 		}
 		if c, ok := f.(contractDeclarer); ok {
 			d.Inputs, d.Outputs = c.Contract()
@@ -118,7 +136,31 @@ func newRegistries(t *testing.T, factories []node.ExecutorFactory) (*definition.
 			t.Fatalf("register executor %q: %v", f.Definition(), err)
 		}
 	}
-	return defs, executors
+
+	// 冒烟链含 agent 节点：注入最小 llm 配置（默认链可解析即可）。
+	c, err := llm.Load([]byte(`
+apiVersion: llm/v1
+kind: llm
+providers:
+  - name: test-provider
+    type: openai-compatible
+    url: http://localhost
+    apikey: plain-test-key
+    models:
+      - name: test-model
+        default: true
+`))
+	if err != nil {
+		t.Fatalf("load test llm config: %v", err)
+	}
+	v := validation.NewSemanticValidator(executors, defs, artifact.NewRegistry(), validation.WithLLMConfig(&c))
+	return defs, executors, v
+}
+
+// typedFactory 由携带 Node Type 信息的测试 factory 实现
+// （缺省按 agent 注册，human-approval 等非 agent 定义显式声明）。
+type typedFactory interface {
+	NodeType() definition.NodeType
 }
 
 // contractsFor 返回某 Node 定义的契约（冒烟调度器据此产出声明 Output）。
@@ -301,9 +343,8 @@ func TestSmokeChainDataDriven(t *testing.T) {
 		t.Fatalf("Load() unexpected error: %v", err)
 	}
 
-	defs, executors := newRegistries(t, chainFactories())
-	v := validation.NewSemanticValidator(executors, defs, artifact.NewRegistry())
-	if err := v.Validate(def); err != nil {
+	defs, _, v := newRegistries(t, chainFactories())
+	if _, err := v.Validate(def); err != nil {
 		t.Fatalf("semantic validation unexpected error:\n%v", err)
 	}
 	res := simulate(t, def, contractsFor(t, defs, def))
@@ -337,14 +378,15 @@ func TestSmokeControlDependency(t *testing.T) {
 		APIVersion: workflow.APIVersionV1,
 		Kind:       workflow.KindWorkflow,
 		Metadata:   workflow.Metadata{Name: "deploy"},
+		Projects:   []workflow.ProjectSpec{{Name: "p", Repository: "./examples/order-system"}},
 		Nodes: map[string]workflow.NodeSpec{
 			"approval": {Node: "human-approval"},
 			"deploy":   {Node: "cd", DependsOn: []string{"approval"}},
 		},
 	}
 
-	defs, executors := newRegistries(t, chainFactories())
-	if err := validation.NewSemanticValidator(executors, defs, artifact.NewRegistry()).Validate(def); err != nil {
+	defs, _, v := newRegistries(t, chainFactories())
+	if _, err := v.Validate(def); err != nil {
 		t.Fatalf("semantic validation unexpected error:\n%v", err)
 	}
 	res := simulate(t, def, contractsFor(t, defs, def))
@@ -379,6 +421,7 @@ func TestSmokeParallelReadiness(t *testing.T) {
 		APIVersion: workflow.APIVersionV1,
 		Kind:       workflow.KindWorkflow,
 		Metadata:   workflow.Metadata{Name: "diamond"},
+		Projects:   []workflow.ProjectSpec{{Name: "p", Repository: "./examples/order-system"}},
 		Nodes: map[string]workflow.NodeSpec{
 			"a": {Node: "coding-agent"},
 			"b": {
@@ -399,8 +442,8 @@ func TestSmokeParallelReadiness(t *testing.T) {
 		},
 	}
 
-	defs, executors := newRegistries(t, factories)
-	if err := validation.NewSemanticValidator(executors, defs, artifact.NewRegistry()).Validate(def); err != nil {
+	defs, _, v := newRegistries(t, factories)
+	if _, err := v.Validate(def); err != nil {
 		t.Fatalf("semantic validation unexpected error:\n%v", err)
 	}
 	res := simulate(t, def, contractsFor(t, defs, def))

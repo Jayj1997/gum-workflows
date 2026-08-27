@@ -2,23 +2,20 @@ apiVersion: workflow/v1
 kind: workflow
 
 metadata:
-  name: invalid-data-cycle
+  name: invalid-llm-non-agent
 
 projects:
   - name: order-system
     repository: ../examples/order-system
 
 nodes:
-  backend:
+  coder:
     node: coding-agent
+
+  sdk:
+    node: openapi-generator
+    target_model: gpt-4o
 
     inputs:
       openapi:
-        from: frontend.openapi
-
-  frontend:
-    node: coding-agent
-
-    inputs:
-      openapi:
-        from: backend.openapi
+        from: coder.openapi

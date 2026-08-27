@@ -1,0 +1,27 @@
+apiVersion: workflow/v1
+kind: workflow
+
+metadata:
+  name: invalid-optional-port-mismatch
+
+projects:
+  - name: order-system
+    repository: ../examples/order-system
+
+# optional 输入端口同样做类型兼容检查：coding-agent 的可选输入 openapi
+# 期望 OpenAPI，architecture 产出 ArchitectureSpec，不兼容。
+nodes:
+  analysis:
+    node: requirement-analysis
+
+  arch:
+    node: architecture-design
+    inputs:
+      analysis-output:
+        from: analysis.analysis-output
+
+  coder:
+    node: coding-agent
+    inputs:
+      openapi:
+        from: arch.architecture

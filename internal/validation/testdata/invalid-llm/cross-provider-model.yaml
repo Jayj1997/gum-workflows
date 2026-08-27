@@ -2,12 +2,14 @@ apiVersion: workflow/v1
 kind: workflow
 
 metadata:
-  name: invalid-node
+  name: invalid-llm-cross-provider-model
 
 projects:
   - name: order-system
     repository: ../examples/order-system
 
 nodes:
-  requirement:
-    node: nonexistent-node
+  coder:
+    node: coding-agent
+    llm: openai
+    target_model: claude-sonnet-5

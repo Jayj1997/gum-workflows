@@ -6,7 +6,7 @@ metadata:
 
 projects:
   - name: order-system
-    repository: ./examples/order-system
+    repository: ../examples/order-system
 
 nodes:
   analysis:

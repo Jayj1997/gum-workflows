@@ -1,0 +1,23 @@
+apiVersion: workflow/v1
+kind: workflow
+
+metadata:
+  name: valid-human-cycle
+
+projects:
+  - name: order-system
+    repository: ../examples/order-system
+
+# 审批回环（设计文档 §3.6/§6.5）：coder --dependsOn--> review（control），
+# review --advise--> coder（data）。环上含 human 节点：合法迭代路径，不提示。
+nodes:
+  coder:
+    node: coding-agent
+    inputs:
+      advise:
+        from: review.advise
+
+  review:
+    node: human-approval
+    dependsOn:
+      - coder

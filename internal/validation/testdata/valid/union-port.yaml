@@ -2,21 +2,20 @@ apiVersion: workflow/v1
 kind: workflow
 
 metadata:
-  name: minimal-development
-  version: "1.0"
+  name: valid-union-port
 
 projects:
   - name: order-system
     repository: ../examples/order-system
 
+# union 消费端（markdown|OpenAPI）接受 markdown 生产者：
+# consumer ⊇ producer 的正向兼容（设计文档 §4）。
 nodes:
-
   coder:
     node: coding-agent
 
-  sdk:
-    node: openapi-generator
-
+  writer:
+    node: doc-writer
     inputs:
-      openapi:
+      content:
         from: coder.openapi

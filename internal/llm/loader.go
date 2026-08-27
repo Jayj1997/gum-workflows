@@ -75,6 +75,11 @@ func LoadDefault() (Config, error) {
 		ErrConfigNotFound, strings.Join(paths, ", "))
 }
 
+// CandidatePaths 返回 llm.yaml 的查找路径（有序：XDG_CONFIG_HOME 优先，
+// HOME 兜底）。供 LoadDefault 与语义校验的错误信息共用，避免查找顺序
+// 的知识分散漂移。
+func CandidatePaths() []string { return candidatePaths() }
+
 // candidatePaths 返回查找顺序中的两个候选路径。
 func candidatePaths() []string {
 	paths := make([]string, 0, 2)

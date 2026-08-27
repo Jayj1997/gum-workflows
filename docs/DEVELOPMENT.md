@@ -202,7 +202,7 @@ const (
 
 - 单元测试与源码同目录（`xxx_test.go`），跨包端到端测试放 `tests/`。
 - 表驱动测试为默认风格；fixture 放 `testdata/`。
-- M6 的 DAG 校验测试必须覆盖设计计划 §36 列出的全部非法场景，fixture 目录按计划命名：
+- 语义校验 fixture 按场景分目录（沿用 valid/invalid 模式；平台核心设计 §10 起环降为 warning，warning 场景独立成目录）：
 
 ```text
 testdata/
@@ -210,7 +210,10 @@ testdata/
 ├── invalid-node/
 ├── invalid-output/
 ├── invalid-type/
-└── invalid-cycle/
+├── invalid-executor/
+├── invalid-llm/
+├── invalid-projects/
+└── warning-cycle/
 ```
 
 - 单元测试禁止网络访问、禁止依赖 `$HOME`；涉及文件系统一律用 `t.TempDir()`。

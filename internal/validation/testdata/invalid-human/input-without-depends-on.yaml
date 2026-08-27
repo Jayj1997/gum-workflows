@@ -1,0 +1,21 @@
+apiVersion: workflow/v1
+kind: workflow
+
+metadata:
+  name: invalid-human-input-without-depends-on
+
+projects:
+  - name: order-system
+    repository: ../examples/order-system
+
+# human 类节点以输入挂接流程但未声明 dependsOn（设计文档 §10 检查 #8）：
+# human 节点必须经 Control Edge 参与流程。
+nodes:
+  coder:
+    node: coding-agent
+
+  review:
+    node: human-approval
+    inputs:
+      advise:
+        from: coder.openapi

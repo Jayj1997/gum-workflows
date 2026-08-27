@@ -1,0 +1,11 @@
+apiVersion: workflow/v1
+kind: workflow
+
+metadata:
+  name: invalid-projects-zero-entries
+
+projects: []
+
+nodes:
+  deploy:
+    node: cd
