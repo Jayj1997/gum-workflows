@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -373,6 +374,62 @@ func TestParallelFailureStopsDispatch(t *testing.T) {
 	defer mu.Unlock()
 	if len(ran) != 0 {
 		t.Errorf("downstream nodes executed after failure: %v", ran)
+	}
+}
+
+func TestParallelStructuralFailureWaitsForInflightRun(t *testing.T) {
+	started := make(chan struct{})
+	failed := make(chan struct{})
+	release := make(chan struct{})
+	completed := make(chan struct{})
+	dr, er := newTestRegistries(t,
+		fnFactory{definition: "blocking", create: func(node.Config) (node.Node, error) {
+			return callbackNode(func(node.ExecutionContext, map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
+				close(started)
+				<-release
+				close(completed)
+				return nil, nil
+			}), nil
+		}},
+		fnFactory{definition: "fail", create: func(node.Config) (node.Node, error) {
+			return callbackNode(func(node.ExecutionContext, map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
+				<-started
+				close(failed)
+				return nil, errors.New("planned structural failure")
+			}), nil
+		}},
+	)
+	def := workflow.Definition{
+		APIVersion: workflow.APIVersionV1, Kind: workflow.KindWorkflow,
+		Metadata: workflow.Metadata{Name: "drain-inflight"},
+		Nodes: map[string]workflow.NodeSpec{
+			"a-blocking": {Node: "blocking"},
+			"b-fail":     {Node: "fail"},
+		},
+	}
+	e := NewEngine(er, dr, artifact.NewMemStore(), nil, WithParallelism(2))
+	var exec *WorkflowExecution
+	var runErr error
+	done := make(chan struct{})
+	go func() {
+		exec, runErr = e.Run(context.Background(), def)
+		close(done)
+	}()
+	<-failed
+	select {
+	case <-done:
+		t.Fatal("Run returned before the in-flight node completed")
+	default:
+	}
+	close(release)
+	<-done
+	if runErr == nil || exec.Status != StatusFailed {
+		t.Fatalf("Run() = %s/%v, want structural failure", exec.Status, runErr)
+	}
+	select {
+	case <-completed:
+	default:
+		t.Fatal("in-flight node did not complete before Run returned")
 	}
 }
 

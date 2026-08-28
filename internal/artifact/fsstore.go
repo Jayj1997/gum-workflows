@@ -98,35 +98,6 @@ func (s *FilesystemStore) Exists(ref ArtifactRef) bool {
 	return err == nil
 }
 
-// UpdateVersion assigns a runtime output version without creating a duplicate artifact.
-func (s *FilesystemStore) UpdateVersion(ref ArtifactRef, version string) (ArtifactRef, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	name := filepath.Base(ref.URI)
-	if !filePattern.MatchString(name) {
-		return ArtifactRef{}, fmt.Errorf("filesystem store: invalid URI %q", ref.URI)
-	}
-	path := filepath.Join(s.root, name)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ArtifactRef{}, fmt.Errorf("filesystem store: get %q: %w", ref.URI, err)
-	}
-	var a Artifact
-	if err := json.Unmarshal(data, &a); err != nil {
-		return ArtifactRef{}, fmt.Errorf("filesystem store: parse %q: %w", ref.URI, err)
-	}
-	a.Version = version
-	data, err = json.MarshalIndent(a, "", "  ")
-	if err != nil {
-		return ArtifactRef{}, fmt.Errorf("filesystem store: marshal %q: %w", a.ID, err)
-	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return ArtifactRef{}, fmt.Errorf("filesystem store: write %q: %w", name, err)
-	}
-	return a.Ref(name), nil
-}
-
 // List 返回全部已存储 Artifact 的 URI（有序）。
 func (s *FilesystemStore) List() ([]string, error) {
 	s.mu.Lock()

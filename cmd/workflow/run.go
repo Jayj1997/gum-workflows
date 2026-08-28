@@ -105,7 +105,7 @@ func printExecutionSummary(exec *execution.WorkflowExecution) {
 	fmt.Println("Nodes:")
 	for _, id := range ids {
 		ne := exec.Nodes[id]
-		line := fmt.Sprintf("  %-13s %-9s %s", id, ne.Current.Status, ne.NodeType)
+		line := fmt.Sprintf("  %-13s %-9s %s", id, ne.Current.Status, ne.NodeDefinition)
 		if ne.Current.Error != "" {
 			line += "  error: " + ne.Current.Error
 		}

@@ -65,10 +65,10 @@ type NodeRun struct {
 
 // NodeExecution holds the current node run and all completed earlier rounds.
 type NodeExecution struct {
-	NodeID   string    `json:"node_id"`
-	NodeType string    `json:"node_type"`
-	Current  NodeRun   `json:"current"`
-	History  []NodeRun `json:"history,omitempty"`
+	NodeID         string    `json:"node_id"`
+	NodeDefinition string    `json:"node_definition"`
+	Current        NodeRun   `json:"current"`
+	History        []NodeRun `json:"history,omitempty"`
 
 	dirty           bool
 	machineRuns     int

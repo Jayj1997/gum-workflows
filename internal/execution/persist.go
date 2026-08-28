@@ -53,12 +53,12 @@ func PersistState(dir string, exec *WorkflowExecution) error {
 			return fmt.Errorf("persist state: create %s: %w", nodeDir, err)
 		}
 		nodeState := struct {
-			NodeID   string    `json:"node_id"`
-			NodeType string    `json:"node_type"`
-			Current  NodeRun   `json:"current"`
-			History  []NodeRun `json:"history,omitempty"`
+			NodeID         string    `json:"node_id"`
+			NodeDefinition string    `json:"node_definition"`
+			Current        NodeRun   `json:"current"`
+			History        []NodeRun `json:"history,omitempty"`
 		}{
-			NodeID: ne.NodeID, NodeType: ne.NodeType, Current: ne.Current,
+			NodeID: ne.NodeID, NodeDefinition: ne.NodeDefinition, Current: ne.Current,
 			History: summarizeRuns(ne.History),
 		}
 		if err := writeJSON(filepath.Join(nodeDir, "state.json"), nodeState); err != nil {

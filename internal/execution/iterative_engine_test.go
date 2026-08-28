@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
 	"github.com/Jayj1997/gum-workflows/internal/definition"
@@ -69,8 +68,16 @@ func newIterativeEngine(t *testing.T, store artifact.Store, opts ...Option) *Eng
 		fnFactory{definition: "worker", inputs: map[string]definition.InputPort{
 			"seed": {Type: "KindA"}, "feedback": {Type: "KindA", Optional: true},
 		}, outputs: map[string]definition.OutputPort{"work": {Type: "KindA"}}, create: func(node.Config) (node.Node, error) {
+			var reusable artifact.ArtifactRef
 			return callbackNode(func(ctx node.ExecutionContext, _ map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
-				return put(ctx, "work")
+				if reusable.URI == "" {
+					var err error
+					reusable, err = ctx.Store.Put(artifact.Artifact{ID: "work", Kind: "KindA", Version: "1"})
+					if err != nil {
+						return nil, err
+					}
+				}
+				return map[string]artifact.ArtifactRef{"work": reusable}, nil
 			}), nil
 		}},
 		fnFactory{definition: "feedback", inputs: map[string]definition.InputPort{"work": {Type: "KindA"}}, outputs: map[string]definition.OutputPort{"feedback": {Type: "KindA"}}, create: func(node.Config) (node.Node, error) {
@@ -103,12 +110,17 @@ func TestRunIteratesWithLatestVersionsUntilConvergenceGuard(t *testing.T) {
 	if len(worker.History) != 3 {
 		t.Fatalf("worker history rounds = %d, want 3", len(worker.History))
 	}
+	outputURIs := map[string]bool{}
 	for i, run := range worker.History {
 		wantVersion := fmt.Sprint(i + 1)
 		ref := run.Outputs["work"]
 		if ref.Version != wantVersion || !store.Exists(ref) {
 			t.Errorf("round %d output = %+v, want existing version %s", run.Round, ref, wantVersion)
 		}
+		if outputURIs[ref.URI] {
+			t.Errorf("round %d reused prior output URI %q", run.Round, ref.URI)
+		}
+		outputURIs[ref.URI] = true
 		stored, getErr := store.Get(ref)
 		if getErr != nil || stored.Version != wantVersion {
 			t.Errorf("round %d stored artifact = %+v, error %v", run.Round, stored, getErr)
@@ -224,9 +236,7 @@ func TestNewVersionOnSameURITriggersDownstream(t *testing.T) {
 			"feedback": {Node: "feedback", Inputs: map[string]workflow.InputBinding{"work": {From: "worker.work"}}},
 		},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
-	defer cancel()
-	exec, err := NewEngine(er, dr, artifact.NewMemStore(), nil, WithConvergenceLimit(3)).Run(ctx, def)
+	exec, err := NewEngine(er, dr, artifact.NewMemStore(), nil, WithConvergenceLimit(3)).Run(context.Background(), def)
 	if err == nil || exec.Status != StatusFailed {
 		t.Fatalf("Run() = %s/%v, want convergence failure from same-URI versions", exec.Status, err)
 	}
@@ -237,16 +247,22 @@ func TestNewVersionOnSameURITriggersDownstream(t *testing.T) {
 
 func TestDirtyInputQueuesWithoutConcurrentNodeRuns(t *testing.T) {
 	var active, maxActive atomic.Int32
+	var slowRuns, consumerRuns atomic.Int32
+	releaseSlow := make(chan struct{})
+	consumerStarted := make(chan struct{})
+	releaseConsumer := make(chan struct{})
 	put := func(ctx node.ExecutionContext, name string) (map[string]artifact.ArtifactRef, error) {
 		ref, err := ctx.Store.Put(artifact.Artifact{ID: name, Kind: "KindA"})
 		return map[string]artifact.ArtifactRef{name: ref}, err
 	}
-	producer := func(name string, delay time.Duration) fnFactory {
+	producer := func(name string, gateSecond bool) fnFactory {
 		return fnFactory{definition: name, inputs: map[string]definition.InputPort{
 			"seed": {Type: "KindA"}, "feedback": {Type: "KindA", Optional: true},
 		}, outputs: map[string]definition.OutputPort{"out": {Type: "KindA"}}, create: func(node.Config) (node.Node, error) {
 			return callbackNode(func(ctx node.ExecutionContext, _ map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
-				time.Sleep(delay)
+				if gateSecond && slowRuns.Add(1) == 2 {
+					<-releaseSlow
+				}
 				return put(ctx, "out")
 			}), nil
 		}}
@@ -257,8 +273,8 @@ func TestDirtyInputQueuesWithoutConcurrentNodeRuns(t *testing.T) {
 				return put(ctx, "seed")
 			}), nil
 		}},
-		producer("fast", 0),
-		producer("slow", 5*time.Millisecond),
+		producer("fast", false),
+		producer("slow", true),
 		fnFactory{definition: "consumer", inputs: map[string]definition.InputPort{
 			"fast": {Type: "KindA"}, "slow": {Type: "KindA"},
 		}, outputs: map[string]definition.OutputPort{"feedback": {Type: "KindA"}}, create: func(node.Config) (node.Node, error) {
@@ -271,7 +287,10 @@ func TestDirtyInputQueuesWithoutConcurrentNodeRuns(t *testing.T) {
 					}
 				}
 				defer active.Add(-1)
-				time.Sleep(10 * time.Millisecond)
+				if consumerRuns.Add(1) == 2 {
+					close(consumerStarted)
+					<-releaseConsumer
+				}
 				return put(ctx, "feedback")
 			}), nil
 		}},
@@ -295,7 +314,17 @@ func TestDirtyInputQueuesWithoutConcurrentNodeRuns(t *testing.T) {
 	}
 	e := NewEngine(er, dr, artifact.NewMemStore(), nil, WithParallelism(4), WithConvergenceLimit(3))
 
-	exec, err := e.Run(context.Background(), def)
+	var exec *WorkflowExecution
+	var err error
+	done := make(chan struct{})
+	go func() {
+		exec, err = e.Run(context.Background(), def)
+		close(done)
+	}()
+	<-consumerStarted
+	close(releaseSlow)
+	close(releaseConsumer)
+	<-done
 	if err == nil || exec.Status != StatusFailed {
 		t.Fatalf("Run() = %s/%v, want convergence failure", exec.Status, err)
 	}

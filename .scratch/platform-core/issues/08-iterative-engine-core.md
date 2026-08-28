@@ -22,3 +22,5 @@
 Artifact 输出按「该输出第 N 次产出」赋 Version，MemStore/FilesystemStore 原位更新存储本体，外部资源引用直接更新 ref；旧版本 URI 均保留。state.json 增加 run UUID、停止原因、时间与 workflow 文件，节点 state 保存当前轮及历史摘要，每轮完整输入/输出明细写入 `nodes/<id>/runs/<round>.json`。
 
 收敛保护默认阈值 10、可用 `WithConvergenceLimit` 调低；第 N+1 个机器轮建立 Failed Node Run（`convergence-guard`）并令 Workflow Failed。临时 HumanEvents/Gateway 接缝可重置全节点计数，待 T09/T10 接入真实 human 事件。全图静止后 Engine 阻塞等待事件或 ctx；SIGINT/SIGTERM 令运行以 `Stopped/user_interrupt` 正常返回，CLI 与 e2e 已迁移到该语义。
+
+代码评审（Standards + Spec 双轴并行）修复：dirty 身份同时比较 URI 与 Version，覆盖同一外部 URI 发布新版本；Artifact 版本化改为复制新 Store 对象而非原位覆盖，执行器重复返回旧 ref 时历史版本仍共存；Failed 的 convergence guard 不再误写 stopped_reason；运行快照字段从旧术语 NodeType 更名为 NodeDefinition；新增并行结构性失败等待在途轮完成的验收。新增引擎测试以 channel/idle hook 驱动，不再依赖 wall-clock 延迟。`docs/DEVELOPMENT.md` 的旧单轮状态机文字按既定 T14 文档同步范围保留，本票以已批准的平台核心设计与 spec 为实现权威。

@@ -102,6 +102,7 @@ type Engine struct {
 	workflowFile     string
 	humanEvents      <-chan struct{}
 	humanGateway     HumanGateway
+	onIdle           func()
 }
 
 // NewEngine creates an iterative execution engine.
@@ -149,7 +150,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 	}
 	for _, id := range g.NodeIDs {
 		exec.Nodes[id] = &NodeExecution{
-			NodeID: id, NodeType: def.Nodes[id].Node,
+			NodeID: id, NodeDefinition: def.Nodes[id].Node,
 			Current:         NodeRun{Status: StatusPending},
 			consumedControl: map[string]int{}, outputVersions: map[string]int{},
 		}
@@ -209,7 +210,6 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 					stopping = true
 					exec.Status = StatusFailed
 					exec.Error = runErr.Error()
-					exec.StoppedReason = "convergence-guard"
 					e.persist(exec)
 					break
 				}
@@ -233,6 +233,9 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				exec.Status = StatusFailed
 				exec.Error = err.Error()
 				continue
+			}
+			if e.onIdle != nil {
+				e.onIdle()
 			}
 			select {
 			case <-ctx.Done():
@@ -339,21 +342,24 @@ func (e *Engine) finishNode(exec *WorkflowExecution, result nodeResult) error {
 		version := strconv.Itoa(ne.outputVersions[name])
 		updated := ref
 		if e.store.Exists(ref) {
-			updater, ok := e.store.(interface {
-				UpdateVersion(artifact.ArtifactRef, string) (artifact.ArtifactRef, error)
-			})
-			if !ok {
-				updated.Version = version
-				versioned[name] = updated
-				continue
-			}
-			var err error
-			updated, err = updater.UpdateVersion(ref, version)
+			body, err := e.store.Get(ref)
 			if err != nil {
 				ne.Current.Error = err.Error()
 				ne.Current.ErrorKind = "structural"
 				_ = ne.TransitionTo(StatusFailed)
-				return fmt.Errorf("node %q output %q: assign version: %w", result.id, name, err)
+				return fmt.Errorf("node %q output %q: load artifact for versioning: %w", result.id, name, err)
+			}
+			if body.Version == version {
+				updated.Version = version
+			} else {
+				body.Version = version
+				updated, err = e.store.Put(body)
+				if err != nil {
+					ne.Current.Error = err.Error()
+					ne.Current.ErrorKind = "structural"
+					_ = ne.TransitionTo(StatusFailed)
+					return fmt.Errorf("node %q output %q: store versioned artifact: %w", result.id, name, err)
+				}
 			}
 		} else {
 			updated.Version = version

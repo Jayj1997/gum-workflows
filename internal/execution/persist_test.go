@@ -19,21 +19,21 @@ func TestPersistStateLayout(t *testing.T) {
 		Status:   StatusFailed,
 		Nodes: map[string]*NodeExecution{
 			"requirement": {
-				NodeID:   "requirement",
-				NodeType: "requirement-analysis",
+				NodeID:         "requirement",
+				NodeDefinition: "requirement-analysis",
 				Current: NodeRun{RunID: "round-1", Round: 1, Status: StatusSucceeded, Outputs: map[string]artifact.ArtifactRef{
 					"requirement": {ID: "requirement", Kind: artifact.KindRequirementSpec, Version: "1", URI: "1.json"},
 				}},
 			},
 			"architecture": {
-				NodeID:   "architecture",
-				NodeType: "architecture-design",
-				Current:  NodeRun{RunID: "round-1", Round: 1, Status: StatusFailed, Error: "mock failure"},
+				NodeID:         "architecture",
+				NodeDefinition: "architecture-design",
+				Current:        NodeRun{RunID: "round-1", Round: 1, Status: StatusFailed, Error: "mock failure"},
 			},
 			"backend": {
-				NodeID:   "backend",
-				NodeType: "coding-agent",
-				Current:  NodeRun{Status: StatusPending},
+				NodeID:         "backend",
+				NodeDefinition: "coding-agent",
+				Current:        NodeRun{Status: StatusPending},
 			},
 		},
 	}
@@ -74,8 +74,8 @@ func TestPersistStateLayout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadNodeState(): %v", err)
 	}
-	if ne.NodeID != "requirement" || ne.NodeType != "requirement-analysis" {
-		t.Errorf("loaded identity = %q/%q", ne.NodeID, ne.NodeType)
+	if ne.NodeID != "requirement" || ne.NodeDefinition != "requirement-analysis" {
+		t.Errorf("loaded identity = %q/%q", ne.NodeID, ne.NodeDefinition)
 	}
 	if ne.Current.Status != StatusSucceeded {
 		t.Errorf("loaded status = %s", ne.Current.Status)

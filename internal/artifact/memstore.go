@@ -56,16 +56,3 @@ func (s *MemStore) Exists(ref ArtifactRef) bool {
 	_, ok := s.byURI[ref.URI]
 	return ok
 }
-
-// UpdateVersion assigns a runtime output version without creating a duplicate artifact.
-func (s *MemStore) UpdateVersion(ref ArtifactRef, version string) (ArtifactRef, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	a, ok := s.byURI[ref.URI]
-	if !ok {
-		return ArtifactRef{}, fmt.Errorf("artifact %q: not found at %q", ref.ID, ref.URI)
-	}
-	a.Version = version
-	s.byURI[ref.URI] = a
-	return a.Ref(ref.URI), nil
-}

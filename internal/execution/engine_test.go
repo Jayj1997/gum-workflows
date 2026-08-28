@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
 	"github.com/Jayj1997/gum-workflows/internal/definition"
@@ -16,8 +15,10 @@ import (
 
 func runUntilStopped(t *testing.T, e *Engine, def workflow.Definition) (*WorkflowExecution, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	e.onIdle = cancel
+	defer func() { e.onIdle = nil }()
 	return e.Run(ctx, def)
 }
 
@@ -254,8 +255,8 @@ func TestRunCreatesIndependentExecutions(t *testing.T) {
 			if ne.NodeID != id {
 				t.Errorf("run #%d node %q: NodeID = %q", i+1, id, ne.NodeID)
 			}
-			if ne.NodeType == "" {
-				t.Errorf("run #%d node %q: NodeType empty", i+1, id)
+			if ne.NodeDefinition == "" {
+				t.Errorf("run #%d node %q: NodeDefinition empty", i+1, id)
 			}
 		}
 		for j, other := range execs {
@@ -285,7 +286,7 @@ func TestRunCreatesIndependentExecutions(t *testing.T) {
 
 // TestNodeExecutionCarriesDefinitionIdentity 验证 NodeExecution 快照了
 // 定义侧身份：NodeID 来自 Workflow 组合（"backend 这个节点"），
-// NodeType 是本次运行实际实例化的类型。
+// NodeDefinition 是本次运行实际实例化的类型。
 func TestNodeExecutionCarriesDefinitionIdentity(t *testing.T) {
 	e, _ := newChainEngine(t)
 	exec, err := runUntilStopped(t, e, chainDef())
@@ -300,8 +301,8 @@ func TestNodeExecutionCarriesDefinitionIdentity(t *testing.T) {
 	if coder.NodeID != "coder" || sdk.NodeID != "sdk" {
 		t.Fatalf("NodeIDs = %q/%q", coder.NodeID, sdk.NodeID)
 	}
-	if coder.NodeType != "coding-agent" || sdk.NodeType != "openapi-generator" {
-		t.Fatalf("NodeTypes = %q/%q", coder.NodeType, sdk.NodeType)
+	if coder.NodeDefinition != "coding-agent" || sdk.NodeDefinition != "openapi-generator" {
+		t.Fatalf("NodeDefinitions = %q/%q", coder.NodeDefinition, sdk.NodeDefinition)
 	}
 	if coder == sdk {
 		t.Fatal("coder and sdk share the same NodeExecution")
