@@ -3,6 +3,9 @@ package execution
 import (
 	"context"
 	"fmt"
+
+	"github.com/Jayj1997/gum-workflows/internal/artifact"
+	"github.com/Jayj1997/gum-workflows/internal/node"
 )
 
 // RoundRequestKind identifies the human interaction requested by a node round.
@@ -46,6 +49,14 @@ type RoundResponse struct {
 // HumanGateway isolates the engine from terminal or UI interaction.
 type HumanGateway interface {
 	RequestRound(ctx context.Context, req RoundRequest) (RoundResponse, error)
+}
+
+// humanInputNode is implemented by the selected human-input executor. Keeping
+// this interface in the consumer lets executor versions own output behavior
+// without making builtins depend on execution.
+type humanInputNode interface {
+	node.Node
+	ExecuteHumanInput(ctx node.ExecutionContext, content string) (map[string]artifact.ArtifactRef, error)
 }
 
 type noHumanGateway struct{}

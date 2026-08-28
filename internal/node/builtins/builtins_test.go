@@ -69,6 +69,28 @@ func TestRequirementNode(t *testing.T) {
 	}
 }
 
+func TestHumanInputExecutorProducesRequirement(t *testing.T) {
+	ctx := newExecCtx(t, t.TempDir())
+	n, err := humanInputExecutor{}.Create(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, ok := n.(interface {
+		ExecuteHumanInput(node.ExecutionContext, string) (map[string]artifact.ArtifactRef, error)
+	})
+	if !ok {
+		t.Fatal("human-input v1 does not implement the human input execution seam")
+	}
+	outputs, err := human.ExecuteHumanInput(ctx, "build an API")
+	if err != nil {
+		t.Fatalf("ExecuteHumanInput() unexpected error: %v", err)
+	}
+	requirement, err := ctx.Store.Get(outputs["requirement"])
+	if err != nil || requirement.Kind != "markdown" || requirement.Data != "build an API" {
+		t.Errorf("requirement = %+v/%v", requirement, err)
+	}
+}
+
 func TestArchitectureNode(t *testing.T) {
 	ctx := newExecCtx(t, t.TempDir())
 	req, err := ctx.Store.Put(artifact.Artifact{ID: "analysis-output", Kind: artifact.KindArchitectureSpec})

@@ -56,6 +56,14 @@ func (humanInputNode) Execute(node.ExecutionContext, map[string]artifact.Artifac
 	return nil, fmt.Errorf("human-input must be executed through the execution human gateway")
 }
 
+func (humanInputNode) ExecuteHumanInput(ctx node.ExecutionContext, content string) (map[string]artifact.ArtifactRef, error) {
+	ref, err := putArtifact(ctx, "requirement", artifact.Kind("markdown"), content)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]artifact.ArtifactRef{"requirement": ref}, nil
+}
+
 // ---- requirement-analysis（§12）----
 
 type requirementExecutor struct{}

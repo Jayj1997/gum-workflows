@@ -45,9 +45,18 @@ func (humanInputTestFactory) Contract() (map[string]definition.InputPort, map[st
 	return nil, map[string]definition.OutputPort{"requirement": {Type: "markdown"}}
 }
 func (humanInputTestFactory) Create(node.Config) (node.Node, error) {
-	return callbackNode(func(node.ExecutionContext, map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
-		return nil, fmt.Errorf("human-input executor should be driven by HumanGateway")
-	}), nil
+	return humanInputTestNode{}, nil
+}
+
+type humanInputTestNode struct{}
+
+func (humanInputTestNode) Execute(node.ExecutionContext, map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
+	return nil, fmt.Errorf("human-input executor should be driven by HumanGateway")
+}
+
+func (humanInputTestNode) ExecuteHumanInput(ctx node.ExecutionContext, content string) (map[string]artifact.ArtifactRef, error) {
+	ref, err := ctx.Store.Put(artifact.Artifact{ID: "requirement", Kind: "markdown", Data: content})
+	return map[string]artifact.ArtifactRef{"requirement": ref}, err
 }
 
 func TestHumanInputRoundsCascadeAndFinishClosesEntry(t *testing.T) {

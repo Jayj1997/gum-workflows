@@ -17,4 +17,4 @@
 
 **2026-08-28（agent 实施记录）：** `internal/execution` 已定义统一的 `HumanGateway.RequestRound`、三类请求枚举、展示上下文与联合响应形态。`human-input/v1` 的 YAML 种子与 Go executor 已进入内置注册/一致性检查；Engine 对入口轮次经 gateway 阻塞获取需求，每轮生成新的 `requirement: markdown` Artifact 版本，等待该轮下游收敛后才请求下一轮。Continue 驱动下一轮，Finish 关闭入口；每次真实输入（含 Finish 决策）重置收敛保护计数。等待输入期间取消会把入口当前轮记 Failed，并把运行记 Stopped。
 
-语义校验新增唯一源规则并覆盖无源、多源、源非 human 三类 fixture；既有 valid/warning fixture 与最小示例迁移到 human 入口。CLI 在定义导入、数据库和 execution 目录写入之前检查 stdin 是否为交互终端，非 TTY 含 human 节点立即给出明确错误；stdin adapter 的多行、空行结束、Continue/Finish、默认 Finish 与非法选择重试均由纯字节流单测覆盖。由于规格明确不引入 pty 依赖，旧的无 PTY 二进制成功-run 用例暂时保留为 skip；交互行为由 Engine fake-gateway 主接缝覆盖，CLI e2e 覆盖非 TTY 零写入路径。
+语义校验新增唯一源规则并覆盖无源、多源、源非 human 三类 fixture；既有 valid/warning fixture 与最小示例迁移到 human 入口。CLI 在定义导入、数据库和 execution 目录写入之前检查 stdin 是否为交互终端，非 TTY 含 human 节点立即给出明确错误；stdin adapter 的多行、空行结束、Continue/Finish、默认 Finish 与非法选择重试均由纯字节流单测覆盖。由于规格明确不引入 pty 依赖，真实交互与两次运行的状态/定义持久化由可注入 gateway 的 CLI workflow seam 覆盖，数据库不可用、新版 executor 拒绝及 version-zero 迁移回归也迁入该 seam；真实二进制 e2e 聚焦 validate 零副作用与非 TTY 零写入路径。

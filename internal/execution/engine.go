@@ -157,7 +157,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 		}
 		if !stopping {
 			for _, id := range g.NodeIDs {
-				if !queued[id] && e.ready(def, exec, id) {
+				if !queued[id] && e.ready(def, exec, nodes[id], id) {
 					if exec.Nodes[id].Current.Round == 0 {
 						if err := exec.Nodes[id].TransitionTo(StatusReady); err != nil {
 							return e.fail(exec, err)
@@ -175,7 +175,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				queued[id] = false
 				inputs := e.resolveInputs(def, exec, id)
 				ne := exec.Nodes[id]
-				humanInput := e.isHumanInput(def, id)
+				_, humanInput := nodes[id].(humanInputNode)
 				if !humanInput {
 					ne.machineRuns++
 				}
@@ -203,7 +203,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				e.persist(exec)
 				inflight++
 				if humanInput {
-					go e.executeHumanInput(execCtx, id, results)
+					go e.executeHumanInput(execCtx, def.Nodes[id].Node, nodes[id].(humanInputNode), id, results)
 				} else {
 					go e.executeNode(execCtx, def, nodes[id], id, inputs, results)
 				}
@@ -224,7 +224,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				exec.Error = err.Error()
 				continue
 			}
-			if id := e.nextHumanInput(def, exec); id != "" {
+			if id := e.nextHumanInput(def, exec, nodes); id != "" {
 				ready = append(ready, id)
 				queued[id] = true
 				continue
@@ -272,23 +272,20 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 	return exec, nil
 }
 
-func (e *Engine) executeHumanInput(execCtx node.ExecutionContext, id string, results chan<- nodeResult) {
+func (e *Engine) executeHumanInput(execCtx node.ExecutionContext, definitionName string, n humanInputNode, id string, results chan<- nodeResult) {
 	response, err := e.humanGateway.RequestRound(execCtx.Context, RoundRequest{
-		NodeID: id, Definition: "human-input", Kind: RoundRequestInput,
+		NodeID: id, Definition: definitionName, Kind: RoundRequestInput,
 	})
 	if err != nil {
 		results <- nodeResult{id: id, err: err}
 		return
 	}
-	ref, err := e.store.Put(artifact.Artifact{
-		ID: id + "-requirement", Kind: artifact.Kind("markdown"), Data: response.Content,
-	})
+	outputs, err := n.ExecuteHumanInput(execCtx, response.Content)
 	if err != nil {
-		results <- nodeResult{id: id, err: fmt.Errorf("store human input: %w", err)}
+		results <- nodeResult{id: id, err: err}
 		return
 	}
-	outputs := map[string]artifact.ArtifactRef{"requirement": ref}
-	if err := e.validateOutputs("human-input", id, outputs); err != nil {
+	if err := e.validateOutputs(definitionName, id, outputs); err != nil {
 		results <- nodeResult{id: id, err: err}
 		return
 	}
@@ -394,7 +391,7 @@ func (e *Engine) finishCanceledNode(exec *WorkflowExecution, result nodeResult) 
 	_ = ne.TransitionTo(StatusFailed)
 }
 
-func (e *Engine) ready(def workflow.Definition, exec *WorkflowExecution, id string) bool {
+func (e *Engine) ready(def workflow.Definition, exec *WorkflowExecution, n node.Node, id string) bool {
 	ne := exec.Nodes[id]
 	status := ne.Current.Status
 	if status == StatusReady {
@@ -422,7 +419,7 @@ func (e *Engine) ready(def workflow.Definition, exec *WorkflowExecution, id stri
 	if status == StatusPending {
 		return true
 	}
-	if e.isHumanInput(def, id) {
+	if _, ok := n.(humanInputNode); ok {
 		return false // Further rounds are requested only after the downstream graph settles.
 	}
 
@@ -441,14 +438,11 @@ func (e *Engine) ready(def workflow.Definition, exec *WorkflowExecution, id stri
 	return ne.dirty
 }
 
-func (e *Engine) isHumanInput(def workflow.Definition, id string) bool {
-	return def.Nodes[id].Node == "human-input"
-}
-
-func (e *Engine) nextHumanInput(def workflow.Definition, exec *WorkflowExecution) string {
+func (e *Engine) nextHumanInput(def workflow.Definition, exec *WorkflowExecution, nodes map[string]node.Node) string {
 	for _, id := range sortedNodeIDs(def.Nodes) {
 		ne := exec.Nodes[id]
-		if e.isHumanInput(def, id) && ne.Current.Status == StatusSucceeded && !ne.humanClosed {
+		_, humanInput := nodes[id].(humanInputNode)
+		if humanInput && ne.Current.Status == StatusSucceeded && !ne.humanClosed {
 			return id
 		}
 	}

@@ -26,12 +26,16 @@ import (
 func runCmd(path string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	return runWorkflow(ctx, path, stdinIsTerminal(os.Stdin), newStdinHumanGateway(os.Stdin, os.Stdout))
+}
+
+func runWorkflow(ctx context.Context, path string, interactive bool, gateway execution.HumanGateway) error {
 	def, data, executors, defsRegistry, llmConfig, warnings, err := loadAndValidate(ctx, path)
 	if err != nil {
 		return err
 	}
 	printWarnings(warnings)
-	if containsHumanNode(def, defsRegistry) && !stdinIsTerminal(os.Stdin) {
+	if containsHumanNode(def, defsRegistry) && !interactive {
 		return fmt.Errorf("workflow contains human nodes and requires an interactive terminal on stdin")
 	}
 
@@ -88,7 +92,7 @@ func runCmd(path string) error {
 		execution.WithProjectContext(wsCtx),
 		execution.WithExecutionID(executionID),
 		execution.WithWorkflowFile(path),
-		execution.WithHumanGateway(newStdinHumanGateway(os.Stdin, os.Stdout)),
+		execution.WithHumanGateway(gateway),
 	)
 	exec, runErr := engine.Run(ctx, def)
 
