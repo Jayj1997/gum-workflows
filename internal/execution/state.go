@@ -29,7 +29,7 @@ var transitions = map[Status][]Status{
 	StatusWaitingHuman: {StatusRunning},
 	StatusRunning:      {StatusSucceeded, StatusFailed},
 	StatusSucceeded:    {StatusReady},
-	StatusFailed:       {},
+	StatusFailed:       {StatusReady},
 	StatusSkipped:      {},
 	StatusStopped:      {},
 }
@@ -76,15 +76,20 @@ type NodeExecution struct {
 	dirty           bool
 	machineRuns     int
 	consumedControl map[string]int
+	consumedInputs  map[string]artifact.ArtifactRef
 	outputVersions  map[string]int
 	humanClosed     bool
 	approvalRounds  map[int]approvalDecision
+	adviseRetry     *InputSnapshot
 }
 
 // TransitionTo moves the current round to next when the state machine permits it.
 func (n *NodeExecution) TransitionTo(next Status) error {
 	if !CanTransitionTo(n.Current.Status, next) {
 		return fmt.Errorf("node execution %q: illegal transition %s -> %s", n.NodeID, n.Current.Status, next)
+	}
+	if n.Current.Status == StatusFailed && next == StatusReady && n.Current.ErrorKind != "interaction" {
+		return fmt.Errorf("node execution %q: only interaction failures may transition Failed -> Ready", n.NodeID)
 	}
 	n.Current.Status = next
 	return nil
@@ -107,10 +112,11 @@ func (n *NodeExecution) startRun(runID string, inputs map[string]InputSnapshot, 
 			return fmt.Errorf("node execution %q: start run from %s", n.NodeID, n.Current.Status)
 		}
 	} else {
-		if !CanTransitionTo(n.Current.Status, StatusReady) {
-			return fmt.Errorf("node execution %q: illegal transition %s -> %s", n.NodeID, n.Current.Status, StatusReady)
+		previous := n.Current
+		if err := n.TransitionTo(StatusReady); err != nil {
+			return err
 		}
-		n.History = append(n.History, n.Current)
+		n.History = append(n.History, previous)
 	}
 
 	n.Current = NodeRun{

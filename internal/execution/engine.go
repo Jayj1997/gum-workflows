@@ -110,6 +110,7 @@ type nodeResult struct {
 	humanEvent       bool
 	closeHumanInput  bool
 	approvalDecision *RoundResponse
+	adviseRetry      *RoundResponse
 }
 
 // Run keeps a settled workflow Running at an idle wait point. Context cancellation
@@ -137,7 +138,8 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 		exec.Nodes[id] = &NodeExecution{
 			NodeID: id, NodeDefinition: def.Nodes[id].Node,
 			Current:         NodeRun{Status: StatusPending},
-			consumedControl: map[string]int{}, outputVersions: map[string]int{}, approvalRounds: map[int]approvalDecision{},
+			consumedControl: map[string]int{}, consumedInputs: map[string]artifact.ArtifactRef{},
+			outputVersions: map[string]int{}, approvalRounds: map[int]approvalDecision{},
 		}
 	}
 	e.persist(exec)
@@ -175,6 +177,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				ready = ready[1:]
 				queued[id] = false
 				inputs := e.resolveInputs(def, exec, id)
+				dataInputs := e.resolveDataInputs(def, exec, id)
 				ne := exec.Nodes[id]
 				humanNode, humanInput := asHumanInputNode(nodes[id])
 				_, humanApproval := asHumanApprovalNode(nodes[id])
@@ -190,8 +193,12 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				if startErr != nil {
 					return e.fail(exec, fmt.Errorf("node %q: %w", id, startErr))
 				}
+				ne.adviseRetry = nil
 				for _, dep := range def.Nodes[id].DependsOn {
 					ne.consumedControl[dep] = e.controlCompletedRound(def, exec, dep)
+				}
+				for name, snapshot := range dataInputs {
+					ne.consumedInputs[name] = snapshot.Ref
 				}
 				ne.dirty = false
 
@@ -255,6 +262,36 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 
 		select {
 		case result := <-results:
+			if result.adviseRetry != nil {
+				inflight--
+				if result.err != nil {
+					if ctx.Err() == nil || (!errors.Is(result.err, context.Canceled) && !errors.Is(result.err, context.DeadlineExceeded)) {
+						ne := exec.Nodes[result.id]
+						ne.Current.Error = result.err.Error()
+						ne.Current.ErrorKind = string(node.ErrorKindStructural)
+						runErr = fmt.Errorf("node %q advise retry failed: %w", result.id, result.err)
+						stopping = true
+						exec.Status = StatusFailed
+						exec.Error = runErr.Error()
+					}
+					e.persist(exec)
+					continue
+				}
+				if result.adviseRetry.Skip || result.adviseRetry.Advise == "" {
+					e.persist(exec)
+					continue
+				}
+				if err := e.injectAdviseRetry(exec, result.id, result.adviseRetry.Advise); err != nil {
+					runErr = err
+					stopping = true
+					exec.Status = StatusFailed
+					exec.Error = err.Error()
+				} else {
+					e.resetConvergence(exec)
+				}
+				e.persist(exec)
+				continue
+			}
 			if result.approvalDecision != nil {
 				ne := exec.Nodes[result.id]
 				if err := ne.TransitionTo(StatusRunning); err != nil {
@@ -281,11 +318,15 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				if exec.Nodes[result.id].Current.Status == StatusWaitingHuman {
 					_ = exec.Nodes[result.id].TransitionTo(StatusRunning)
 				}
-				if err := e.finishNode(exec, result); err != nil && runErr == nil {
+				recoverable := result.err != nil && e.canAdviseRetry(def, result.id, result.err)
+				if err := e.finishNode(def, exec, result); err != nil && runErr == nil {
 					runErr = err
 					stopping = true
 					exec.Status = StatusFailed
 					exec.Error = err.Error()
+				} else if recoverable {
+					inflight++
+					go e.requestAdviseRetry(execCtx, def.Nodes[result.id].Node, result.id, result.err, results)
 				}
 			}
 			e.persist(exec)
@@ -304,6 +345,13 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 	exec.StoppedReason = "user_interrupt"
 	e.persist(exec)
 	return exec, nil
+}
+
+func (e *Engine) requestAdviseRetry(execCtx node.ExecutionContext, definitionName, id string, cause error, results chan<- nodeResult) {
+	response, err := e.humanGateway.RequestRound(execCtx.Context, RoundRequest{
+		NodeID: id, Definition: definitionName, Kind: RoundRequestAdviseRetry, Error: cause.Error(),
+	})
+	results <- nodeResult{id: id, adviseRetry: &response, err: err}
 }
 
 func (e *Engine) requestHumanApproval(execCtx node.ExecutionContext, request RoundRequest, id string, results chan<- nodeResult) {
@@ -387,13 +435,20 @@ func (e *Engine) executeNode(execCtx node.ExecutionContext, def workflow.Definit
 	results <- nodeResult{id: id, outputs: outputs, err: err}
 }
 
-func (e *Engine) finishNode(exec *WorkflowExecution, result nodeResult) error {
+func (e *Engine) finishNode(def workflow.Definition, exec *WorkflowExecution, result nodeResult) error {
 	ne := exec.Nodes[result.id]
 	ne.Current.FinishedAt = time.Now().UTC()
 	if result.err != nil {
 		ne.Current.Error = result.err.Error()
-		ne.Current.ErrorKind = "structural"
+		kind := node.ErrorKindOf(result.err)
+		if kind == node.ErrorKindInteraction && !e.canAdviseRetry(def, result.id, result.err) {
+			kind = node.ErrorKindStructural
+		}
+		ne.Current.ErrorKind = string(kind)
 		_ = ne.TransitionTo(StatusFailed)
+		if kind == node.ErrorKindInteraction {
+			return nil
+		}
 		return fmt.Errorf("node %q failed: %w", result.id, result.err)
 	}
 
@@ -434,6 +489,35 @@ func (e *Engine) finishNode(exec *WorkflowExecution, result nodeResult) error {
 	return nil
 }
 
+func (e *Engine) canAdviseRetry(def workflow.Definition, id string, err error) bool {
+	if node.ErrorKindOf(err) != node.ErrorKindInteraction {
+		return false
+	}
+	d, lookupErr := e.defs.Definition(def.Nodes[id].Node)
+	if lookupErr != nil || d.Type != definition.TypeAgent {
+		return false
+	}
+	_, declared := d.Inputs["advise"]
+	return declared
+}
+
+func (e *Engine) injectAdviseRetry(exec *WorkflowExecution, id, advice string) error {
+	ne := exec.Nodes[id]
+	ref, err := e.store.Put(artifact.Artifact{
+		ID:      fmt.Sprintf("%s-advise-retry-%d", id, ne.Current.Round+1),
+		Kind:    artifact.Kind("markdown"),
+		Version: strconv.Itoa(ne.Current.Round + 1),
+		Data:    advice,
+	})
+	if err != nil {
+		ne.Current.Error = err.Error()
+		ne.Current.ErrorKind = string(node.ErrorKindStructural)
+		return fmt.Errorf("node %q advise retry: store advise: %w", id, err)
+	}
+	ne.adviseRetry = &InputSnapshot{From: "#advise-retry", Ref: ref}
+	return nil
+}
+
 func (e *Engine) finishCanceledNode(exec *WorkflowExecution, result nodeResult) {
 	ne := exec.Nodes[result.id]
 	ne.Current.FinishedAt = time.Now().UTC()
@@ -448,7 +532,7 @@ func (e *Engine) ready(def workflow.Definition, exec *WorkflowExecution, n node.
 	if status == StatusReady {
 		return true
 	}
-	if status != StatusPending && status != StatusSucceeded {
+	if status != StatusPending && status != StatusSucceeded && !(status == StatusFailed && ne.Current.ErrorKind == string(node.ErrorKindInteraction)) {
 		return false
 	}
 
@@ -475,8 +559,8 @@ func (e *Engine) ready(def workflow.Definition, exec *WorkflowExecution, n node.
 	}
 
 	for name, snapshot := range snapshots {
-		previous, ok := ne.Current.Inputs[name]
-		if !ok || previous.Ref.URI != snapshot.Ref.URI || previous.Ref.Version != snapshot.Ref.Version {
+		previous, ok := ne.consumedInputs[name]
+		if !ok || previous.URI != snapshot.Ref.URI || previous.Version != snapshot.Ref.Version {
 			fromNode, _, _ := workflow.ParseRef(def.Nodes[id].Inputs[name].From)
 			if def.Nodes[fromNode].Node == humanApprovalDefinition && e.approvalPassed(exec.Nodes[fromNode]) {
 				continue
@@ -591,6 +675,14 @@ func sortedNodeIDs(nodes map[string]workflow.NodeSpec) []string {
 }
 
 func (e *Engine) resolveInputs(def workflow.Definition, exec *WorkflowExecution, id string) map[string]InputSnapshot {
+	inputs := e.resolveDataInputs(def, exec, id)
+	if retry := exec.Nodes[id].adviseRetry; retry != nil {
+		inputs["advise"] = *retry
+	}
+	return inputs
+}
+
+func (e *Engine) resolveDataInputs(def workflow.Definition, exec *WorkflowExecution, id string) map[string]InputSnapshot {
 	inputs := make(map[string]InputSnapshot, len(def.Nodes[id].Inputs))
 	for name, binding := range def.Nodes[id].Inputs {
 		fromNode, fromOutput, err := workflow.ParseRef(binding.From)

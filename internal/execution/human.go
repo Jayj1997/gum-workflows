@@ -40,6 +40,7 @@ type RoundRequest struct {
 	NodeID        string
 	Definition    string
 	Kind          RoundRequestKind
+	Error         string
 	Artifacts     []ArtifactSummary
 	AdviseHistory []string
 }

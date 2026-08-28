@@ -4,11 +4,17 @@
 
 **Blocked by:** 10（gateway 与 advise 数据边语义就位）
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 错误包装/解包/ErrorKindOf + 缺省结构性语义（单测）
-- [ ] 结构性：运行 Failed 进程返回，在途轮完成不强杀（设计文档 §14 场景 5）
-- [ ] 交互性：节点 Failed、运行 Running、下游 Pending、其他分支推进（fake factory 注错驱动）
-- [ ] advise 重试：注入优先级正确、新 Node Run 复活、inputs 快照标记 `#advise-retry`（设计文档 §14 场景 4）
-- [ ] 未声明 advise 输入的 agent 节点交互性错误 -> 等价结构性（运行 Failed）
-- [ ] 「agent 类 definition 未声明 advise 输入」的校验提示级 warning
+- [x] 错误包装/解包/ErrorKindOf + 缺省结构性语义（单测）
+- [x] 结构性：运行 Failed 进程返回，在途轮完成不强杀（设计文档 §14 场景 5）
+- [x] 交互性：节点 Failed、运行 Running、下游 Pending、其他分支推进（fake factory 注错驱动）
+- [x] advise 重试：注入优先级正确、新 Node Run 复活、inputs 快照标记 `#advise-retry`（设计文档 §14 场景 4）
+- [x] 未声明 advise 输入的 agent 节点交互性错误 -> 等价结构性（运行 Failed）
+- [x] 「agent 类 definition 未声明 advise 输入」的校验提示级 warning
+
+## Comments
+
+**2026-08-29（agent 实施记录）：** 新增 `node.Structural` / `node.Interaction` / `node.ErrorKindOf`，未分类错误缺省为 structural，包装链保留 `errors.Is`/`errors.As` 语义。引擎对可恢复的 agent interaction error 保持 Workflow Running，并经 HumanGateway 请求即时 advise；非空 advise 作为 markdown Artifact 注入下一轮，输入快照以 `#advise-retry` 标记并覆盖旧数据边 advise，且重置收敛计数。空行跳过后节点保持 Failed，独立分支继续、失败节点下游保持 Pending。
+
+仅 agent definition 声明 `advise` 输入时开放恢复；否则 interaction error 等价 structural，语义校验同时给出 warning。结构性失败继续 fail-fast，但等待已在途轮完成。测试覆盖错误包装、CLI 提示与解析、重试新 Node Run、优先级、收敛重置、分支隔离、未声明端口降级和在途轮完成。

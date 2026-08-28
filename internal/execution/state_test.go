@@ -25,6 +25,7 @@ func TestCanTransitionTo(t *testing.T) {
 		{StatusWaitingHuman, StatusSucceeded, false},
 		{StatusSucceeded, StatusReady, true},
 		{StatusSucceeded, StatusFailed, false},
+		{StatusFailed, StatusReady, true},
 		{StatusFailed, StatusRunning, false},
 		{StatusSkipped, StatusReady, false},
 		// 未定义状态
@@ -40,8 +41,8 @@ func TestCanTransitionTo(t *testing.T) {
 }
 
 func TestTerminal(t *testing.T) {
-	terminals := []Status{StatusFailed, StatusSkipped, StatusStopped}
-	nonTerminals := []Status{StatusPending, StatusReady, StatusWaitingHuman, StatusRunning, StatusSucceeded}
+	terminals := []Status{StatusSkipped, StatusStopped}
+	nonTerminals := []Status{StatusPending, StatusReady, StatusWaitingHuman, StatusRunning, StatusSucceeded, StatusFailed}
 
 	for _, s := range terminals {
 		if !Terminal(s) {
@@ -69,6 +70,20 @@ func TestNodeExecutionStartsANewRunWithoutLosingHistory(t *testing.T) {
 	}
 	if len(n.History) != 1 || n.History[0].RunID != "run-1" || n.History[0].Status != StatusSucceeded {
 		t.Fatalf("history = %+v", n.History)
+	}
+}
+
+func TestNodeExecutionCannotStartNewRunAfterStructuralFailure(t *testing.T) {
+	n := NodeExecution{
+		NodeID:  "backend",
+		Current: NodeRun{RunID: "run-1", Round: 1, Status: StatusFailed, ErrorKind: "structural"},
+	}
+
+	if err := n.StartRun("run-2", nil); err == nil {
+		t.Fatal("StartRun() after structural failure = nil, want error")
+	}
+	if n.Current.RunID != "run-1" || len(n.History) != 0 {
+		t.Fatalf("rejected StartRun() changed execution: %+v", n)
 	}
 }
 
@@ -101,9 +116,23 @@ func TestNodeExecutionTransitionTo(t *testing.T) {
 		}
 	})
 
-	t.Run("terminal state is final", func(t *testing.T) {
+	t.Run("failed interaction may be revived", func(t *testing.T) {
+		n := NodeExecution{NodeID: "backend", Current: NodeRun{Status: StatusFailed, ErrorKind: "interaction"}}
+		if err := n.TransitionTo(StatusReady); err != nil {
+			t.Fatalf("TransitionTo(Ready) unexpected error: %v", err)
+		}
+	})
+
+	t.Run("failed structural error may not be revived", func(t *testing.T) {
+		n := NodeExecution{NodeID: "backend", Current: NodeRun{Status: StatusFailed, ErrorKind: "structural"}}
+		if err := n.TransitionTo(StatusReady); err == nil {
+			t.Fatal("TransitionTo(Ready) from structural failure = nil, want error")
+		}
+	})
+
+	t.Run("failed state rejects transitions other than ready", func(t *testing.T) {
 		n := NodeExecution{Current: NodeRun{Status: StatusFailed}}
-		for _, next := range []Status{StatusPending, StatusReady, StatusRunning, StatusSucceeded} {
+		for _, next := range []Status{StatusPending, StatusRunning, StatusSucceeded} {
 			if err := n.TransitionTo(next); err == nil {
 				t.Fatalf("TransitionTo(%s) from Failed = nil, want error", next)
 			}

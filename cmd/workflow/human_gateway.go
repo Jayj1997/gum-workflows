@@ -20,7 +20,7 @@ func newStdinHumanGateway(in io.Reader, out io.Writer) *stdinHumanGateway {
 }
 
 func (g *stdinHumanGateway) RequestRound(ctx context.Context, req execution.RoundRequest) (execution.RoundResponse, error) {
-	if req.Kind != execution.RoundRequestInput && req.Kind != execution.RoundRequestApproval {
+	if req.Kind != execution.RoundRequestInput && req.Kind != execution.RoundRequestApproval && req.Kind != execution.RoundRequestAdviseRetry {
 		return execution.RoundResponse{}, fmt.Errorf("unsupported human request kind %q", req.Kind)
 	}
 
@@ -37,6 +37,8 @@ func (g *stdinHumanGateway) RequestRound(ctx context.Context, req execution.Roun
 			response, err = g.requestInput(req)
 		case execution.RoundRequestApproval:
 			response, err = g.requestApproval(req)
+		case execution.RoundRequestAdviseRetry:
+			response, err = g.requestAdviseRetry(req)
 		}
 		resultCh <- result{response: response, err: err}
 	}()
@@ -47,6 +49,18 @@ func (g *stdinHumanGateway) RequestRound(ctx context.Context, req execution.Roun
 	case result := <-resultCh:
 		return result.response, result.err
 	}
+}
+
+func (g *stdinHumanGateway) requestAdviseRetry(req execution.RoundRequest) (execution.RoundResponse, error) {
+	if _, err := fmt.Fprintf(g.out, "\n[%s] interaction failure: %s\nEnter advise to retry (empty line skips): ", req.NodeID, req.Error); err != nil {
+		return execution.RoundResponse{}, fmt.Errorf("write advise retry prompt: %w", err)
+	}
+	advice, err := g.readLine()
+	if err != nil {
+		return execution.RoundResponse{}, fmt.Errorf("read advise retry: %w", err)
+	}
+	advice = strings.TrimSpace(advice)
+	return execution.RoundResponse{Advise: advice, Skip: advice == ""}, nil
 }
 
 func (g *stdinHumanGateway) requestApproval(req execution.RoundRequest) (execution.RoundResponse, error) {

@@ -358,6 +358,43 @@ func TestSemanticCycleDowngradedToWarning(t *testing.T) {
 	})
 }
 
+func TestSemanticWarnsWhenAgentCannotAcceptAdvise(t *testing.T) {
+	c, err := llm.Load([]byte(testLLMYAML))
+	if err != nil {
+		t.Fatalf("load test llm config: %v", err)
+	}
+	def := workflow.Definition{
+		APIVersion: workflow.APIVersionV1,
+		Kind:       workflow.KindWorkflow,
+		Metadata:   workflow.Metadata{Name: "agent-without-advise"},
+		Projects:   []workflow.ProjectSpec{{Name: "p", Repository: "."}},
+		Nodes: map[string]workflow.NodeSpec{
+			"input": {Node: "human-input"},
+			"analysis": {
+				Node: "requirement-analysis",
+				Inputs: map[string]workflow.InputBinding{
+					"requirement": {From: "input.requirement"},
+				},
+			},
+		},
+	}
+
+	warnings, err := testValidator(t, WithLLMConfig(&c)).Validate(def)
+	if err != nil {
+		t.Fatalf("Validate() unexpected error: %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("Validate() warnings = %+v, want exactly one", warnings)
+	}
+	if got := warnings[0]; len(got.NodeIDs) != 1 || got.NodeIDs[0] != "analysis" ||
+		!strings.Contains(got.Message, `node "analysis"`) ||
+		!strings.Contains(got.Message, `definition "requirement-analysis"`) ||
+		!strings.Contains(got.Message, `input "advise"`) ||
+		!strings.Contains(got.Message, "interaction errors") {
+		t.Errorf("warning = %+v, want located advise recovery warning", got)
+	}
+}
+
 func TestSemanticProgrammaticChecks(t *testing.T) {
 	base := workflow.Definition{
 		APIVersion: workflow.APIVersionV1,

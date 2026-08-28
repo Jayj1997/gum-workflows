@@ -122,9 +122,33 @@ func (v *SemanticValidator) Validate(def workflow.Definition) ([]Warning, error)
 	v.checkHumanControlEdge(def, &errs)
 	v.checkLLM(def, &errs)
 	v.checkProjects(def, &errs)
+	warns = append(warns, v.checkAgentAdvise(def)...)
 	warns = append(warns, v.checkCycle(def)...)
 
 	return warns, errs.OrNil()
+}
+
+// checkAgentAdvise warns when an agent definition cannot use the in-run
+// recovery path for interaction errors.
+func (v *SemanticValidator) checkAgentAdvise(def workflow.Definition) []Warning {
+	var warnings []Warning
+	for _, id := range sortedKeys(def.Nodes) {
+		spec := def.Nodes[id]
+		d, err := v.defs.Definition(spec.Node)
+		if err != nil || d.Type != definition.TypeAgent {
+			continue
+		}
+		if _, declared := d.Inputs["advise"]; declared {
+			continue
+		}
+		warnings = append(warnings, Warning{
+			NodeIDs: []string{id},
+			Message: fmt.Sprintf(
+				"node %q: agent definition %q does not declare input %q; interaction errors cannot be retried with advise",
+				id, spec.Node, "advise"),
+		})
+	}
+	return warnings
 }
 
 // checkEntry enforces the single human source that starts every workflow.

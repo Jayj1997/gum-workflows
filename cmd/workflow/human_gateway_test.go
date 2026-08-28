@@ -61,11 +61,37 @@ func TestStdinHumanGatewayParsesInputRounds(t *testing.T) {
 	}
 }
 
-func TestStdinHumanGatewayRejectsUnsupportedRoundKind(t *testing.T) {
-	gateway := newStdinHumanGateway(strings.NewReader(""), &bytes.Buffer{})
-	_, err := gateway.RequestRound(context.Background(), execution.RoundRequest{Kind: execution.RoundRequestAdviseRetry})
-	if err == nil || !strings.Contains(err.Error(), "unsupported human request kind") {
-		t.Fatalf("RequestRound() error = %v, want unsupported kind", err)
+func TestStdinHumanGatewayParsesAdviseRetry(t *testing.T) {
+	tests := []struct {
+		name       string
+		stdin      string
+		wantAdvise string
+		wantSkip   bool
+	}{
+		{name: "non-empty advise retries", stdin: " return valid JSON \n", wantAdvise: "return valid JSON"},
+		{name: "empty line skips", stdin: "\n", wantSkip: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			gateway := newStdinHumanGateway(strings.NewReader(tt.stdin), &stdout)
+			response, err := gateway.RequestRound(context.Background(), execution.RoundRequest{
+				NodeID: "backend", Definition: "coding-agent", Kind: execution.RoundRequestAdviseRetry,
+				Error: "expected JSON but received prose",
+			})
+			if err != nil {
+				t.Fatalf("RequestRound() unexpected error: %v", err)
+			}
+			if response.Advise != tt.wantAdvise || response.Skip != tt.wantSkip {
+				t.Errorf("response = %+v, want advise %q/skip %v", response, tt.wantAdvise, tt.wantSkip)
+			}
+			output := stdout.String()
+			for _, want := range []string{"backend", "expected JSON but received prose", "advise", "empty line"} {
+				if !strings.Contains(output, want) {
+					t.Errorf("prompt %q missing %q", output, want)
+				}
+			}
+		})
 	}
 }
 
