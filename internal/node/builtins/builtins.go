@@ -1,6 +1,7 @@
 // Package builtins 提供第一批 MVP Node 的 Executor 实现（设计文档 §3.3、§12）：
 //
 //	human-input          由 execution.HumanGateway 驱动的内置入口
+//	human-approval       由 execution.HumanGateway 驱动的内置审批
 //
 //	requirement-analysis  Mock，无输入，产出 rationality + analysis-output
 //	architecture-design   Mock，analysis-output -> ArchitectureSpec
@@ -26,6 +27,7 @@ import (
 func RegisterAll(registry *node.ExecutorRegistry) error {
 	factories := []node.ExecutorFactory{
 		humanInputExecutor{},
+		humanApprovalExecutor{},
 		requirementExecutor{},
 		architectureExecutor{},
 		newCodingAgentExecutor(agent.NewMockCodingAgent()),
@@ -37,6 +39,35 @@ func RegisterAll(registry *node.ExecutorRegistry) error {
 		}
 	}
 	return nil
+}
+
+// ---- human-approval（§7.2、§12）----
+
+type humanApprovalExecutor struct{}
+
+func (humanApprovalExecutor) Definition() string { return "human-approval" }
+func (humanApprovalExecutor) Version() string    { return "v1" }
+
+func (humanApprovalExecutor) Create(node.Config) (node.Node, error) {
+	return humanApprovalNode{}, nil
+}
+
+type humanApprovalNode struct{}
+
+func (humanApprovalNode) Execute(node.ExecutionContext, map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
+	return nil, fmt.Errorf("human-approval must be executed through the execution human gateway")
+}
+
+func (humanApprovalNode) ExecuteHumanApproval(ctx node.ExecutionContext, approved bool, advise string) (map[string]artifact.ArtifactRef, error) {
+	approveRef, err := putArtifact(ctx, "approve", artifact.Kind("bool"), approved)
+	if err != nil {
+		return nil, err
+	}
+	adviseRef, err := putArtifact(ctx, "advise", artifact.Kind("markdown"), advise)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]artifact.ArtifactRef{"approve": approveRef, "advise": adviseRef}, nil
 }
 
 // ---- human-input（§7.1、§12）----
@@ -147,7 +178,7 @@ func (n codingAgentNode) Execute(ctx node.ExecutionContext, inputs map[string]ar
 	}
 
 	var refs []artifact.ArtifactRef
-	for _, name := range []string{"analysis-output", "architecture", "openapi", "frontend-sdk"} {
+	for _, name := range []string{"analysis-output", "architecture", "openapi", "frontend-sdk", "advise"} {
 		if ref, ok := inputs[name]; ok {
 			refs = append(refs, ref)
 		}

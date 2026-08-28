@@ -28,12 +28,12 @@ func newBuiltins(t *testing.T) (*node.ExecutorRegistry, *definition.Registry) {
 	return executors, dr
 }
 
-// TestRegisterAllRegistersExecutors 验证四个内置 Executor 按
+// TestRegisterAllRegistersExecutors 验证内置 Executor 按
 // (definition, v1) 注册且 Latest 可解析。
 func TestRegisterAllRegistersExecutors(t *testing.T) {
 	executors, _ := newBuiltins(t)
 
-	for _, def := range []string{"human-input", "requirement-analysis", "architecture-design", "coding-agent", "openapi-generator"} {
+	for _, def := range []string{"human-input", "human-approval", "requirement-analysis", "architecture-design", "coding-agent", "openapi-generator"} {
 		f, err := executors.Get(def, "v1")
 		if err != nil {
 			t.Fatalf("Get(%s, v1) unexpected error: %v", def, err)

@@ -22,6 +22,10 @@ inputs:
     type: FrontendSDK
     optional: true
     description: 前端 SDK。
+  advise:
+    type: markdown
+    optional: true
+    description: 人工审批给出的修改意见。
 outputs:
   source-code:
     type: SourceCode

@@ -63,8 +63,44 @@ func TestStdinHumanGatewayParsesInputRounds(t *testing.T) {
 
 func TestStdinHumanGatewayRejectsUnsupportedRoundKind(t *testing.T) {
 	gateway := newStdinHumanGateway(strings.NewReader(""), &bytes.Buffer{})
-	_, err := gateway.RequestRound(context.Background(), execution.RoundRequest{Kind: execution.RoundRequestApproval})
+	_, err := gateway.RequestRound(context.Background(), execution.RoundRequest{Kind: execution.RoundRequestAdviseRetry})
 	if err == nil || !strings.Contains(err.Error(), "unsupported human request kind") {
 		t.Fatalf("RequestRound() error = %v, want unsupported kind", err)
+	}
+}
+
+func TestStdinHumanGatewayParsesApprovalAndShowsReviewContext(t *testing.T) {
+	tests := []struct {
+		name         string
+		stdin        string
+		wantApproved bool
+		wantAdvise   string
+	}{
+		{name: "enter defaults to approve", stdin: "\n", wantApproved: true},
+		{name: "reject with same-line advise", stdin: "r add tests\n", wantAdvise: "add tests"},
+		{name: "reject with next-line advise", stdin: "r\nfix layout\n", wantAdvise: "fix layout"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			gateway := newStdinHumanGateway(strings.NewReader(tt.stdin), &stdout)
+			response, err := gateway.RequestRound(context.Background(), execution.RoundRequest{
+				NodeID: "review", Definition: "human-approval", Kind: execution.RoundRequestApproval,
+				Artifacts:     []execution.ArtifactSummary{{Name: "source-code", Kind: "SourceCode", Version: "2", URI: "mem://2"}},
+				AdviseHistory: []string{"add error handling"},
+			})
+			if err != nil {
+				t.Fatalf("RequestRound() unexpected error: %v", err)
+			}
+			if response.Approved != tt.wantApproved || response.Advise != tt.wantAdvise {
+				t.Errorf("response = %+v, want approved %v/advise %q", response, tt.wantApproved, tt.wantAdvise)
+			}
+			output := stdout.String()
+			for _, want := range []string{"review", "source-code", "SourceCode", "2", "mem://2", "add error handling", "Approve", "Reject", "[A/r]"} {
+				if !strings.Contains(output, want) {
+					t.Errorf("prompt %q missing %q", output, want)
+				}
+			}
+		})
 	}
 }

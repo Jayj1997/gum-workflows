@@ -59,6 +59,13 @@ type humanInputNode interface {
 	ExecuteHumanInput(ctx node.ExecutionContext, content string) (map[string]artifact.ArtifactRef, error)
 }
 
+// humanApprovalNode is implemented by the selected human-approval executor.
+// The gateway owns the decision while the executor owns artifact production.
+type humanApprovalNode interface {
+	node.Node
+	ExecuteHumanApproval(ctx node.ExecutionContext, approved bool, advise string) (map[string]artifact.ArtifactRef, error)
+}
+
 type noHumanGateway struct{}
 
 func (noHumanGateway) RequestRound(context.Context, RoundRequest) (RoundResponse, error) {

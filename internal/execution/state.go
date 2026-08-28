@@ -12,23 +12,25 @@ import (
 type Status string
 
 const (
-	StatusPending   Status = "Pending"
-	StatusReady     Status = "Ready"
-	StatusRunning   Status = "Running"
-	StatusSucceeded Status = "Succeeded"
-	StatusFailed    Status = "Failed"
-	StatusSkipped   Status = "Skipped"
-	StatusStopped   Status = "Stopped"
+	StatusPending      Status = "Pending"
+	StatusReady        Status = "Ready"
+	StatusWaitingHuman Status = "WaitingHuman"
+	StatusRunning      Status = "Running"
+	StatusSucceeded    Status = "Succeeded"
+	StatusFailed       Status = "Failed"
+	StatusSkipped      Status = "Skipped"
+	StatusStopped      Status = "Stopped"
 )
 
 var transitions = map[Status][]Status{
-	StatusPending:   {StatusReady, StatusSkipped},
-	StatusReady:     {StatusRunning, StatusSkipped},
-	StatusRunning:   {StatusSucceeded, StatusFailed},
-	StatusSucceeded: {StatusReady},
-	StatusFailed:    {},
-	StatusSkipped:   {},
-	StatusStopped:   {},
+	StatusPending:      {StatusReady, StatusSkipped},
+	StatusReady:        {StatusRunning, StatusWaitingHuman, StatusSkipped},
+	StatusWaitingHuman: {StatusRunning},
+	StatusRunning:      {StatusSucceeded, StatusFailed},
+	StatusSucceeded:    {StatusReady},
+	StatusFailed:       {},
+	StatusSkipped:      {},
+	StatusStopped:      {},
 }
 
 // CanTransitionTo reports whether from may transition to next.
@@ -88,6 +90,15 @@ func (n *NodeExecution) TransitionTo(next Status) error {
 
 // StartRun archives a prior completed round and starts the next running round.
 func (n *NodeExecution) StartRun(runID string, inputs map[string]InputSnapshot) error {
+	return n.startRun(runID, inputs, StatusRunning)
+}
+
+// StartWaitingRun archives a prior completed round and starts a human round waiting for a response.
+func (n *NodeExecution) StartWaitingRun(runID string, inputs map[string]InputSnapshot) error {
+	return n.startRun(runID, inputs, StatusWaitingHuman)
+}
+
+func (n *NodeExecution) startRun(runID string, inputs map[string]InputSnapshot, next Status) error {
 	previousRound := n.Current.Round
 	if previousRound == 0 {
 		if n.Current.Status != StatusReady {
@@ -107,7 +118,7 @@ func (n *NodeExecution) StartRun(runID string, inputs map[string]InputSnapshot) 
 		Inputs:    inputs,
 		StartedAt: time.Now().UTC(),
 	}
-	return n.TransitionTo(StatusRunning)
+	return n.TransitionTo(next)
 }
 
 // WorkflowExecution is one independent run of a workflow definition.

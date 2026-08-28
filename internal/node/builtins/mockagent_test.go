@@ -17,6 +17,19 @@ type mockAgent struct{}
 
 func newMockAgent() *mockAgent { return &mockAgent{} }
 
+type capturingAgent struct {
+	inputs []artifact.ArtifactRef
+}
+
+func (a *capturingAgent) Execute(_ context.Context, _ agent.Task, proj project.Context, inputs []artifact.ArtifactRef) ([]artifact.ArtifactRef, error) {
+	a.inputs = append([]artifact.ArtifactRef(nil), inputs...)
+	taskFile := filepath.Join(proj.Workspace, "captured-task.md")
+	if err := os.WriteFile(taskFile, []byte("task"), 0o644); err != nil {
+		return nil, err
+	}
+	return []artifact.ArtifactRef{{ID: "source-code", Kind: artifact.KindSourceCode, URI: taskFile}}, nil
+}
+
 func (m *mockAgent) Execute(
 	ctx context.Context,
 	task agent.Task,

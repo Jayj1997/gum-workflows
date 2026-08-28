@@ -268,9 +268,9 @@ func TestSemanticInvalidFixtures(t *testing.T) {
 			wantErr: `node "coder" input "openapi": artifact type mismatch`,
 		},
 		{
-			// human 类节点以输入挂接流程但未声明 dependsOn（设计文档 §10 检查 #8）。
+			// human-approval 必须以 control edge 挂接被审节点。
 			fixture: filepath.Join("testdata", "invalid-human", "input-without-depends-on.yaml"),
-			wantErr: `node "review": human node with inputs must declare dependsOn`,
+			wantErr: `node "review": human-approval must declare non-empty dependsOn`,
 		},
 		{
 			fixture: filepath.Join("testdata", "invalid-executor", "unknown-version.yaml"),

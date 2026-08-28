@@ -1,0 +1,15 @@
+apiVersion: nodeDefinition/v1
+kind: nodeDefinition
+metadata:
+  name: human-approval
+  description: 审阅本次运行产出并给出通过或拒绝决定。
+type: human
+requires: []
+inputs: {}
+outputs:
+  approve:
+    type: bool
+    description: 本轮审批是否通过。
+  advise:
+    type: markdown
+    description: 本轮审批意见。

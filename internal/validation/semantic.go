@@ -256,10 +256,8 @@ func (v *SemanticValidator) checkDependsOn(def workflow.Definition, errs *Valida
 	}
 }
 
-// checkHumanControlEdge 检查 human 类节点非源节点时 dependsOn 必须非空
-// （设计文档 §10 检查 #8）：human 节点经 Control Edge 挂接流程
-// （如审批挂接被审节点），数据边不足以表达其参与时机；
-// 源节点的合法性属入口规则（检查 #7，随票 09 落地）。
+// checkHumanControlEdge 检查 human-approval 必须经 Control Edge 挂接被审节点。
+// human-input 是唯一合法的 human 源节点，由入口规则单独约束。
 func (v *SemanticValidator) checkHumanControlEdge(def workflow.Definition, errs *ValidationErrors) {
 	for _, id := range sortedKeys(def.Nodes) {
 		spec := def.Nodes[id]
@@ -267,12 +265,12 @@ func (v *SemanticValidator) checkHumanControlEdge(def workflow.Definition, errs 
 		if err != nil {
 			continue // 定义未知已报出。
 		}
-		if d.Type != definition.TypeHuman {
+		if d.Type != definition.TypeHuman || spec.Node != "human-approval" {
 			continue
 		}
-		if len(spec.Inputs) > 0 && len(spec.DependsOn) == 0 {
+		if len(spec.DependsOn) == 0 {
 			*errs = append(*errs, fmt.Errorf(
-				"node %q: human node with inputs must declare dependsOn (human nodes join the flow via control edges)",
+				"node %q: human-approval must declare non-empty dependsOn",
 				id))
 		}
 	}

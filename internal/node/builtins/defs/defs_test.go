@@ -48,7 +48,7 @@ func TestSeedsDefinitions(t *testing.T) {
 		t.Fatalf("NewRegistry() unexpected error: %v", err)
 	}
 
-	want := []string{"architecture-design", "coding-agent", "human-input", "openapi-generator", "requirement-analysis"}
+	want := []string{"architecture-design", "coding-agent", "human-approval", "human-input", "openapi-generator", "requirement-analysis"}
 	if got := r.DefinitionNames(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("DefinitionNames() = %v, want %v", got, want)
 	}
@@ -103,6 +103,17 @@ func TestSeedsContracts(t *testing.T) {
 		t.Errorf("human-input requirement type = %q, want markdown", got)
 	}
 
+	ha, _ := r.Definition("human-approval")
+	if len(ha.Inputs) != 0 {
+		t.Errorf("human-approval inputs = %+v, want none", ha.Inputs)
+	}
+	if got := ha.Outputs["approve"].Type; got != "bool" {
+		t.Errorf("human-approval approve type = %q, want bool", got)
+	}
+	if got := ha.Outputs["advise"].Type; got != "markdown" {
+		t.Errorf("human-approval advise type = %q, want markdown", got)
+	}
+
 	ad, _ := r.Definition("architecture-design")
 	assertPort(t, ad.Inputs, "architecture-design", "analysis-output", "markdown", false)
 	if got := ad.Outputs["architecture"].Type; got != "ArchitectureSpec" {
@@ -110,14 +121,12 @@ func TestSeedsContracts(t *testing.T) {
 	}
 
 	ca, _ := r.Definition("coding-agent")
-	// 全 optional 输入（advise 到 T10 随审批循环加，本票不出现）。
+	// 全 optional 输入，advise 通过审批回环驱动重跑。
 	assertPort(t, ca.Inputs, "coding-agent", "analysis-output", "markdown", true)
 	assertPort(t, ca.Inputs, "coding-agent", "architecture", "ArchitectureSpec", true)
 	assertPort(t, ca.Inputs, "coding-agent", "openapi", "OpenAPI", true)
 	assertPort(t, ca.Inputs, "coding-agent", "frontend-sdk", "FrontendSDK", true)
-	if _, ok := ca.Inputs["advise"]; ok {
-		t.Error("coding-agent: advise input should not exist yet (T10)")
-	}
+	assertPort(t, ca.Inputs, "coding-agent", "advise", "markdown", true)
 	if got := ca.Outputs["source-code"].Type; got != "SourceCode" {
 		t.Errorf("coding-agent source-code type = %q, want SourceCode", got)
 	}
@@ -141,6 +150,7 @@ func TestSeedsTypeClassification(t *testing.T) {
 
 	wantType := map[string]definition.NodeType{
 		"human-input":          definition.TypeHuman,
+		"human-approval":       definition.TypeHuman,
 		"requirement-analysis": definition.TypeAgent,
 		"architecture-design":  definition.TypeAgent,
 		"coding-agent":         definition.TypeAgent,

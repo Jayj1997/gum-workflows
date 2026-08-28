@@ -15,11 +15,14 @@ func TestCanTransitionTo(t *testing.T) {
 		{StatusPending, StatusRunning, false},
 		{StatusPending, StatusSucceeded, false},
 		{StatusReady, StatusRunning, true},
+		{StatusReady, StatusWaitingHuman, true},
 		{StatusReady, StatusSkipped, true},
 		{StatusReady, StatusPending, false},
 		{StatusRunning, StatusSucceeded, true},
 		{StatusRunning, StatusFailed, true},
 		{StatusRunning, StatusReady, false},
+		{StatusWaitingHuman, StatusRunning, true},
+		{StatusWaitingHuman, StatusSucceeded, false},
 		{StatusSucceeded, StatusReady, true},
 		{StatusSucceeded, StatusFailed, false},
 		{StatusFailed, StatusRunning, false},
@@ -38,7 +41,7 @@ func TestCanTransitionTo(t *testing.T) {
 
 func TestTerminal(t *testing.T) {
 	terminals := []Status{StatusFailed, StatusSkipped, StatusStopped}
-	nonTerminals := []Status{StatusPending, StatusReady, StatusRunning, StatusSucceeded}
+	nonTerminals := []Status{StatusPending, StatusReady, StatusWaitingHuman, StatusRunning, StatusSucceeded}
 
 	for _, s := range terminals {
 		if !Terminal(s) {
@@ -73,6 +76,15 @@ func TestNodeExecutionTransitionTo(t *testing.T) {
 	t.Run("happy path", func(t *testing.T) {
 		n := NodeExecution{NodeID: "backend", Current: NodeRun{Status: StatusPending}}
 		for _, next := range []Status{StatusReady, StatusRunning, StatusSucceeded} {
+			if err := n.TransitionTo(next); err != nil {
+				t.Fatalf("TransitionTo(%s) unexpected error: %v", next, err)
+			}
+		}
+	})
+
+	t.Run("human approval path", func(t *testing.T) {
+		n := NodeExecution{NodeID: "review", Current: NodeRun{Status: StatusReady}}
+		for _, next := range []Status{StatusWaitingHuman, StatusRunning, StatusSucceeded} {
 			if err := n.TransitionTo(next); err != nil {
 				t.Fatalf("TransitionTo(%s) unexpected error: %v", next, err)
 			}

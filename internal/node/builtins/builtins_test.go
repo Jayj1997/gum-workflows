@@ -38,7 +38,7 @@ func newExecCtx(t *testing.T, ws string) node.ExecutionContext {
 func TestRegisterAllRegistersMVPNodeTypes(t *testing.T) {
 	reg := executorsWithBuiltins(t)
 
-	for _, def := range []string{"human-input", "requirement-analysis", "architecture-design", "coding-agent", "openapi-generator"} {
+	for _, def := range []string{"human-input", "human-approval", "requirement-analysis", "architecture-design", "coding-agent", "openapi-generator"} {
 		if _, err := reg.Get(def, "v1"); err != nil {
 			t.Errorf("executor (%s, v1) not registered: %v", def, err)
 		}
@@ -46,6 +46,32 @@ func TestRegisterAllRegistersMVPNodeTypes(t *testing.T) {
 	// 重复注册报错。
 	if err := RegisterAll(reg); err == nil {
 		t.Error("duplicate RegisterAll() = nil error, want rejection")
+	}
+}
+
+func TestHumanApprovalExecutorProducesDecisionArtifacts(t *testing.T) {
+	ctx := newExecCtx(t, t.TempDir())
+	n, err := humanApprovalExecutor{}.Create(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, ok := n.(interface {
+		ExecuteHumanApproval(node.ExecutionContext, bool, string) (map[string]artifact.ArtifactRef, error)
+	})
+	if !ok {
+		t.Fatal("human-approval v1 does not implement the human approval execution seam")
+	}
+	outputs, err := human.ExecuteHumanApproval(ctx, false, "add tests")
+	if err != nil {
+		t.Fatalf("ExecuteHumanApproval() unexpected error: %v", err)
+	}
+	approve, err := ctx.Store.Get(outputs["approve"])
+	if err != nil || approve.Kind != "bool" || approve.Data != false {
+		t.Errorf("approve = %+v/%v", approve, err)
+	}
+	advise, err := ctx.Store.Get(outputs["advise"])
+	if err != nil || advise.Kind != "markdown" || advise.Data != "add tests" {
+		t.Errorf("advise = %+v/%v", advise, err)
 	}
 }
 
@@ -131,6 +157,25 @@ func TestCodingAgentNodeWritesTaskInWorkspace(t *testing.T) {
 	// Mock Agent 的产出 URI 指向 Workspace 内文件。
 	if !strings.HasPrefix(outputs["source-code"].URI, ws) {
 		t.Errorf("source-code URI = %q, want under workspace %q", outputs["source-code"].URI, ws)
+	}
+}
+
+func TestCodingAgentPassesApprovalAdviseToAgent(t *testing.T) {
+	ctx := newExecCtx(t, t.TempDir())
+	capture := &capturingAgent{}
+	n, err := newCodingAgentExecutor(capture).Create(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advise, err := ctx.Store.Put(artifact.Artifact{ID: "advise", Kind: "markdown", Data: "add tests"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := n.Execute(ctx, map[string]artifact.ArtifactRef{"advise": advise}); err != nil {
+		t.Fatalf("Execute() unexpected error: %v", err)
+	}
+	if len(capture.inputs) != 1 || capture.inputs[0].URI != advise.URI {
+		t.Fatalf("agent inputs = %+v, want advise ref %+v", capture.inputs, advise)
 	}
 }
 

@@ -104,11 +104,12 @@ func NewEngine(executors *node.ExecutorRegistry, defs *definition.Registry, stor
 }
 
 type nodeResult struct {
-	id              string
-	outputs         map[string]artifact.ArtifactRef
-	err             error
-	humanEvent      bool
-	closeHumanInput bool
+	id               string
+	outputs          map[string]artifact.ArtifactRef
+	err              error
+	humanEvent       bool
+	closeHumanInput  bool
+	approvalDecision *RoundResponse
 }
 
 // Run keeps a settled workflow Running at an idle wait point. Context cancellation
@@ -176,18 +177,25 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				inputs := e.resolveInputs(def, exec, id)
 				ne := exec.Nodes[id]
 				humanNode, humanInput := asHumanInputNode(nodes[id])
-				if !humanInput {
+				_, humanApproval := asHumanApprovalNode(nodes[id])
+				if !humanInput && !humanApproval {
 					ne.machineRuns++
 				}
-				if err := ne.StartRun(uuid.NewString(), inputs); err != nil {
-					return e.fail(exec, fmt.Errorf("node %q: %w", id, err))
+				var startErr error
+				if humanApproval {
+					startErr = ne.StartWaitingRun(uuid.NewString(), inputs)
+				} else {
+					startErr = ne.StartRun(uuid.NewString(), inputs)
+				}
+				if startErr != nil {
+					return e.fail(exec, fmt.Errorf("node %q: %w", id, startErr))
 				}
 				for _, dep := range def.Nodes[id].DependsOn {
-					ne.consumedControl[dep] = latestCompletedRound(exec.Nodes[dep])
+					ne.consumedControl[dep] = e.controlCompletedRound(def, exec, dep)
 				}
 				ne.dirty = false
 
-				if !humanInput && ne.machineRuns > e.convergenceLimit {
+				if !humanInput && !humanApproval && ne.machineRuns > e.convergenceLimit {
 					ne.Current.Error = "convergence-guard"
 					ne.Current.ErrorKind = "structural"
 					ne.Current.FinishedAt = time.Now().UTC()
@@ -204,6 +212,12 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				inflight++
 				if humanInput {
 					go e.executeHumanInput(execCtx, def.Nodes[id].Node, humanNode, id, results)
+				} else if humanApproval {
+					request := RoundRequest{
+						NodeID: id, Definition: def.Nodes[id].Node, Kind: RoundRequestApproval,
+						Artifacts: e.artifactSummaries(exec), AdviseHistory: e.adviseHistory(exec.Nodes[id]),
+					}
+					go e.requestHumanApproval(execCtx, request, id, results)
 				} else {
 					go e.executeNode(execCtx, def, nodes[id], id, inputs, results)
 				}
@@ -241,6 +255,17 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 
 		select {
 		case result := <-results:
+			if result.approvalDecision != nil {
+				ne := exec.Nodes[result.id]
+				if err := ne.TransitionTo(StatusRunning); err != nil {
+					return e.fail(exec, fmt.Errorf("node %q: %w", result.id, err))
+				}
+				e.resetConvergence(exec)
+				e.persist(exec)
+				approvalNode, _ := asHumanApprovalNode(nodes[result.id])
+				go e.executeHumanApproval(execCtx, def.Nodes[result.id].Node, approvalNode, result.id, *result.approvalDecision, results)
+				continue
+			}
 			inflight--
 			if result.humanEvent {
 				e.resetConvergence(exec)
@@ -248,11 +273,16 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 			}
 			if result.err != nil && ctx.Err() != nil && (errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded)) {
 				e.finishCanceledNode(exec, result)
-			} else if err := e.finishNode(exec, result); err != nil && runErr == nil {
-				runErr = err
-				stopping = true
-				exec.Status = StatusFailed
-				exec.Error = err.Error()
+			} else {
+				if exec.Nodes[result.id].Current.Status == StatusWaitingHuman {
+					_ = exec.Nodes[result.id].TransitionTo(StatusRunning)
+				}
+				if err := e.finishNode(exec, result); err != nil && runErr == nil {
+					runErr = err
+					stopping = true
+					exec.Status = StatusFailed
+					exec.Error = err.Error()
+				}
 			}
 			e.persist(exec)
 		case <-ctx.Done():
@@ -270,6 +300,23 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 	exec.StoppedReason = "user_interrupt"
 	e.persist(exec)
 	return exec, nil
+}
+
+func (e *Engine) requestHumanApproval(execCtx node.ExecutionContext, request RoundRequest, id string, results chan<- nodeResult) {
+	response, err := e.humanGateway.RequestRound(execCtx.Context, request)
+	if err != nil {
+		results <- nodeResult{id: id, err: err}
+		return
+	}
+	results <- nodeResult{id: id, approvalDecision: &response}
+}
+
+func (e *Engine) executeHumanApproval(execCtx node.ExecutionContext, definitionName string, n humanApprovalNode, id string, response RoundResponse, results chan<- nodeResult) {
+	outputs, err := n.ExecuteHumanApproval(execCtx, response.Approved, response.Advise)
+	if err == nil {
+		err = e.validateOutputs(definitionName, id, outputs)
+	}
+	results <- nodeResult{id: id, outputs: outputs, err: err}
 }
 
 func (e *Engine) executeHumanInput(execCtx node.ExecutionContext, definitionName string, n humanInputNode, id string, results chan<- nodeResult) {
@@ -412,7 +459,7 @@ func (e *Engine) ready(def workflow.Definition, exec *WorkflowExecution, n node.
 		}
 	}
 	for _, dep := range def.Nodes[id].DependsOn {
-		if latestCompletedRound(exec.Nodes[dep]) == 0 {
+		if e.controlCompletedRound(def, exec, dep) == 0 {
 			return false
 		}
 	}
@@ -426,12 +473,16 @@ func (e *Engine) ready(def workflow.Definition, exec *WorkflowExecution, n node.
 	for name, snapshot := range snapshots {
 		previous, ok := ne.Current.Inputs[name]
 		if !ok || previous.Ref.URI != snapshot.Ref.URI || previous.Ref.Version != snapshot.Ref.Version {
+			fromNode, _, _ := workflow.ParseRef(def.Nodes[id].Inputs[name].From)
+			if def.Nodes[fromNode].Node == "human-approval" && e.approvalPassed(exec.Nodes[fromNode]) {
+				continue
+			}
 			ne.dirty = true
 			return true
 		}
 	}
 	for _, dep := range def.Nodes[id].DependsOn {
-		if latestCompletedRound(exec.Nodes[dep]) > ne.consumedControl[dep] {
+		if e.controlCompletedRound(def, exec, dep) > ne.consumedControl[dep] {
 			return true
 		}
 	}
@@ -452,6 +503,94 @@ func (e *Engine) nextHumanInput(def workflow.Definition, exec *WorkflowExecution
 func asHumanInputNode(n node.Node) (humanInputNode, bool) {
 	human, ok := n.(humanInputNode)
 	return human, ok
+}
+
+func asHumanApprovalNode(n node.Node) (humanApprovalNode, bool) {
+	human, ok := n.(humanApprovalNode)
+	return human, ok
+}
+
+func (e *Engine) controlCompletedRound(def workflow.Definition, exec *WorkflowExecution, id string) int {
+	if def.Nodes[id].Node != "human-approval" {
+		return latestCompletedRound(exec.Nodes[id])
+	}
+	ne := exec.Nodes[id]
+	runs := append(append([]NodeRun{}, ne.History...), ne.Current)
+	for i := len(runs) - 1; i >= 0; i-- {
+		if runs[i].Status == StatusSucceeded && e.runApproved(runs[i]) {
+			return runs[i].Round
+		}
+	}
+	return 0
+}
+
+func (e *Engine) approvalPassed(ne *NodeExecution) bool {
+	run, ok := latestCompleted(ne)
+	return ok && e.runApproved(run)
+}
+
+func (e *Engine) runApproved(run NodeRun) bool {
+	ref, ok := run.Outputs["approve"]
+	if !ok {
+		return false
+	}
+	a, err := e.store.Get(ref)
+	if err != nil {
+		return false
+	}
+	approved, _ := a.Data.(bool)
+	return approved
+}
+
+func (e *Engine) artifactSummaries(exec *WorkflowExecution) []ArtifactSummary {
+	var summaries []ArtifactSummary
+	for _, id := range sortedNodeExecutionIDs(exec.Nodes) {
+		run, ok := latestCompleted(exec.Nodes[id])
+		if !ok {
+			continue
+		}
+		for _, name := range sortedArtifactNames(run.Outputs) {
+			ref := run.Outputs[name]
+			summaries = append(summaries, ArtifactSummary{Name: name, Kind: string(ref.Kind), Version: ref.Version, URI: ref.URI})
+		}
+	}
+	return summaries
+}
+
+func (e *Engine) adviseHistory(ne *NodeExecution) []string {
+	var history []string
+	for _, run := range ne.History {
+		ref, ok := run.Outputs["advise"]
+		if !ok {
+			continue
+		}
+		a, err := e.store.Get(ref)
+		if err != nil {
+			continue
+		}
+		if advise, ok := a.Data.(string); ok && advise != "" {
+			history = append(history, advise)
+		}
+	}
+	return history
+}
+
+func sortedNodeExecutionIDs(nodes map[string]*NodeExecution) []string {
+	ids := make([]string, 0, len(nodes))
+	for id := range nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func sortedArtifactNames(outputs map[string]artifact.ArtifactRef) []string {
+	names := make([]string, 0, len(outputs))
+	for name := range outputs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func sortedNodeIDs(nodes map[string]workflow.NodeSpec) []string {

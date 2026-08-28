@@ -385,7 +385,8 @@ func TestSmokeControlDependency(t *testing.T) {
 		Metadata:   workflow.Metadata{Name: "deploy"},
 		Projects:   []workflow.ProjectSpec{{Name: "p", Repository: "./examples/order-system"}},
 		Nodes: map[string]workflow.NodeSpec{
-			"approval": {Node: "human-approval"},
+			"input":    {Node: "human-input"},
+			"approval": {Node: "human-approval", DependsOn: []string{"input"}},
 			"deploy":   {Node: "cd", DependsOn: []string{"approval"}},
 		},
 	}
@@ -400,7 +401,7 @@ func TestSmokeControlDependency(t *testing.T) {
 	for i, id := range res.order {
 		pos[id] = i
 	}
-	if pos["deploy"] < pos["approval"] {
+	if pos["approval"] < pos["input"] || pos["deploy"] < pos["approval"] {
 		t.Fatalf("deploy ran before approval: order = %v", res.order)
 	}
 	// Control Edge 不携带数据：deploy 的输入数为 0。

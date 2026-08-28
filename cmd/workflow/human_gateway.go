@@ -20,7 +20,7 @@ func newStdinHumanGateway(in io.Reader, out io.Writer) *stdinHumanGateway {
 }
 
 func (g *stdinHumanGateway) RequestRound(ctx context.Context, req execution.RoundRequest) (execution.RoundResponse, error) {
-	if req.Kind != execution.RoundRequestInput {
+	if req.Kind != execution.RoundRequestInput && req.Kind != execution.RoundRequestApproval {
 		return execution.RoundResponse{}, fmt.Errorf("unsupported human request kind %q", req.Kind)
 	}
 
@@ -30,7 +30,14 @@ func (g *stdinHumanGateway) RequestRound(ctx context.Context, req execution.Roun
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		response, err := g.requestInput(req)
+		var response execution.RoundResponse
+		var err error
+		switch req.Kind {
+		case execution.RoundRequestInput:
+			response, err = g.requestInput(req)
+		case execution.RoundRequestApproval:
+			response, err = g.requestApproval(req)
+		}
 		resultCh <- result{response: response, err: err}
 	}()
 
@@ -39,6 +46,66 @@ func (g *stdinHumanGateway) RequestRound(ctx context.Context, req execution.Roun
 		return execution.RoundResponse{}, ctx.Err()
 	case result := <-resultCh:
 		return result.response, result.err
+	}
+}
+
+func (g *stdinHumanGateway) requestApproval(req execution.RoundRequest) (execution.RoundResponse, error) {
+	if _, err := fmt.Fprintf(g.out, "\n[%s] Artifacts produced in this run:\n", req.NodeID); err != nil {
+		return execution.RoundResponse{}, fmt.Errorf("write approval context: %w", err)
+	}
+	if len(req.Artifacts) == 0 {
+		if _, err := fmt.Fprintln(g.out, "  (none)"); err != nil {
+			return execution.RoundResponse{}, fmt.Errorf("write approval artifacts: %w", err)
+		}
+	}
+	for _, item := range req.Artifacts {
+		if _, err := fmt.Fprintf(g.out, "  - %s | %s | v%s | %s\n", item.Name, item.Kind, item.Version, item.URI); err != nil {
+			return execution.RoundResponse{}, fmt.Errorf("write approval artifact: %w", err)
+		}
+	}
+	if _, err := fmt.Fprintln(g.out, "Advise history:"); err != nil {
+		return execution.RoundResponse{}, fmt.Errorf("write advise history heading: %w", err)
+	}
+	if len(req.AdviseHistory) == 0 {
+		if _, err := fmt.Fprintln(g.out, "  (none)"); err != nil {
+			return execution.RoundResponse{}, fmt.Errorf("write advise history: %w", err)
+		}
+	}
+	for _, advise := range req.AdviseHistory {
+		if _, err := fmt.Fprintf(g.out, "  - %s\n", advise); err != nil {
+			return execution.RoundResponse{}, fmt.Errorf("write advise history: %w", err)
+		}
+	}
+
+	for {
+		if _, err := fmt.Fprint(g.out, "Approve / Reject (with advise)? [A/r]: "); err != nil {
+			return execution.RoundResponse{}, fmt.Errorf("write approval prompt: %w", err)
+		}
+		line, err := g.readLine()
+		if err != nil {
+			return execution.RoundResponse{}, fmt.Errorf("read approval decision: %w", err)
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.EqualFold(trimmed, "a") || strings.EqualFold(trimmed, "approve") {
+			return execution.RoundResponse{Approved: true}, nil
+		}
+		choice, advise, _ := strings.Cut(trimmed, " ")
+		if strings.EqualFold(choice, "r") || strings.EqualFold(choice, "reject") {
+			advise = strings.TrimSpace(advise)
+			if advise == "" {
+				if _, err := fmt.Fprint(g.out, "Advise (optional): "); err != nil {
+					return execution.RoundResponse{}, fmt.Errorf("write reject advise prompt: %w", err)
+				}
+				advise, err = g.readLine()
+				if err != nil {
+					return execution.RoundResponse{}, fmt.Errorf("read reject advise: %w", err)
+				}
+			}
+			return execution.RoundResponse{Approved: false, Advise: strings.TrimSpace(advise)}, nil
+		}
+		if _, err := fmt.Fprintln(g.out, "Please enter Approve or Reject."); err != nil {
+			return execution.RoundResponse{}, fmt.Errorf("write approval decision error: %w", err)
+		}
 	}
 }
 

@@ -1,0 +1,8 @@
+apiVersion: nodeExecutor/v1
+kind: nodeExecutor
+metadata:
+  name: human-approval-v1
+  description: human-approval 首个执行器，由 HumanGateway 提供审批决定。
+node: human-approval
+version: v1
+updates: 首个版本：展示产出摘要与历史意见后接收通过或拒绝决定。
