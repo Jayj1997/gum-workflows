@@ -12,8 +12,9 @@ import (
 type Status string
 
 const (
-	StatusPending      Status = "Pending"
-	StatusReady        Status = "Ready"
+	StatusPending Status = "Pending"
+	StatusReady   Status = "Ready"
+	// StatusWaitingHuman marks a human node blocked on terminal or UI input.
 	StatusWaitingHuman Status = "WaitingHuman"
 	StatusRunning      Status = "Running"
 	StatusSucceeded    Status = "Succeeded"
@@ -77,6 +78,7 @@ type NodeExecution struct {
 	consumedControl map[string]int
 	outputVersions  map[string]int
 	humanClosed     bool
+	approvalRounds  map[int]approvalDecision
 }
 
 // TransitionTo moves the current round to next when the state machine permits it.

@@ -20,6 +20,13 @@ const (
 	RoundRequestAdviseRetry RoundRequestKind = "advise-retry"
 )
 
+const humanApprovalDefinition = "human-approval"
+
+type approvalDecision struct {
+	approved bool
+	advise   string
+}
+
 // ArtifactSummary is the display-safe context shown before a human decision.
 type ArtifactSummary struct {
 	Name    string

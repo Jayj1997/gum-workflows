@@ -137,7 +137,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 		exec.Nodes[id] = &NodeExecution{
 			NodeID: id, NodeDefinition: def.Nodes[id].Node,
 			Current:         NodeRun{Status: StatusPending},
-			consumedControl: map[string]int{}, outputVersions: map[string]int{},
+			consumedControl: map[string]int{}, outputVersions: map[string]int{}, approvalRounds: map[int]approvalDecision{},
 		}
 	}
 	e.persist(exec)
@@ -261,6 +261,10 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 					return e.fail(exec, fmt.Errorf("node %q: %w", result.id, err))
 				}
 				e.resetConvergence(exec)
+				ne.approvalRounds[ne.Current.Round] = approvalDecision{
+					approved: result.approvalDecision.Approved,
+					advise:   result.approvalDecision.Advise,
+				}
 				e.persist(exec)
 				approvalNode, _ := asHumanApprovalNode(nodes[result.id])
 				go e.executeHumanApproval(execCtx, def.Nodes[result.id].Node, approvalNode, result.id, *result.approvalDecision, results)
@@ -474,7 +478,7 @@ func (e *Engine) ready(def workflow.Definition, exec *WorkflowExecution, n node.
 		previous, ok := ne.Current.Inputs[name]
 		if !ok || previous.Ref.URI != snapshot.Ref.URI || previous.Ref.Version != snapshot.Ref.Version {
 			fromNode, _, _ := workflow.ParseRef(def.Nodes[id].Inputs[name].From)
-			if def.Nodes[fromNode].Node == "human-approval" && e.approvalPassed(exec.Nodes[fromNode]) {
+			if def.Nodes[fromNode].Node == humanApprovalDefinition && e.approvalPassed(exec.Nodes[fromNode]) {
 				continue
 			}
 			ne.dirty = true
@@ -511,13 +515,13 @@ func asHumanApprovalNode(n node.Node) (humanApprovalNode, bool) {
 }
 
 func (e *Engine) controlCompletedRound(def workflow.Definition, exec *WorkflowExecution, id string) int {
-	if def.Nodes[id].Node != "human-approval" {
+	if def.Nodes[id].Node != humanApprovalDefinition {
 		return latestCompletedRound(exec.Nodes[id])
 	}
 	ne := exec.Nodes[id]
 	runs := append(append([]NodeRun{}, ne.History...), ne.Current)
 	for i := len(runs) - 1; i >= 0; i-- {
-		if runs[i].Status == StatusSucceeded && e.runApproved(runs[i]) {
+		if runs[i].Status == StatusSucceeded && runApproved(ne, runs[i]) {
 			return runs[i].Round
 		}
 	}
@@ -526,20 +530,12 @@ func (e *Engine) controlCompletedRound(def workflow.Definition, exec *WorkflowEx
 
 func (e *Engine) approvalPassed(ne *NodeExecution) bool {
 	run, ok := latestCompleted(ne)
-	return ok && e.runApproved(run)
+	return ok && runApproved(ne, run)
 }
 
-func (e *Engine) runApproved(run NodeRun) bool {
-	ref, ok := run.Outputs["approve"]
-	if !ok {
-		return false
-	}
-	a, err := e.store.Get(ref)
-	if err != nil {
-		return false
-	}
-	approved, _ := a.Data.(bool)
-	return approved
+func runApproved(ne *NodeExecution, run NodeRun) bool {
+	decision, ok := ne.approvalRounds[run.Round]
+	return ok && decision.approved
 }
 
 func (e *Engine) artifactSummaries(exec *WorkflowExecution) []ArtifactSummary {
@@ -560,16 +556,8 @@ func (e *Engine) artifactSummaries(exec *WorkflowExecution) []ArtifactSummary {
 func (e *Engine) adviseHistory(ne *NodeExecution) []string {
 	var history []string
 	for _, run := range ne.History {
-		ref, ok := run.Outputs["advise"]
-		if !ok {
-			continue
-		}
-		a, err := e.store.Get(ref)
-		if err != nil {
-			continue
-		}
-		if advise, ok := a.Data.(string); ok && advise != "" {
-			history = append(history, advise)
+		if decision, ok := ne.approvalRounds[run.Round]; ok && decision.advise != "" {
+			history = append(history, decision.advise)
 		}
 	}
 	return history
