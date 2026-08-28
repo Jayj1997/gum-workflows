@@ -1,7 +1,6 @@
 package execution
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -22,21 +21,19 @@ func TestPersistStateLayout(t *testing.T) {
 			"requirement": {
 				NodeID:   "requirement",
 				NodeType: "requirement-analysis",
-				Status:   StatusSucceeded,
-				Outputs: map[string]artifact.ArtifactRef{
+				Current: NodeRun{RunID: "round-1", Round: 1, Status: StatusSucceeded, Outputs: map[string]artifact.ArtifactRef{
 					"requirement": {ID: "requirement", Kind: artifact.KindRequirementSpec, Version: "1", URI: "1.json"},
-				},
+				}},
 			},
 			"architecture": {
 				NodeID:   "architecture",
 				NodeType: "architecture-design",
-				Status:   StatusFailed,
-				Error:    "mock failure",
+				Current:  NodeRun{RunID: "round-1", Round: 1, Status: StatusFailed, Error: "mock failure"},
 			},
 			"backend": {
 				NodeID:   "backend",
 				NodeType: "coding-agent",
-				Status:   StatusPending,
+				Current:  NodeRun{Status: StatusPending},
 			},
 		},
 	}
@@ -51,6 +48,8 @@ func TestPersistStateLayout(t *testing.T) {
 		"nodes/requirement/state.json",
 		"nodes/architecture/state.json",
 		"nodes/backend/state.json",
+		"nodes/requirement/runs/1.json",
+		"nodes/architecture/runs/1.json",
 	} {
 		if _, err := os.Stat(filepath.Join(execDir, path)); err != nil {
 			t.Errorf("missing %s: %v", path, err)
@@ -78,10 +77,10 @@ func TestPersistStateLayout(t *testing.T) {
 	if ne.NodeID != "requirement" || ne.NodeType != "requirement-analysis" {
 		t.Errorf("loaded identity = %q/%q", ne.NodeID, ne.NodeType)
 	}
-	if ne.Status != StatusSucceeded {
-		t.Errorf("loaded status = %s", ne.Status)
+	if ne.Current.Status != StatusSucceeded {
+		t.Errorf("loaded status = %s", ne.Current.Status)
 	}
-	if ref := ne.Outputs["requirement"]; ref.URI != "1.json" || ref.Kind != artifact.KindRequirementSpec {
+	if ref := ne.Current.Outputs["requirement"]; ref.URI != "1.json" || ref.Kind != artifact.KindRequirementSpec {
 		t.Errorf("loaded output ref = %+v", ref)
 	}
 
@@ -89,7 +88,7 @@ func TestPersistStateLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if failed.Status != StatusFailed || failed.Error != "mock failure" {
+	if failed.Current.Status != StatusFailed || failed.Current.Error != "mock failure" {
 		t.Errorf("loaded failed node = %+v", failed)
 	}
 }
@@ -105,7 +104,7 @@ func TestEnginePersistsWithStateDir(t *testing.T) {
 				f.fail = true
 			}
 		})
-		exec, err := e.Run(context.Background(), chainDef())
+		exec, err := runUntilStopped(t, e, chainDef())
 		if err == nil {
 			t.Fatal("Run() = nil error, want failure")
 		}
@@ -118,7 +117,7 @@ func TestEnginePersistsWithStateDir(t *testing.T) {
 	t.Run("successful run persists", func(t *testing.T) {
 		dr, er := newTestRegistries(t, chainFactories(nil)...)
 		e := NewEngine(er, dr, artifact.NewMemStore(), nil, WithStateDir(root))
-		exec, err := e.Run(context.Background(), chainDef())
+		exec, err := runUntilStopped(t, e, chainDef())
 		if err != nil {
 			t.Fatalf("Run() unexpected error: %v", err)
 		}
@@ -128,11 +127,11 @@ func TestEnginePersistsWithStateDir(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LoadNodeState(sdk): %v", err)
 		}
-		if ne.Status != StatusSucceeded {
-			t.Errorf("sdk status = %s, want Succeeded", ne.Status)
+		if ne.Current.Status != StatusSucceeded {
+			t.Errorf("sdk status = %s, want Succeeded", ne.Current.Status)
 		}
-		if len(ne.Outputs) != 1 {
-			t.Errorf("sdk outputs = %d, want 1", len(ne.Outputs))
+		if len(ne.Current.Outputs) != 1 {
+			t.Errorf("sdk outputs = %d, want 1", len(ne.Current.Outputs))
 		}
 	})
 }

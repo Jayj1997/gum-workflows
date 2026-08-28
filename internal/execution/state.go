@@ -1,28 +1,16 @@
-// Package execution 定义 Workflow 的运行时对象模型。
-//
-// 定义侧与运行侧严格区分（同名概念不得混用）：
-//
-//	Workflow（定义）          = workflow.Definition
-//	WorkflowExecution（运行） = 一次 workflow run，如 execution-000001
-//	Node（定义）              = workflow.NodeSpec（id + type + inputs + dependsOn）
-//	NodeExecution（运行）     = 一个 Node 在某次 WorkflowExecution 中的运行实例
-//
-// 同一个 Workflow 可以运行多次（run #001、#002、#003），
-// 每次运行产生一个独立的 WorkflowExecution，各自持有自己的 NodeExecution 集合。
-// NodeExecution 是运行快照：记录实际使用的 Node Type、状态、产出与错误，
-// 不回写定义。状态流转规则集中在本包；state.json 的持久化形态也以本包类型为基础。
+// Package execution defines the runtime state of one workflow run.
 package execution
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
 )
 
-// Status 是 NodeExecution 与 WorkflowExecution 共用的状态（设计计划 §27）。
+// Status is shared by workflow executions and node runs.
 type Status string
 
-// MVP 状态集合。
 const (
 	StatusPending   Status = "Pending"
 	StatusReady     Status = "Ready"
@@ -30,73 +18,110 @@ const (
 	StatusSucceeded Status = "Succeeded"
 	StatusFailed    Status = "Failed"
 	StatusSkipped   Status = "Skipped"
+	StatusStopped   Status = "Stopped"
 )
 
-// transitions 定义合法状态流转（设计计划 §27）：
-//
-//	Pending -> Ready | Skipped
-//	Ready   -> Running | Skipped
-//	Running -> Succeeded | Failed
-//	Succeeded / Failed / Skipped 为终态
 var transitions = map[Status][]Status{
 	StatusPending:   {StatusReady, StatusSkipped},
 	StatusReady:     {StatusRunning, StatusSkipped},
 	StatusRunning:   {StatusSucceeded, StatusFailed},
-	StatusSucceeded: {},
+	StatusSucceeded: {StatusReady},
 	StatusFailed:    {},
 	StatusSkipped:   {},
+	StatusStopped:   {},
 }
 
-// CanTransitionTo 报告 from -> next 是否为合法流转。
+// CanTransitionTo reports whether from may transition to next.
 func CanTransitionTo(from, next Status) bool {
-	for _, s := range transitions[from] {
-		if s == next {
+	for _, candidate := range transitions[from] {
+		if candidate == next {
 			return true
 		}
 	}
 	return false
 }
 
-// Terminal 报告 s 是否为终态。
-func Terminal(s Status) bool {
-	return len(transitions[s]) == 0
+// Terminal reports whether a status can never transition again.
+func Terminal(status Status) bool { return len(transitions[status]) == 0 }
+
+// InputSnapshot records both an input binding and the artifact version used by a node run.
+type InputSnapshot struct {
+	From string               `json:"from"`
+	Ref  artifact.ArtifactRef `json:"ref"`
 }
 
-// NodeExecution 是一个 Node 定义（workflow.NodeSpec）在某次
-// WorkflowExecution 中的运行实例。
+// NodeRun is one execution round of a node instance.
+type NodeRun struct {
+	RunID      string                          `json:"run_id"`
+	Round      int                             `json:"round"`
+	Status     Status                          `json:"status"`
+	Inputs     map[string]InputSnapshot        `json:"inputs,omitempty"`
+	Outputs    map[string]artifact.ArtifactRef `json:"outputs,omitempty"`
+	Error      string                          `json:"error,omitempty"`
+	ErrorKind  string                          `json:"error_kind,omitempty"`
+	StartedAt  time.Time                       `json:"started_at,omitempty"`
+	FinishedAt time.Time                       `json:"finished_at,omitempty"`
+}
+
+// NodeExecution holds the current node run and all completed earlier rounds.
 type NodeExecution struct {
-	// NodeID 对应 Workflow 定义中的 Node ID（"有一个叫 backend 的节点"）。
-	NodeID string
-	// NodeType 记录本次运行实际实例化的 Node Type（运行快照，
-	// 定义可能在两次运行之间变化）。
-	NodeType string
+	NodeID   string    `json:"node_id"`
+	NodeType string    `json:"node_type"`
+	Current  NodeRun   `json:"current"`
+	History  []NodeRun `json:"history,omitempty"`
 
-	Status Status
-	// Outputs 是本次运行实际产出的「输出名 -> ArtifactRef」映射，
-	// 是后续 NodeExecution 解析 inputs.from 引用的依据。
-	Outputs map[string]artifact.ArtifactRef
-	Error   string
+	dirty           bool
+	machineRuns     int
+	consumedControl map[string]int
+	outputVersions  map[string]int
 }
 
-// TransitionTo 将本实例流转到 next，非法流转返回错误而不是静默接受。
+// TransitionTo moves the current round to next when the state machine permits it.
 func (n *NodeExecution) TransitionTo(next Status) error {
-	if !CanTransitionTo(n.Status, next) {
-		return fmt.Errorf("node execution %q: illegal transition %s -> %s", n.NodeID, n.Status, next)
+	if !CanTransitionTo(n.Current.Status, next) {
+		return fmt.Errorf("node execution %q: illegal transition %s -> %s", n.NodeID, n.Current.Status, next)
 	}
-	n.Status = next
+	n.Current.Status = next
 	return nil
 }
 
-// WorkflowExecution 是 Workflow Definition 的一次实际运行（计划中的 Execution）。
-// 每次调用 Engine.Run 产生一个新实例，互不影响。
-type WorkflowExecution struct {
-	ID       string // 如 execution-000001
-	Workflow string // workflow metadata.name（定义侧名称）
-	Status   Status
-	Nodes    map[string]*NodeExecution // key 为 Node ID
+// StartRun archives a prior completed round and starts the next running round.
+func (n *NodeExecution) StartRun(runID string, inputs map[string]InputSnapshot) error {
+	previousRound := n.Current.Round
+	if previousRound == 0 {
+		if n.Current.Status != StatusReady {
+			return fmt.Errorf("node execution %q: start run from %s", n.NodeID, n.Current.Status)
+		}
+	} else {
+		if !CanTransitionTo(n.Current.Status, StatusReady) {
+			return fmt.Errorf("node execution %q: illegal transition %s -> %s", n.NodeID, n.Current.Status, StatusReady)
+		}
+		n.History = append(n.History, n.Current)
+	}
+
+	n.Current = NodeRun{
+		RunID:     runID,
+		Round:     previousRound + 1,
+		Status:    StatusReady,
+		Inputs:    inputs,
+		StartedAt: time.Now().UTC(),
+	}
+	return n.TransitionTo(StatusRunning)
 }
 
-// Node 返回指定 Node 的运行实例（不存在时 nil）。
-func (w *WorkflowExecution) Node(nodeID string) *NodeExecution {
-	return w.Nodes[nodeID]
+// WorkflowExecution is one independent run of a workflow definition.
+type WorkflowExecution struct {
+	ID            string                    `json:"id"`
+	RunID         string                    `json:"run_id"`
+	Workflow      string                    `json:"workflow"`
+	WorkflowFile  string                    `json:"workflow_file,omitempty"`
+	Status        Status                    `json:"status"`
+	StoppedReason string                    `json:"stopped_reason,omitempty"`
+	Error         string                    `json:"error,omitempty"`
+	StartedAt     time.Time                 `json:"started_at"`
+	FinishedAt    time.Time                 `json:"finished_at,omitempty"`
+	Nodes         map[string]*NodeExecution `json:"nodes"`
 }
+
+// Node returns a node execution by workflow node ID.
+func (w *WorkflowExecution) Node(nodeID string) *NodeExecution { return w.Nodes[nodeID] }

@@ -4,11 +4,14 @@
 package e2e_test
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateExample(t *testing.T) {
@@ -98,9 +101,9 @@ UNION ALL SELECT id FROM workflow
 UNION ALL SELECT id FROM node_instance
 ORDER BY id;`)
 
-	// 输出包含 Succeeded 与全部 Artifact 类型。
+	// Human-free workflow settles, then the test interrupt records a clean stop.
 	for _, want := range []string{
-		"Succeeded",
+		"Stopped",
 		"SourceCode",
 		"OpenAPI",
 		"FrontendSDK",
@@ -116,7 +119,9 @@ ORDER BY id;`)
 		"state.json",
 		"workflow.yaml",
 		"nodes/coder/state.json",
+		"nodes/coder/runs/1.json",
 		"nodes/sdk/state.json",
+		"nodes/sdk/runs/1.json",
 		"artifacts",
 		"workspace/project/README.md",
 		"workspace/project/.mock-agent/task.md",
@@ -298,8 +303,61 @@ providers:
 		t.Fatalf("write llm config: %v", err)
 	}
 	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+xdg)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	if len(args) == 0 || args[0] != "run" {
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	executionGlob := filepath.Join(dir, ".workflow", "executions", "execution-*")
+	before, _ := filepath.Glob(executionGlob)
+	if err := cmd.Start(); err != nil {
+		return output.String(), err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-done:
+			return output.String(), err
+		case <-deadline.C:
+			if err := cmd.Process.Kill(); err != nil {
+				return output.String(), err
+			}
+			<-done
+			return output.String(), fmt.Errorf("run did not reach idle state")
+		case <-ticker.C:
+			executions, _ := filepath.Glob(executionGlob)
+			if len(executions) <= len(before) || !executionSettled(executions[len(executions)-1]) {
+				continue
+			}
+			if err := cmd.Process.Signal(os.Interrupt); err != nil {
+				return output.String(), err
+			}
+			err := <-done
+			return output.String(), err
+		}
+	}
+}
+
+func executionSettled(executionDir string) bool {
+	states, _ := filepath.Glob(filepath.Join(executionDir, "nodes", "*", "state.json"))
+	if len(states) == 0 {
+		return false
+	}
+	for _, state := range states {
+		data, err := os.ReadFile(state)
+		if err != nil || !bytes.Contains(data, []byte(`"status": "Succeeded"`)) {
+			return false
+		}
+	}
+	return true
 }
 
 func sqliteQuery(t *testing.T, dbPath, query string) string {

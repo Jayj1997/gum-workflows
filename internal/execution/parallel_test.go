@@ -1,7 +1,6 @@
 package execution
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -151,11 +150,11 @@ func TestParallelDiamondRunsConcurrently(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		exec, err := e.Run(context.Background(), diamondDef())
+		exec, err := runUntilStopped(t, e, diamondDef())
 		if err != nil {
 			t.Errorf("Run() unexpected error: %v", err)
 		}
-		if exec.Status != StatusSucceeded {
+		if exec.Status != StatusStopped {
 			t.Errorf("status = %s", exec.Status)
 		}
 		close(done)
@@ -277,11 +276,11 @@ func TestParallelSerialFallback(t *testing.T) {
 	e := NewEngine(er, dr, artifact.NewMemStore(), nil) // 默认串行
 	done := make(chan struct{})
 	go func() {
-		exec, err := e.Run(context.Background(), def)
+		exec, err := runUntilStopped(t, e, def)
 		if err != nil {
 			t.Errorf("Run() unexpected error: %v", err)
 		}
-		if exec.Status != StatusSucceeded {
+		if exec.Status != StatusStopped {
 			t.Errorf("status = %s", exec.Status)
 		}
 		close(done)
@@ -307,16 +306,16 @@ func TestParallelChainSucceeds(t *testing.T) {
 	dr, er := newTestRegistries(t, chainFactories(nil)...)
 	e := NewEngine(er, dr, artifact.NewMemStore(), nil, WithParallelism(4))
 
-	exec, err := e.Run(context.Background(), chainDef())
+	exec, err := runUntilStopped(t, e, chainDef())
 	if err != nil {
 		t.Fatalf("Run() unexpected error: %v", err)
 	}
-	if exec.Status != StatusSucceeded {
-		t.Fatalf("status = %s, want Succeeded", exec.Status)
+	if exec.Status != StatusStopped {
+		t.Fatalf("status = %s, want Stopped", exec.Status)
 	}
 	for id, ne := range exec.Nodes {
-		if ne.Status != StatusSucceeded {
-			t.Errorf("node %q status = %s", id, ne.Status)
+		if ne.Current.Status != StatusSucceeded {
+			t.Errorf("node %q status = %s", id, ne.Current.Status)
 		}
 	}
 }
@@ -356,7 +355,7 @@ func TestParallelFailureStopsDispatch(t *testing.T) {
 	}
 
 	e := NewEngine(er, dr, artifact.NewMemStore(), nil, WithParallelism(4))
-	exec, err := e.Run(context.Background(), def)
+	exec, err := runUntilStopped(t, e, def)
 	if err == nil {
 		t.Fatal("Run() = nil error, want failure")
 	}
@@ -366,8 +365,8 @@ func TestParallelFailureStopsDispatch(t *testing.T) {
 	if exec.Status != StatusFailed {
 		t.Errorf("status = %s, want Failed", exec.Status)
 	}
-	if exec.Nodes["a"].Status != StatusFailed {
-		t.Errorf("a status = %s", exec.Nodes["a"].Status)
+	if exec.Nodes["a"].Current.Status != StatusFailed {
+		t.Errorf("a status = %s", exec.Nodes["a"].Current.Status)
 	}
 	// 下游不被派发。
 	mu.Lock()

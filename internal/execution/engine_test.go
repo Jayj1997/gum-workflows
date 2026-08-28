@@ -6,12 +6,20 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
 	"github.com/Jayj1997/gum-workflows/internal/definition"
 	"github.com/Jayj1997/gum-workflows/internal/node"
 	"github.com/Jayj1997/gum-workflows/internal/workflow"
 )
+
+func runUntilStopped(t *testing.T, e *Engine, def workflow.Definition) (*WorkflowExecution, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	return e.Run(ctx, def)
+}
 
 // ---- 测试用可执行 Mock Node（仅测试内使用，内置 Mock Node 属后续里程碑）----
 
@@ -224,12 +232,12 @@ func TestRunCreatesIndependentExecutions(t *testing.T) {
 
 	var execs []*WorkflowExecution
 	for i := 0; i < 3; i++ {
-		exec, err := e.Run(context.Background(), def)
+		exec, err := runUntilStopped(t, e, def)
 		if err != nil {
 			t.Fatalf("Run() #%d unexpected error: %v", i+1, err)
 		}
-		if exec.Status != StatusSucceeded {
-			t.Fatalf("Run() #%d status = %s, want Succeeded", i+1, exec.Status)
+		if exec.Status != StatusStopped {
+			t.Fatalf("Run() #%d status = %s, want Stopped", i+1, exec.Status)
 		}
 		execs = append(execs, exec)
 	}
@@ -263,8 +271,8 @@ func TestRunCreatesIndependentExecutions(t *testing.T) {
 	}
 
 	// 不同运行的 Artifact 引用不同（各自的 Store 写入），不串流。
-	b1 := execs[0].Nodes["coder"].Outputs["openapi"]
-	b2 := execs[1].Nodes["coder"].Outputs["openapi"]
+	b1 := execs[0].Nodes["coder"].Current.Outputs["openapi"]
+	b2 := execs[1].Nodes["coder"].Current.Outputs["openapi"]
 	if b1.URI == b2.URI {
 		t.Fatalf("coder.openapi artifact URI identical across runs: %q", b1.URI)
 	}
@@ -280,7 +288,7 @@ func TestRunCreatesIndependentExecutions(t *testing.T) {
 // NodeType 是本次运行实际实例化的类型。
 func TestNodeExecutionCarriesDefinitionIdentity(t *testing.T) {
 	e, _ := newChainEngine(t)
-	exec, err := e.Run(context.Background(), chainDef())
+	exec, err := runUntilStopped(t, e, chainDef())
 	if err != nil {
 		t.Fatalf("Run() unexpected error: %v", err)
 	}
@@ -302,17 +310,17 @@ func TestNodeExecutionCarriesDefinitionIdentity(t *testing.T) {
 
 func TestRunMinimalChain(t *testing.T) {
 	e, rec := newChainEngine(t)
-	exec, err := e.Run(context.Background(), chainDef())
+	exec, err := runUntilStopped(t, e, chainDef())
 	if err != nil {
 		t.Fatalf("Run() unexpected error: %v", err)
 	}
 
-	if exec.Status != StatusSucceeded {
-		t.Fatalf("exec.Status = %s, want Succeeded", exec.Status)
+	if exec.Status != StatusStopped {
+		t.Fatalf("exec.Status = %s, want Stopped", exec.Status)
 	}
 	for id, ns := range exec.Nodes {
-		if ns.Status != StatusSucceeded {
-			t.Errorf("node %q status = %s, want Succeeded", id, ns.Status)
+		if ns.Current.Status != StatusSucceeded {
+			t.Errorf("node %q status = %s, want Succeeded", id, ns.Current.Status)
 		}
 	}
 
@@ -332,7 +340,7 @@ func TestRunMinimalChain(t *testing.T) {
 	// 输出数量：coder 2（source-code + openapi）、sdk 1（frontend-sdk），共 3。
 	total := 0
 	for _, ns := range exec.Nodes {
-		total += len(ns.Outputs)
+		total += len(ns.Current.Outputs)
 	}
 	if total != 3 {
 		t.Errorf("total outputs = %d, want 3", total)
@@ -340,7 +348,7 @@ func TestRunMinimalChain(t *testing.T) {
 
 	// 全部输出引用都能从 Store 取回且 Kind 一致。
 	for id, ns := range exec.Nodes {
-		for name, ref := range ns.Outputs {
+		for name, ref := range ns.Current.Outputs {
 			a, err := e.store.Get(ref)
 			if err != nil {
 				t.Fatalf("Get(%s.%s): %v", id, name, err)
@@ -381,7 +389,7 @@ func TestRunControlDependency(t *testing.T) {
 	}
 
 	e := NewEngine(er, dr, artifact.NewMemStore(), nil)
-	exec, err := e.Run(context.Background(), def)
+	exec, err := runUntilStopped(t, e, def)
 	if err != nil {
 		t.Fatalf("Run() unexpected error: %v", err)
 	}
@@ -389,8 +397,8 @@ func TestRunControlDependency(t *testing.T) {
 		t.Fatalf("execution order = %q, want %q (control edge without data)", got, want)
 	}
 	// Control Edge 不携带数据：deploy 不产出也不消费。
-	if len(exec.Nodes["deploy"].Outputs) != 0 {
-		t.Errorf("deploy outputs = %d, want 0", len(exec.Nodes["deploy"].Outputs))
+	if len(exec.Nodes["deploy"].Current.Outputs) != 0 {
+		t.Errorf("deploy outputs = %d, want 0", len(exec.Nodes["deploy"].Current.Outputs))
 	}
 }
 
@@ -401,7 +409,7 @@ func TestRunNodeFailure(t *testing.T) {
 		}
 	})
 
-	exec, err := e.Run(context.Background(), chainDef())
+	exec, err := runUntilStopped(t, e, chainDef())
 	if err == nil {
 		t.Fatal("Run() = nil error, want failure")
 	}
@@ -413,11 +421,11 @@ func TestRunNodeFailure(t *testing.T) {
 	}
 
 	// 失败 Node 记录 Error；下游保持 Pending（最小 Runtime 不做 Skipped 传播）。
-	if ns := exec.Nodes["coder"]; ns.Status != StatusFailed || ns.Error == "" {
+	if ns := exec.Nodes["coder"]; ns.Current.Status != StatusFailed || ns.Current.Error == "" {
 		t.Errorf("coder state = %+v, want Failed with Error", ns)
 	}
-	if ns := exec.Nodes["sdk"]; ns.Status != StatusPending {
-		t.Errorf("node %q status = %s, want Pending", "sdk", ns.Status)
+	if ns := exec.Nodes["sdk"]; ns.Current.Status != StatusPending {
+		t.Errorf("node %q status = %s, want Pending", "sdk", ns.Current.Status)
 	}
 }
 
@@ -432,7 +440,7 @@ func TestRunUnknownNodeDefinition(t *testing.T) {
 		Metadata:   workflow.Metadata{Name: "x"},
 		Nodes:      map[string]workflow.NodeSpec{"a": {Node: "nonexistent"}},
 	}
-	_, err := e.Run(context.Background(), def)
+	_, err := runUntilStopped(t, e, def)
 	if err == nil {
 		t.Fatal("Run() = nil error, want unknown node definition")
 	}
@@ -466,7 +474,7 @@ func TestRunMissingOutput(t *testing.T) {
 	}
 
 	e := NewEngine(er, dr, artifact.NewMemStore(), nil)
-	exec, err := e.Run(context.Background(), def)
+	exec, err := runUntilStopped(t, e, def)
 	if err == nil {
 		t.Fatal("Run() = nil error, want missing-output failure")
 	}
@@ -512,7 +520,7 @@ func TestRunUndeclaredOutput(t *testing.T) {
 	}
 
 	e := NewEngine(er, dr, artifact.NewMemStore(), nil)
-	_, err := e.Run(context.Background(), def)
+	_, err := runUntilStopped(t, e, def)
 	if err == nil {
 		t.Fatal("Run() = nil error, want undeclared-output rejection")
 	}
@@ -528,15 +536,18 @@ func TestRunContextCanceled(t *testing.T) {
 	cancel()
 
 	exec, err := e.Run(ctx, chainDef())
-	if err == nil {
-		t.Fatal("Run() = nil error, want cancellation")
+	if err != nil {
+		t.Fatalf("Run() cancellation error = %v, want clean stop", err)
 	}
 	if exec == nil {
 		t.Fatal("Run() exec = nil, want execution with Pending nodes")
 	}
+	if exec.Status != StatusStopped || exec.StoppedReason != "user_interrupt" {
+		t.Fatalf("execution = %+v, want Stopped/user_interrupt", exec)
+	}
 	for id, ns := range exec.Nodes {
-		if ns.Status != StatusPending {
-			t.Errorf("node %q status = %s, want Pending (canceled before start)", id, ns.Status)
+		if ns.Current.Status != StatusPending {
+			t.Errorf("node %q status = %s, want Pending (canceled before start)", id, ns.Current.Status)
 		}
 	}
 }

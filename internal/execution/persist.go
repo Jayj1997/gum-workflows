@@ -7,12 +7,14 @@ import (
 	"path/filepath"
 )
 
-// stateDirLayout 对应设计计划 §28 的 Execution State 目录结构：
+// stateDirLayout follows the iterative execution layout:
 //
 //	<dir>/
 //	├── state.json                       WorkflowExecution 级状态
 //	└── nodes/
-//	    └── <node-id>/state.json         NodeExecution 级状态
+//	    └── <node-id>/
+//	        ├── state.json               Current + history summary
+//	        └── runs/<round>.json        Full round detail
 //
 // Artifact 文件由 ArtifactStore 负责，不在本包布局内。
 
@@ -27,12 +29,18 @@ func PersistState(dir string, exec *WorkflowExecution) error {
 		return fmt.Errorf("persist state: create %s: %w", nodesDir(dir), err)
 	}
 
-	// WorkflowExecution 级：ID、Workflow 名、整体状态、各 Node 状态摘要。
+	// WorkflowExecution level metadata does not duplicate node round bodies.
 	top := map[string]any{
-		"id":        exec.ID,
-		"workflow":  exec.Workflow,
-		"status":    string(exec.Status),
-		"nodeCount": len(exec.Nodes),
+		"id":             exec.ID,
+		"run_id":         exec.RunID,
+		"workflow":       exec.Workflow,
+		"workflow_file":  exec.WorkflowFile,
+		"status":         string(exec.Status),
+		"stopped_reason": exec.StoppedReason,
+		"error":          exec.Error,
+		"started_at":     exec.StartedAt,
+		"finished_at":    exec.FinishedAt,
+		"node_count":     len(exec.Nodes),
 	}
 	if err := writeJSON(filepath.Join(dir, "state.json"), top); err != nil {
 		return fmt.Errorf("persist state %s: %w", exec.ID, err)
@@ -44,11 +52,44 @@ func PersistState(dir string, exec *WorkflowExecution) error {
 		if err := os.MkdirAll(nodeDir, 0o755); err != nil {
 			return fmt.Errorf("persist state: create %s: %w", nodeDir, err)
 		}
-		if err := writeJSON(filepath.Join(nodeDir, "state.json"), ne); err != nil {
+		nodeState := struct {
+			NodeID   string    `json:"node_id"`
+			NodeType string    `json:"node_type"`
+			Current  NodeRun   `json:"current"`
+			History  []NodeRun `json:"history,omitempty"`
+		}{
+			NodeID: ne.NodeID, NodeType: ne.NodeType, Current: ne.Current,
+			History: summarizeRuns(ne.History),
+		}
+		if err := writeJSON(filepath.Join(nodeDir, "state.json"), nodeState); err != nil {
 			return fmt.Errorf("persist state %s/%s: %w", exec.ID, id, err)
+		}
+		runsDir := filepath.Join(nodeDir, "runs")
+		if err := os.MkdirAll(runsDir, 0o755); err != nil {
+			return fmt.Errorf("persist state: create %s: %w", runsDir, err)
+		}
+		for _, run := range append(append([]NodeRun{}, ne.History...), ne.Current) {
+			if run.Round == 0 {
+				continue
+			}
+			if err := writeJSON(filepath.Join(runsDir, fmt.Sprintf("%d.json", run.Round)), run); err != nil {
+				return fmt.Errorf("persist state %s/%s round %d: %w", exec.ID, id, run.Round, err)
+			}
 		}
 	}
 	return nil
+}
+
+func summarizeRuns(runs []NodeRun) []NodeRun {
+	summaries := make([]NodeRun, len(runs))
+	for i, run := range runs {
+		summaries[i] = NodeRun{
+			RunID: run.RunID, Round: run.Round, Status: run.Status,
+			Error: run.Error, ErrorKind: run.ErrorKind,
+			StartedAt: run.StartedAt, FinishedAt: run.FinishedAt,
+		}
+	}
+	return summaries
 }
 
 // LoadNodeState 从 dir/nodes/<nodeID>/state.json 读回一个 NodeExecution。

@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
+	"syscall"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
 	"github.com/Jayj1997/gum-workflows/internal/execution"
@@ -19,7 +21,8 @@ import (
 //	Load YAML -> CUE Validate -> Parse -> Semantic Validate ->
 //	Create Execution -> Initialize Project/Workspace -> Execute -> Persist
 func runCmd(path string) error {
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	def, data, executors, defsRegistry, llmConfig, warnings, err := loadAndValidate(ctx, path)
 	if err != nil {
 		return err
@@ -78,6 +81,7 @@ func runCmd(path string) error {
 		execution.WithStateDir(runtime.BaseDir),
 		execution.WithProjectContext(wsCtx),
 		execution.WithExecutionID(executionID),
+		execution.WithWorkflowFile(path),
 	)
 	exec, runErr := engine.Run(ctx, def)
 
@@ -101,9 +105,9 @@ func printExecutionSummary(exec *execution.WorkflowExecution) {
 	fmt.Println("Nodes:")
 	for _, id := range ids {
 		ne := exec.Nodes[id]
-		line := fmt.Sprintf("  %-13s %-9s %s", id, ne.Status, ne.NodeType)
-		if ne.Error != "" {
-			line += "  error: " + ne.Error
+		line := fmt.Sprintf("  %-13s %-9s %s", id, ne.Current.Status, ne.NodeType)
+		if ne.Current.Error != "" {
+			line += "  error: " + ne.Current.Error
 		}
 		fmt.Println(line)
 	}
@@ -111,13 +115,13 @@ func printExecutionSummary(exec *execution.WorkflowExecution) {
 	fmt.Println("Artifacts:")
 	for _, id := range ids {
 		ne := exec.Nodes[id]
-		names := make([]string, 0, len(ne.Outputs))
-		for name := range ne.Outputs {
+		names := make([]string, 0, len(ne.Current.Outputs))
+		for name := range ne.Current.Outputs {
 			names = append(names, name)
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			ref := ne.Outputs[name]
+			ref := ne.Current.Outputs[name]
 			fmt.Printf("  %-13s %-14s %s\n", id, name, ref.Kind)
 		}
 	}
