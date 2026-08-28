@@ -73,7 +73,7 @@ type NodeDetail struct {
 
 // NodeRound is one recorded execution attempt with artifact references only.
 type NodeRound struct {
-	RunID      string
+	NodeRunID  string
 	Round      int
 	Status     execution.Status
 	Error      string
@@ -211,7 +211,7 @@ SELECT id, node_definition, node_executor, round, status, error, error_kind,
 		var inputsJSON, outputsJSON string
 		var started, finished sql.NullString
 		if err := rows.Scan(
-			&round.RunID, &detail.NodeDefinition, &detail.NodeExecutor, &round.Round,
+			&round.NodeRunID, &detail.NodeDefinition, &detail.NodeExecutor, &round.Round,
 			&status, &round.Error, &round.ErrorKind, &inputsJSON, &outputsJSON, &started, &finished,
 		); err != nil {
 			return nil, fmt.Errorf("scan run %s node %q round: %w", runID, nodeID, err)

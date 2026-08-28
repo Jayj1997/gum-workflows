@@ -116,6 +116,9 @@ func TestGetNodeRunReturnsAllRoundsAndArtifactReferences(t *testing.T) {
 	if detail.Rounds[0].Round != 1 || detail.Rounds[0].ErrorKind != "interaction" || detail.Rounds[1].Round != 2 {
 		t.Errorf("rounds = %+v", detail.Rounds)
 	}
+	if detail.Rounds[0].NodeRunID == "" || detail.Rounds[0].NodeRunID == detail.RunID {
+		t.Errorf("node run id = %q, workflow run id = %q", detail.Rounds[0].NodeRunID, detail.RunID)
+	}
 	if got := detail.Rounds[1].Inputs["advise"]; got.From != "#advise-retry" || got.Ref != advise {
 		t.Errorf("advise input = %+v", got)
 	}
