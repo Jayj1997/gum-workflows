@@ -8,7 +8,7 @@
 
 | 项 | 决定 |
 |---|---|
-| 语言 | Go 1.24+（本机 go1.24.5） |
+| 语言 | Go 1.25+（`go.mod` 基线为 1.25.0） |
 | Module 路径 | `github.com/Jayj1997/gum-workflows` |
 | 配置格式 | YAML（gopkg.in/yaml.v3） |
 | Schema 校验 | CUE（cuelang.org/go，Go API 内嵌；Schema 文件为 `schema/workflow/v1.cue`） |

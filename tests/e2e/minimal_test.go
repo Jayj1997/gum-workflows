@@ -5,6 +5,7 @@ package e2e_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,6 +25,9 @@ func TestValidateExample(t *testing.T) {
 	if !strings.Contains(out, "valid (workflow/v1)") {
 		t.Errorf("output = %q", out)
 	}
+	if _, err := os.Stat(filepath.Join(tmp, "minimal", ".workflow", "gum-workflows.db")); !os.IsNotExist(err) {
+		t.Errorf("validate created database or returned unexpected stat error: %v", err)
+	}
 }
 
 // TestRunMinimalDemo 是当前 Schema 形态下的 CLI 级验收：
@@ -42,6 +46,34 @@ func TestRunMinimalDemo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %s\n%s", err, out)
 	}
+
+	dbPath := filepath.Join(dir, ".workflow", "gum-workflows.db")
+	if got := sqliteQuery(t, dbPath, `
+SELECT
+  (SELECT count(*) FROM node_type_definition),
+  (SELECT count(*) FROM node_definition),
+  (SELECT count(*) FROM node_executor),
+  (SELECT count(*) FROM workflow),
+  (SELECT count(*) FROM node_instance);`); got != "3|4|4|1|2" {
+		t.Errorf("definition table counts = %q, want %q", got, "3|4|4|1|2")
+	}
+	if got := sqliteQuery(t, dbPath, `
+SELECT ni.node_id, e.version, ni.llm_provider, ni.llm_model
+FROM node_instance ni
+JOIN node_executor e ON e.id = ni.node_executor_id
+ORDER BY ni.node_id;`); got != "coder|v1|openai|gpt-4o\nsdk|v1||" {
+		t.Errorf("resolved node instances = %q", got)
+	}
+	if dump := sqliteQuery(t, dbPath, ".dump"); strings.Contains(dump, "test-key") || strings.Contains(dump, "example.invalid") {
+		t.Error("llm.yaml connection details leaked into the project database")
+	}
+	definitionIDs := sqliteQuery(t, dbPath, `
+SELECT id FROM node_type_definition
+UNION ALL SELECT id FROM node_definition
+UNION ALL SELECT id FROM node_executor
+UNION ALL SELECT id FROM workflow
+UNION ALL SELECT id FROM node_instance
+ORDER BY id;`)
 
 	// 输出包含 Succeeded 与全部 Artifact 类型。
 	for _, want := range []string{
@@ -87,6 +119,15 @@ func TestRunMinimalDemo(t *testing.T) {
 	if _, err := os.Stat(secondDir); err != nil {
 		t.Fatalf("second execution dir missing: %v", err)
 	}
+	if got := sqliteQuery(t, dbPath, `
+SELECT id FROM node_type_definition
+UNION ALL SELECT id FROM node_definition
+UNION ALL SELECT id FROM node_executor
+UNION ALL SELECT id FROM workflow
+UNION ALL SELECT id FROM node_instance
+ORDER BY id;`); got != definitionIDs {
+		t.Errorf("definition UUIDs changed across repeated run:\nbefore=%s\nafter=%s", definitionIDs, got)
+	}
 
 	// 回归（code review P0）：第二次运行必须把自己的状态写到 000002，
 	// 不得覆盖 000001。firstState 在第二次运行之前读取，
@@ -111,6 +152,29 @@ func TestRunMinimalDemo(t *testing.T) {
 	}
 }
 
+func TestRunStopsWhenDefinitionDatabaseCannotOpen(t *testing.T) {
+	tmp := t.TempDir()
+	src := absPath(t, filepath.Join("..", "..", "examples", "minimal"))
+	if err := copyTree(t, src, filepath.Join(tmp, "minimal")); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(tmp, "minimal")
+	if err := os.WriteFile(filepath.Join(dir, ".workflow"), []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("create invalid database parent: %v", err)
+	}
+
+	out, err := runInDir(t, dir, "run", "workflow.yaml")
+	if err == nil {
+		t.Fatalf("run succeeded with unusable database path:\n%s", out)
+	}
+	if !strings.Contains(out, "open history database") {
+		t.Errorf("error does not identify definition import startup failure:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".workflow", "executions")); err == nil {
+		t.Error("engine created execution state after database failure")
+	}
+}
+
 func absPath(t *testing.T, p string) string {
 	t.Helper()
 	abs, err := filepath.Abs(p)
@@ -124,8 +188,39 @@ func absPath(t *testing.T, p string) string {
 func runInDir(t *testing.T, dir string, args ...string) (string, error) {
 	t.Helper()
 	cmd := execCommand(dir, args...)
+	xdg := t.TempDir()
+	configDir := filepath.Join(xdg, "gum-workflows")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	llmYAML := `apiVersion: llm/v1
+kind: llm
+providers:
+  - name: openai
+    type: openai-compatible
+    url: https://example.invalid/v1
+    apikey: test-key
+    default: true
+    models:
+      - name: gpt-4o
+        default: true
+`
+	if err := os.WriteFile(filepath.Join(configDir, "llm.yaml"), []byte(llmYAML), 0o600); err != nil {
+		t.Fatalf("write llm config: %v", err)
+	}
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+xdg)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+func sqliteQuery(t *testing.T, dbPath, query string) string {
+	t.Helper()
+	cmd := exec.Command("sqlite3", dbPath, query)
+	result, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("sqlite3 query failed: %v\n%s", err, result)
+	}
+	return strings.TrimSpace(string(result))
 }
 
 func copyTree(t *testing.T, src, dst string) error {

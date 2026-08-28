@@ -105,7 +105,7 @@ nodes:
 
 ## 快速开始
 
-当前开发环境要求 Go 1.24+。
+当前开发环境要求 Go 1.25+（`go.mod` 基线为 1.25.0）。
 
 ```bash
 git clone git@github.com:Jayj1997/gum-workflows.git

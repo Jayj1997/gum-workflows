@@ -37,7 +37,7 @@ func run(args []string) error {
 // validateCmd 执行校验管线（设计计划 §21 两层校验），与 run 共用 loadAndValidate。
 // warning 不阻断校验（环降为提示，票 06），以 warning 前缀打印到 stderr。
 func validateCmd(path string) error {
-	def, _, _, _, warnings, err := loadAndValidate(path)
+	def, _, _, _, _, warnings, err := loadAndValidate(path)
 	if err != nil {
 		return err
 	}

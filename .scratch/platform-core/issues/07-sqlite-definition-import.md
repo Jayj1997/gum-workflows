@@ -4,10 +4,18 @@
 
 **Blocked by:** 03（定义注册表与种子导入源）, 04（llm 解析结果写入 node_instance 行）, 05（新 Schema 的 workflow/projects/node instance 结构）
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] history 包：Open（建库+迁移幂等，重复 Open 不重放）、导入 API
-- [ ] 定义侧五表 DDL 按设计文档 §8.3；FK + 级联
-- [ ] run 启动导入：种子 + workflow + projects + node instances（executor 解析固定为 id；llm/model 为名字字符串）；重复 run 幂等（同键覆盖、UUID 稳定）
-- [ ] e2e：run 后 sqlite3 查五表内容正确；validate 不产生 DB 文件
-- [ ] 导入失败不影响引擎既有行为（导入在 run 主流程内，失败即运行启动失败并明确报错）
+- [x] history 包：Open（建库+迁移幂等，重复 Open 不重放）、导入 API
+- [x] 定义侧五表 DDL 按设计文档 §8.3；FK + 级联
+- [x] run 启动导入：种子 + workflow + projects + node instances（executor 解析固定为 id；llm/model 为名字字符串）；重复 run 幂等（同键覆盖、UUID 稳定）
+- [x] e2e：run 后 sqlite3 查五表内容正确；validate 不产生 DB 文件
+- [x] 导入失败不影响引擎既有行为（导入在 run 主流程内，失败即运行启动失败并明确报错）
+
+## Comments
+
+**2026-08-28（agent 实施记录）：** 新增 `internal/history`，使用纯 Go `modernc.org/sqlite` 打开 `.workflow/gum-workflows.db`，设置 WAL / busy_timeout / foreign_keys，并以 `PRAGMA user_version` 顺序事务迁移定义侧五表。定义与 workflow 导入按自然键覆盖式 upsert，保留既有 UUID；workflow 覆盖时清理已移除的 node instance。
+
+`workflow run` 在创建 execution/workspace 前导入内嵌种子与本次 workflow，并把缺省 executor 固定为明确版本及对应数据库 UUID；agent 节点只记录解析后的 provider/model 名，不写入 llm.yaml 的 URL 或 API key。`workflow validate` 未接入 history 包，保持零副作用。项目 Go 基线按维护者要求升级为 1.25.0。
+
+测试覆盖 Open/迁移幂等、五表与 FK 级联、JSON 往返和空值形态、覆盖删除与 UUID 稳定；CLI e2e 使用系统 `sqlite3` 检查五表、解析结果、密钥不落库、重复 run 稳定、validate 不建库，以及数据库无法打开时在引擎启动前明确失败。`go vet ./...` 与 `go test -race ./...` 全绿。
