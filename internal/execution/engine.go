@@ -175,7 +175,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				queued[id] = false
 				inputs := e.resolveInputs(def, exec, id)
 				ne := exec.Nodes[id]
-				_, humanInput := nodes[id].(humanInputNode)
+				humanNode, humanInput := asHumanInputNode(nodes[id])
 				if !humanInput {
 					ne.machineRuns++
 				}
@@ -203,7 +203,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				e.persist(exec)
 				inflight++
 				if humanInput {
-					go e.executeHumanInput(execCtx, def.Nodes[id].Node, nodes[id].(humanInputNode), id, results)
+					go e.executeHumanInput(execCtx, def.Nodes[id].Node, humanNode, id, results)
 				} else {
 					go e.executeNode(execCtx, def, nodes[id], id, inputs, results)
 				}
@@ -419,7 +419,7 @@ func (e *Engine) ready(def workflow.Definition, exec *WorkflowExecution, n node.
 	if status == StatusPending {
 		return true
 	}
-	if _, ok := n.(humanInputNode); ok {
+	if _, ok := asHumanInputNode(n); ok {
 		return false // Further rounds are requested only after the downstream graph settles.
 	}
 
@@ -441,12 +441,17 @@ func (e *Engine) ready(def workflow.Definition, exec *WorkflowExecution, n node.
 func (e *Engine) nextHumanInput(def workflow.Definition, exec *WorkflowExecution, nodes map[string]node.Node) string {
 	for _, id := range sortedNodeIDs(def.Nodes) {
 		ne := exec.Nodes[id]
-		_, humanInput := nodes[id].(humanInputNode)
+		_, humanInput := asHumanInputNode(nodes[id])
 		if humanInput && ne.Current.Status == StatusSucceeded && !ne.humanClosed {
 			return id
 		}
 	}
 	return ""
+}
+
+func asHumanInputNode(n node.Node) (humanInputNode, bool) {
+	human, ok := n.(humanInputNode)
+	return human, ok
 }
 
 func sortedNodeIDs(nodes map[string]workflow.NodeSpec) []string {
