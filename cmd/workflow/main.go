@@ -4,6 +4,7 @@
 //
 //	workflow validate <workflow-file>
 //	workflow run <workflow-file>
+//	workflow history [<run-id> [<node-id>]]
 package main
 
 import (
@@ -23,8 +24,14 @@ func main() {
 }
 
 func run(args []string) error {
+	if len(args) > 0 && args[0] == "history" {
+		if len(args) > 3 {
+			return fmt.Errorf("usage: workflow history [<run-id> [<node-id>]]")
+		}
+		return historyCmd(context.Background(), args[1:], history.DefaultDBPath, os.Stdout)
+	}
 	if len(args) != 2 {
-		return fmt.Errorf("usage: workflow <validate|run> <workflow-file>")
+		return fmt.Errorf("usage: workflow <validate|run> <workflow-file> | workflow history [<run-id> [<node-id>]]")
 	}
 	switch args[0] {
 	case "validate":
@@ -32,7 +39,7 @@ func run(args []string) error {
 	case "run":
 		return runCmd(args[1])
 	default:
-		return fmt.Errorf("unknown command %q (available: validate, run)", args[0])
+		return fmt.Errorf("unknown command %q (available: validate, run, history)", args[0])
 	}
 }
 

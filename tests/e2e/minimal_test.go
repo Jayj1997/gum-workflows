@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Jayj1997/gum-workflows/internal/artifact"
+	"github.com/Jayj1997/gum-workflows/internal/execution"
+	"github.com/Jayj1997/gum-workflows/internal/history"
+	"github.com/Jayj1997/gum-workflows/internal/node"
 )
 
 func TestValidateExample(t *testing.T) {
@@ -28,6 +34,175 @@ func TestValidateExample(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, "minimal", ".workflow", "gum-workflows.db")); !os.IsNotExist(err) {
 		t.Errorf("validate created database or returned unexpected stat error: %v", err)
 	}
+}
+
+func TestHistoryWithoutDatabaseIsEmptyAndReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	out, err := runInDir(t, dir, "history")
+	if err != nil {
+		t.Fatalf("history failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "no runs recorded") {
+		t.Errorf("history empty output = %q", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".workflow")); !os.IsNotExist(statErr) {
+		t.Errorf("history created runtime state: %v", statErr)
+	}
+}
+
+func TestHistoryWithEmptyDatabaseHasEmptyState(t *testing.T) {
+	dir := t.TempDir()
+	store, err := history.Open(context.Background(), filepath.Join(dir, ".workflow", "gum-workflows.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runInDir(t, dir, "history")
+	if err != nil || !strings.Contains(out, "no runs recorded") {
+		t.Errorf("empty database history output = %q, error = %v", out, err)
+	}
+}
+
+func TestHistoryListsSeededRuns(t *testing.T) {
+	dir := t.TempDir()
+	seedHistoryRun(t, dir)
+
+	out, err := runInDir(t, dir, "history")
+	if err != nil {
+		t.Fatalf("history failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"RUN ID", "WORKFLOW", "STATUS", "STARTED", "DURATION", "NODES", "11223344", "history-demo", "Stopped", "1/2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("history output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestHistoryShowsRunDetailsByPrefix(t *testing.T) {
+	dir := t.TempDir()
+	runID := seedHistoryRun(t, dir)
+
+	out, err := runInDir(t, dir, "history", runID[:8])
+	if err != nil {
+		t.Fatalf("history run detail failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"Run " + runID, "Workflow:", "history-demo v1", "Status:", "Stopped",
+		"Stopped reason:", "user_interrupt", "State dir:", ".workflow/executions/execution-000007",
+		"Nodes:", "worker", "coding-agent", "rounds: 2", "inputs: 1", "outputs: 1",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("run detail missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestHistoryShowsEveryNodeRoundAndArtifactReference(t *testing.T) {
+	dir := t.TempDir()
+	runID := seedHistoryRun(t, dir)
+
+	out, err := runInDir(t, dir, "history", runID[:8], "worker")
+	if err != nil {
+		t.Fatalf("history node detail failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"Node worker", "coding-agent v1", "Latest round: 2", "Round 1", "Failed",
+		"error_kind: interaction", "invalid response", "Round 2", "Succeeded",
+		"advise", "from: #advise-retry", "kind: markdown", "uri: artifacts/advise/2.json", "version: 2",
+		"result", "uri: artifacts/result/3.json", "version: 3",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("node detail missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "artifact content") {
+		t.Errorf("node detail unexpectedly inlined artifact content:\n%s", out)
+	}
+
+	missing, err := runInDir(t, dir, "history", runID[:8], "missing")
+	if err != nil || !strings.Contains(missing, "not found") {
+		t.Errorf("missing node output = %q, error = %v", missing, err)
+	}
+}
+
+func TestHistoryRunPrefixErrorsAndMissingState(t *testing.T) {
+	dir := t.TempDir()
+	runID := seedHistoryRun(t, dir)
+	store, err := history.Open(context.Background(), filepath.Join(dir, ".workflow", "gum-workflows.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := &execution.WorkflowExecution{
+		RunID: "11223344-2222-4222-8222-222222222222", ID: "execution-000008", Workflow: "second",
+		Status: execution.StatusRunning, StartedAt: time.Date(2026, 8, 29, 13, 0, 0, 0, time.UTC),
+		Nodes: map[string]*execution.NodeExecution{},
+	}
+	if err := store.Record(context.Background(), second); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runInDir(t, dir, "history", "deadbeef")
+	if err != nil || !strings.Contains(out, "run deadbeef not found") {
+		t.Errorf("missing run output = %q, error = %v", out, err)
+	}
+	out, err = runInDir(t, dir, "history", runID[:8])
+	if err == nil || !strings.Contains(out, "ambiguous") ||
+		!strings.Contains(out, runID) || !strings.Contains(out, second.RunID) {
+		t.Errorf("ambiguous prefix output = %q, error = %v", out, err)
+	}
+	out, err = runInDir(t, dir, "history", "1122334")
+	if err == nil || !strings.Contains(out, "at least 8") {
+		t.Errorf("short prefix output = %q, error = %v", out, err)
+	}
+}
+
+func seedHistoryRun(t *testing.T, dir string) string {
+	t.Helper()
+	store, err := history.Open(context.Background(), filepath.Join(dir, ".workflow", "gum-workflows.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	started := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	runID := "11223344-1111-4111-8111-111111111111"
+	exec := &execution.WorkflowExecution{
+		RunID: runID, ID: "execution-000007", Workflow: "history-demo", WorkflowVersion: "v1",
+		WorkflowFile: "workflow.yaml", Status: execution.StatusStopped, StoppedReason: "user_interrupt",
+		StartedAt: started, FinishedAt: started.Add(1500 * time.Millisecond),
+		Nodes: map[string]*execution.NodeExecution{
+			"worker": {
+				NodeID: "worker", NodeDefinition: "coding-agent", NodeExecutor: "v1",
+				History: []execution.NodeRun{{
+					Round: 1, Status: execution.StatusFailed, Error: "invalid response", ErrorKind: node.ErrorKindInteraction,
+					StartedAt: started, FinishedAt: started.Add(500 * time.Millisecond),
+				}},
+				Current: execution.NodeRun{
+					Round: 2, Status: execution.StatusSucceeded,
+					Inputs: map[string]execution.InputSnapshot{"advise": {
+						From: "#advise-retry",
+						Ref:  artifact.ArtifactRef{ID: "advise", Kind: "markdown", Version: "2", URI: "artifacts/advise/2.json"},
+					}},
+					Outputs: map[string]artifact.ArtifactRef{"result": {
+						ID: "result", Kind: "markdown", Version: "3", URI: "artifacts/result/3.json",
+					}},
+					StartedAt: started.Add(time.Second), FinishedAt: started.Add(1400 * time.Millisecond),
+				},
+			},
+			"review": {
+				NodeID: "review", NodeDefinition: "human-approval", NodeExecutor: "v1",
+				Current: execution.NodeRun{Status: execution.StatusPending},
+			},
+		},
+	}
+	if err := store.Record(context.Background(), exec); err != nil {
+		t.Fatal(err)
+	}
+	return runID
 }
 
 func TestRunWithHumanNodeRejectsNonTTYStdinBeforeWritingState(t *testing.T) {
