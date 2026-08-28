@@ -406,7 +406,7 @@ func (e *Engine) ready(def workflow.Definition, exec *WorkflowExecution, id stri
 
 	for name, snapshot := range snapshots {
 		previous, ok := ne.Current.Inputs[name]
-		if !ok || previous.Ref.URI != snapshot.Ref.URI {
+		if !ok || previous.Ref.URI != snapshot.Ref.URI || previous.Ref.Version != snapshot.Ref.Version {
 			ne.dirty = true
 			return true
 		}

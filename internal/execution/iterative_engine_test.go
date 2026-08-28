@@ -190,6 +190,51 @@ func TestMultipleNewInputVersionsMergeIntoOneRound(t *testing.T) {
 	}
 }
 
+func TestNewVersionOnSameURITriggersDownstream(t *testing.T) {
+	factories := []node.ExecutorFactory{
+		fnFactory{definition: "source", outputs: map[string]definition.OutputPort{"seed": {Type: "KindA"}}, create: func(node.Config) (node.Node, error) {
+			return callbackNode(func(ctx node.ExecutionContext, _ map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
+				ref, err := ctx.Store.Put(artifact.Artifact{ID: "seed", Kind: "KindA"})
+				return map[string]artifact.ArtifactRef{"seed": ref}, err
+			}), nil
+		}},
+		fnFactory{definition: "worker", inputs: map[string]definition.InputPort{
+			"seed": {Type: "KindA"}, "feedback": {Type: "KindA", Optional: true},
+		}, outputs: map[string]definition.OutputPort{"work": {Type: "KindA"}}, create: func(node.Config) (node.Node, error) {
+			return callbackNode(func(node.ExecutionContext, map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
+				return map[string]artifact.ArtifactRef{"work": {ID: "work", Kind: "KindA", URI: "workspace://work"}}, nil
+			}), nil
+		}},
+		fnFactory{definition: "feedback", inputs: map[string]definition.InputPort{"work": {Type: "KindA"}}, outputs: map[string]definition.OutputPort{"feedback": {Type: "KindA"}}, create: func(node.Config) (node.Node, error) {
+			return callbackNode(func(ctx node.ExecutionContext, _ map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
+				ref, err := ctx.Store.Put(artifact.Artifact{ID: "feedback", Kind: "KindA"})
+				return map[string]artifact.ArtifactRef{"feedback": ref}, err
+			}), nil
+		}},
+	}
+	dr, er := newTestRegistries(t, factories...)
+	def := workflow.Definition{
+		APIVersion: workflow.APIVersionV1, Kind: workflow.KindWorkflow,
+		Metadata: workflow.Metadata{Name: "same-uri"},
+		Nodes: map[string]workflow.NodeSpec{
+			"source": {Node: "source"},
+			"worker": {Node: "worker", Inputs: map[string]workflow.InputBinding{
+				"seed": {From: "source.seed"}, "feedback": {From: "feedback.feedback"},
+			}},
+			"feedback": {Node: "feedback", Inputs: map[string]workflow.InputBinding{"work": {From: "worker.work"}}},
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	exec, err := NewEngine(er, dr, artifact.NewMemStore(), nil, WithConvergenceLimit(3)).Run(ctx, def)
+	if err == nil || exec.Status != StatusFailed {
+		t.Fatalf("Run() = %s/%v, want convergence failure from same-URI versions", exec.Status, err)
+	}
+	if exec.Node("feedback").Current.Round != 3 {
+		t.Fatalf("feedback rounds = %d, want 3", exec.Node("feedback").Current.Round)
+	}
+}
+
 func TestDirtyInputQueuesWithoutConcurrentNodeRuns(t *testing.T) {
 	var active, maxActive atomic.Int32
 	put := func(ctx node.ExecutionContext, name string) (map[string]artifact.ArtifactRef, error) {
