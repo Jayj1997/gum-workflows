@@ -337,61 +337,6 @@ func TestDirtyInputQueuesWithoutConcurrentNodeRuns(t *testing.T) {
 	}
 }
 
-func TestHumanEventResetsConvergenceProtection(t *testing.T) {
-	events := make(chan struct{}, 8)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var workerRuns atomic.Int32
-
-	store := artifact.NewMemStore()
-	e := newIterativeEngine(t, store, WithConvergenceLimit(2), WithHumanEvents(events))
-	original, err := e.executors.Get("worker", "v1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = original
-
-	// Replace the worker implementation before Run; its human-event hook resets the
-	// guard after each completed rerun and cancels after five observable rounds.
-	dr := e.defs
-	er := node.NewExecutorRegistry()
-	for _, name := range []string{"source", "feedback", "leaf"} {
-		factory, getErr := e.executors.Get(name, "v1")
-		if getErr != nil {
-			t.Fatal(getErr)
-		}
-		if registerErr := er.Register(factory); registerErr != nil {
-			t.Fatal(registerErr)
-		}
-	}
-	if registerErr := er.Register(fnFactory{definition: "worker", inputs: map[string]definition.InputPort{
-		"seed": {Type: "KindA"}, "feedback": {Type: "KindA", Optional: true},
-	}, outputs: map[string]definition.OutputPort{"work": {Type: "KindA"}}, create: func(node.Config) (node.Node, error) {
-		return callbackNode(func(execCtx node.ExecutionContext, _ map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
-			round := workerRuns.Add(1)
-			if round > 1 {
-				events <- struct{}{}
-			}
-			ref, putErr := execCtx.Store.Put(artifact.Artifact{ID: "work", Kind: "KindA"})
-			if round == 5 {
-				cancel()
-			}
-			return map[string]artifact.ArtifactRef{"work": ref}, putErr
-		}), nil
-	}}); registerErr != nil {
-		t.Fatal(registerErr)
-	}
-	e = NewEngine(er, dr, store, nil, WithConvergenceLimit(2), WithHumanEvents(events))
-
-	exec, runErr := e.Run(ctx, iterativeDefinition())
-	if runErr != nil {
-		t.Fatalf("Run() unexpected error: %v", runErr)
-	}
-	if exec.Status != StatusStopped || workerRuns.Load() != 5 {
-		t.Fatalf("status/runs = %s/%d, want Stopped/5", exec.Status, workerRuns.Load())
-	}
-}
-
 func TestExecutorVersionIsFixedBeforeIterativeRoundsStart(t *testing.T) {
 	store := artifact.NewMemStore()
 	base := newIterativeEngine(t, store)

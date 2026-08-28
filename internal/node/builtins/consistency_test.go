@@ -33,7 +33,7 @@ func newBuiltins(t *testing.T) (*node.ExecutorRegistry, *definition.Registry) {
 func TestRegisterAllRegistersExecutors(t *testing.T) {
 	executors, _ := newBuiltins(t)
 
-	for _, def := range []string{"requirement-analysis", "architecture-design", "coding-agent", "openapi-generator"} {
+	for _, def := range []string{"human-input", "requirement-analysis", "architecture-design", "coding-agent", "openapi-generator"} {
 		f, err := executors.Get(def, "v1")
 		if err != nil {
 			t.Fatalf("Get(%s, v1) unexpected error: %v", def, err)

@@ -1,5 +1,7 @@
 // Package builtins 提供第一批 MVP Node 的 Executor 实现（设计文档 §3.3、§12）：
 //
+//	human-input          由 execution.HumanGateway 驱动的内置入口
+//
 //	requirement-analysis  Mock，无输入，产出 rationality + analysis-output
 //	architecture-design   Mock，analysis-output -> ArchitectureSpec
 //	coding-agent          MockCodingAgent（§33：先跑通 Runtime 再接真实 Agent）
@@ -23,6 +25,7 @@ import (
 // ExecutorRegistry 保证：重复注册报错）。
 func RegisterAll(registry *node.ExecutorRegistry) error {
 	factories := []node.ExecutorFactory{
+		humanInputExecutor{},
 		requirementExecutor{},
 		architectureExecutor{},
 		newCodingAgentExecutor(agent.NewMockCodingAgent()),
@@ -34,6 +37,23 @@ func RegisterAll(registry *node.ExecutorRegistry) error {
 		}
 	}
 	return nil
+}
+
+// ---- human-input（§7.1、§12）----
+
+type humanInputExecutor struct{}
+
+func (humanInputExecutor) Definition() string { return "human-input" }
+func (humanInputExecutor) Version() string    { return "v1" }
+
+func (humanInputExecutor) Create(node.Config) (node.Node, error) {
+	return humanInputNode{}, nil
+}
+
+type humanInputNode struct{}
+
+func (humanInputNode) Execute(node.ExecutionContext, map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
+	return nil, fmt.Errorf("human-input must be executed through the execution human gateway")
 }
 
 // ---- requirement-analysis（§12）----

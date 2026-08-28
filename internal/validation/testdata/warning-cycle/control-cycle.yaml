@@ -10,6 +10,9 @@ projects:
 
 # 无 human 节点的 control 环：警告可能死循环（收敛保护兜底），不是错误。
 nodes:
+  input:
+    node: human-input
+
   build:
     node: cd
     dependsOn:

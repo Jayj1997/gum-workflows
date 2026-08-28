@@ -1,0 +1,17 @@
+apiVersion: workflow/v1
+kind: workflow
+
+metadata:
+  name: invalid-entry-no-source
+
+projects:
+  - name: order-system
+    repository: ../examples/order-system
+
+nodes:
+  build:
+    node: cd
+    dependsOn: [deploy]
+  deploy:
+    node: cd
+    dependsOn: [build]

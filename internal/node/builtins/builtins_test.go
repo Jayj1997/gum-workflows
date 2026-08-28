@@ -38,7 +38,7 @@ func newExecCtx(t *testing.T, ws string) node.ExecutionContext {
 func TestRegisterAllRegistersMVPNodeTypes(t *testing.T) {
 	reg := executorsWithBuiltins(t)
 
-	for _, def := range []string{"requirement-analysis", "architecture-design", "coding-agent", "openapi-generator"} {
+	for _, def := range []string{"human-input", "requirement-analysis", "architecture-design", "coding-agent", "openapi-generator"} {
 		if _, err := reg.Get(def, "v1"); err != nil {
 			t.Errorf("executor (%s, v1) not registered: %v", def, err)
 		}

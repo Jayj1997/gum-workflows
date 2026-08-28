@@ -1,0 +1,15 @@
+apiVersion: workflow/v1
+kind: workflow
+
+metadata:
+  name: invalid-entry-multiple-sources
+
+projects:
+  - name: order-system
+    repository: ../examples/order-system
+
+nodes:
+  input:
+    node: human-input
+  build:
+    node: cd

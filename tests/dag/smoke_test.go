@@ -64,10 +64,15 @@ func (n fakeNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.
 	return nil, nil
 }
 
-// chainFactories 是最小 human-free 链（coder -> sdk）冒烟场景所需的
+// chainFactories 是最小人工入口链（input -> coder -> sdk）冒烟场景所需的
 // Node 定义与契约，外加 control-edge 场景的 human-approval 与 cd。
 func chainFactories() []node.ExecutorFactory {
 	return []node.ExecutorFactory{
+		fakeFactory{
+			definition: "human-input",
+			nodeType:   definition.TypeHuman,
+			outputs:    map[string]definition.OutputPort{"requirement": {Type: "markdown"}},
+		},
 		fakeFactory{
 			definition: "coding-agent",
 			inputs: map[string]definition.InputPort{
@@ -327,7 +332,7 @@ func sortedNodeIDs(def workflow.Definition) []string {
 // ---- 冒烟场景 ----
 
 // TestSmokeChainDataDriven（计划 Case 1/3 + §10）：
-// 无任何 dependsOn 的最小 human-free 链仅靠数据依赖即可完整执行，
+// 最小人工入口链可完整执行，数据依赖仍负责 Artifact 传递，
 // 每个 Node 执行时其输入 Artifact 全部就绪、Kind 匹配。
 func TestSmokeChainDataDriven(t *testing.T) {
 	path := filepath.Join("..", "..", "internal", "validation", "testdata", "valid", "minimal.yaml")
@@ -349,15 +354,15 @@ func TestSmokeChainDataDriven(t *testing.T) {
 	}
 	res := simulate(t, def, contractsFor(t, defs, def))
 
-	wantOrder := []string{"coder", "sdk"}
+	wantOrder := []string{"input", "coder", "sdk"}
 	if !reflect.DeepEqual(res.order, wantOrder) {
 		t.Fatalf("execution order = %v, want %v", res.order, wantOrder)
 	}
 
 	// 每个声明 Output 都产出了 Artifact（Mock 行为）：
-	// coder 2 个（source-code + openapi）、sdk 1 个（frontend-sdk），共 3 个。
-	if len(res.artifacts) != 3 {
-		t.Fatalf("produced %d artifacts, want 3", len(res.artifacts))
+	// input 1 个、coder 2 个、sdk 1 个，共 4 个。
+	if len(res.artifacts) != 4 {
+		t.Fatalf("produced %d artifacts, want 4", len(res.artifacts))
 	}
 
 	// 输入数量：sdk 消费 1 个 Artifact。
@@ -423,7 +428,8 @@ func TestSmokeParallelReadiness(t *testing.T) {
 		Metadata:   workflow.Metadata{Name: "diamond"},
 		Projects:   []workflow.ProjectSpec{{Name: "p", Repository: "./examples/order-system"}},
 		Nodes: map[string]workflow.NodeSpec{
-			"a": {Node: "coding-agent"},
+			"input": {Node: "human-input"},
+			"a":     {Node: "coding-agent", DependsOn: []string{"input"}},
 			"b": {
 				Node:   "coding-agent",
 				Inputs: map[string]workflow.InputBinding{"openapi": {From: "a.openapi"}},
@@ -457,9 +463,9 @@ func TestSmokeParallelReadiness(t *testing.T) {
 		t.Errorf("d inputs = %d, want 2 (d waits for both b and c)", res.inputCount["d"])
 	}
 
-	// A 必须最先执行，D 必须最后执行。
-	if res.order[0] != "a" {
-		t.Errorf("first executed = %q, want %q", res.order[0], "a")
+	// human-input 必须最先执行，随后 A 启动菱形；D 必须最后执行。
+	if res.order[0] != "input" || res.order[1] != "a" {
+		t.Errorf("first executions = %v, want [input a]", res.order[:2])
 	}
 	if res.order[len(res.order)-1] != "d" {
 		t.Errorf("last executed = %q, want %q", res.order[len(res.order)-1], "d")

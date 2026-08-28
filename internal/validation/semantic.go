@@ -16,7 +16,7 @@ import (
 
 // SemanticValidator 是两层校验的第二层（设计计划 §23）：
 // 在 CUE 结构校验通过后，结合定义 Registry 与 Executor Registry 检查语义，
-// 检查项按设计文档 §10 清单（入口规则除外，随票 09 落地）。
+// 检查项按设计文档 §10 清单。
 // 契约（inputs/outputs）唯一来源是 Node Definition YAML（设计文档 §6.9）。
 //
 // 两项可选注入（Option）：
@@ -118,12 +118,42 @@ func (v *SemanticValidator) Validate(def workflow.Definition) ([]Warning, error)
 	v.checkContractKinds(def, &errs)
 	v.checkInputs(def, &errs)
 	v.checkDependsOn(def, &errs)
+	v.checkEntry(def, &errs)
 	v.checkHumanControlEdge(def, &errs)
 	v.checkLLM(def, &errs)
 	v.checkProjects(def, &errs)
 	warns = append(warns, v.checkCycle(def)...)
 
 	return warns, errs.OrNil()
+}
+
+// checkEntry enforces the single human source that starts every workflow.
+// A source has neither data inputs nor control dependencies.
+func (v *SemanticValidator) checkEntry(def workflow.Definition, errs *ValidationErrors) {
+	var sources []string
+	for _, id := range sortedKeys(def.Nodes) {
+		spec := def.Nodes[id]
+		if len(spec.Inputs) == 0 && len(spec.DependsOn) == 0 {
+			sources = append(sources, id)
+		}
+	}
+	if len(sources) != 1 {
+		*errs = append(*errs, fmt.Errorf(
+			"workflow entry: expected exactly 1 source node, got %d (%s)",
+			len(sources), strings.Join(sources, ", ")))
+		return
+	}
+
+	id := sources[0]
+	d, err := v.defs.Definition(def.Nodes[id].Node)
+	if err != nil {
+		return // Unknown definitions are reported before contract checks.
+	}
+	if d.Type != definition.TypeHuman {
+		*errs = append(*errs, fmt.Errorf(
+			"workflow entry: source node %q must have type human: field node references definition %q with type %q",
+			id, def.Nodes[id].Node, d.Type))
+	}
 }
 
 // checkContractKinds 检查各 Node 契约引用的 Artifact Kind 是否已登记

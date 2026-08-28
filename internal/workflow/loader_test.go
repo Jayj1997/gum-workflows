@@ -26,8 +26,8 @@ func TestLoadValid(t *testing.T) {
 	if def.Projects[0].Name != "order-system" || def.Projects[0].Repository != "./examples/order-system" {
 		t.Errorf("Projects[0] = %+v", def.Projects[0])
 	}
-	if len(def.Nodes) != 2 {
-		t.Fatalf("len(Nodes) = %d, want 2", len(def.Nodes))
+	if len(def.Nodes) != 4 {
+		t.Fatalf("len(Nodes) = %d, want 4", len(def.Nodes))
 	}
 
 	coder := def.Nodes["coder"]

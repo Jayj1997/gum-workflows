@@ -74,6 +74,7 @@ type NodeExecution struct {
 	machineRuns     int
 	consumedControl map[string]int
 	outputVersions  map[string]int
+	humanClosed     bool
 }
 
 // TransitionTo moves the current round to next when the state machine permits it.

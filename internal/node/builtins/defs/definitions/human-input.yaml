@@ -1,0 +1,12 @@
+apiVersion: nodeDefinition/v1
+kind: nodeDefinition
+metadata:
+  name: human-input
+  description: 接收一轮人工需求，作为 Workflow 的唯一入口。
+type: human
+requires: []
+inputs: {}
+outputs:
+  requirement:
+    type: markdown
+    description: 本轮人工输入的需求文本。

@@ -9,6 +9,9 @@ projects:
     repository: ../examples/order-system
 
 nodes:
+  input:
+    node: human-input
+
   backend:
     node: coding-agent
 

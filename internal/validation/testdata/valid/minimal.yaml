@@ -11,8 +11,12 @@ projects:
 
 nodes:
 
+  input:
+    node: human-input
+
   coder:
     node: coding-agent
+    dependsOn: [input]
 
   sdk:
     node: openapi-generator

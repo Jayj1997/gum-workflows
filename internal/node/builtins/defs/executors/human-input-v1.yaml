@@ -1,0 +1,8 @@
+apiVersion: nodeExecutor/v1
+kind: nodeExecutor
+metadata:
+  name: human-input-v1
+  description: human-input 首个执行器，由 HumanGateway 提供人工输入。
+node: human-input
+version: v1
+updates: 首个版本：多行需求输入与 Continue/Finish。

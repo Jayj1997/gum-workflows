@@ -4,7 +4,7 @@ kind: workflow
 metadata:
   name: minimal-development
   version: "1.0"
-  description: 最小 human-free 临时示例：coding-agent 全 optional 输入当源节点 -> openapi-generator。
+  description: 最小人工入口示例：需求输入后依次分析、编码并生成 SDK。
 
 projects:
   - name: order-system
@@ -12,8 +12,21 @@ projects:
 
 nodes:
 
+  input:
+    node: human-input
+
+  analysis:
+    node: requirement-analysis
+    inputs:
+      requirement:
+        from: input.requirement
+
   coder:
     node: coding-agent
+
+    inputs:
+      analysis-output:
+        from: analysis.analysis-output
 
     metadata:
       name: 编码

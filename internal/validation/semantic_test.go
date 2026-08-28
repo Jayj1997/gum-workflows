@@ -54,6 +54,11 @@ func (n fakeNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.
 func testFactories() []fakeFactory {
 	return []fakeFactory{
 		{
+			definition: "human-input",
+			nodeType:   definition.TypeHuman,
+			outputs:    map[string]definition.OutputPort{"requirement": {Type: "markdown"}},
+		},
+		{
 			definition: "requirement-analysis",
 			inputs:     map[string]definition.InputPort{"requirement": {Type: "markdown"}},
 			outputs: map[string]definition.OutputPort{
@@ -221,6 +226,25 @@ func TestSemanticValidUnionPort(t *testing.T) {
 	}
 }
 
+func TestSemanticEntryRuleFixtures(t *testing.T) {
+	tests := []struct {
+		fixture string
+		wantErr string
+	}{
+		{fixture: "no-source.yaml", wantErr: "workflow entry: expected exactly 1 source node, got 0"},
+		{fixture: "multiple-sources.yaml", wantErr: "workflow entry: expected exactly 1 source node, got 2"},
+		{fixture: "source-not-human.yaml", wantErr: `workflow entry: source node "build" must have type human`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.fixture, func(t *testing.T) {
+			_, err := validateFixture(t, filepath.Join("testdata", "invalid-entry", tt.fixture))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestSemanticInvalidFixtures(t *testing.T) {
 	tests := []struct {
 		fixture string
@@ -341,7 +365,8 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 		Metadata:   workflow.Metadata{Name: "test"},
 		Projects:   []workflow.ProjectSpec{{Name: "p", Repository: "./examples/order-system"}},
 		Nodes: map[string]workflow.NodeSpec{
-			"requirement": {Node: "requirement-analysis"},
+			"input":       {Node: "human-input"},
+			"requirement": {Node: "requirement-analysis", DependsOn: []string{"input"}},
 		},
 	}
 
@@ -421,10 +446,9 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 	t.Run("llm absent without agent nodes is fine", func(t *testing.T) {
 		def := base
 		def.Nodes = map[string]workflow.NodeSpec{
-			"sdk": {Node: "openapi-generator"},
+			"input":  {Node: "human-input"},
+			"deploy": {Node: "cd", DependsOn: []string{"input"}},
 		}
-		// openapi-generator 有必填输入，改用无输入的 cd（automation）。
-		def.Nodes = map[string]workflow.NodeSpec{"deploy": {Node: "cd"}}
 		_, err := testValidator(t).Validate(def)
 		if err != nil {
 			t.Fatalf("Validate() unexpected error: %v", err)
@@ -446,7 +470,10 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 			t.Fatalf("load test llm config: %v", err)
 		}
 		def := base
-		def.Nodes = map[string]workflow.NodeSpec{"coder": {Node: "coding-agent"}}
+		def.Nodes = map[string]workflow.NodeSpec{
+			"input": {Node: "human-input"},
+			"coder": {Node: "coding-agent", DependsOn: []string{"input"}},
+		}
 		if _, err := testValidator(t, WithLLMConfig(&c)).Validate(def); err != nil {
 			t.Fatalf("Validate() unexpected error: %v", err)
 		}
@@ -456,7 +483,10 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 		// 未注入 WithWorkflowFile 时跳过路径检查（内存形态无锚点），
 		// 数量检查仍然生效。
 		def := base
-		def.Nodes = map[string]workflow.NodeSpec{"deploy": {Node: "cd"}}
+		def.Nodes = map[string]workflow.NodeSpec{
+			"input":  {Node: "human-input"},
+			"deploy": {Node: "cd", DependsOn: []string{"input"}},
+		}
 		def.Projects = nil
 		_, err := testValidator(t).Validate(def)
 		if err == nil || !strings.Contains(err.Error(), "projects: must contain exactly 1 entry, got 0") {

@@ -23,16 +23,6 @@ const defaultConvergenceLimit = 10
 
 var executionSeq atomic.Int64
 
-// HumanGateway exposes human events to the engine. Tickets 09 and 10 replace
-// the no-op implementation with input and approval gateways.
-type HumanGateway interface {
-	HumanEvents() <-chan struct{}
-}
-
-type noHumanGateway struct{}
-
-func (noHumanGateway) HumanEvents() <-chan struct{} { return nil }
-
 // Option configures optional engine behavior.
 type Option func(*Engine)
 
@@ -68,20 +58,13 @@ func WithConvergenceLimit(limit int) Option {
 	}
 }
 
-// WithHumanEvents injects notifications that reset all convergence counters.
-// Human nodes replace this temporary ticket-08 hook in tickets 09 and 10.
-func WithHumanEvents(events <-chan struct{}) Option {
-	return func(e *Engine) { e.humanEvents = events }
-}
-
-// WithHumanGateway reserves the injected gateway used by later human-node tickets.
+// WithHumanGateway injects the blocking human interaction adapter.
 func WithHumanGateway(gateway HumanGateway) Option {
 	return func(e *Engine) {
 		if gateway == nil {
 			gateway = noHumanGateway{}
 		}
 		e.humanGateway = gateway
-		e.humanEvents = gateway.HumanEvents()
 	}
 }
 
@@ -100,7 +83,6 @@ type Engine struct {
 	projectCtx       *project.Context
 	executionID      string
 	workflowFile     string
-	humanEvents      <-chan struct{}
 	humanGateway     HumanGateway
 	onIdle           func()
 }
@@ -122,9 +104,11 @@ func NewEngine(executors *node.ExecutorRegistry, defs *definition.Registry, stor
 }
 
 type nodeResult struct {
-	id      string
-	outputs map[string]artifact.ArtifactRef
-	err     error
+	id              string
+	outputs         map[string]artifact.ArtifactRef
+	err             error
+	humanEvent      bool
+	closeHumanInput bool
 }
 
 // Run keeps a settled workflow Running at an idle wait point. Context cancellation
@@ -171,7 +155,6 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 		if ctx.Err() != nil {
 			stopping = true
 		}
-		e.consumeHumanEvents(exec)
 		if !stopping {
 			for _, id := range g.NodeIDs {
 				if !queued[id] && e.ready(def, exec, id) {
@@ -192,7 +175,10 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				queued[id] = false
 				inputs := e.resolveInputs(def, exec, id)
 				ne := exec.Nodes[id]
-				ne.machineRuns++
+				humanInput := e.isHumanInput(def, id)
+				if !humanInput {
+					ne.machineRuns++
+				}
 				if err := ne.StartRun(uuid.NewString(), inputs); err != nil {
 					return e.fail(exec, fmt.Errorf("node %q: %w", id, err))
 				}
@@ -201,7 +187,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				}
 				ne.dirty = false
 
-				if ne.machineRuns > e.convergenceLimit {
+				if !humanInput && ne.machineRuns > e.convergenceLimit {
 					ne.Current.Error = "convergence-guard"
 					ne.Current.ErrorKind = "structural"
 					ne.Current.FinishedAt = time.Now().UTC()
@@ -216,7 +202,11 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 
 				e.persist(exec)
 				inflight++
-				go e.executeNode(execCtx, def, nodes[id], id, inputs, results)
+				if humanInput {
+					go e.executeHumanInput(execCtx, id, results)
+				} else {
+					go e.executeNode(execCtx, def, nodes[id], id, inputs, results)
+				}
 			}
 		}
 
@@ -234,18 +224,17 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				exec.Error = err.Error()
 				continue
 			}
+			if id := e.nextHumanInput(def, exec); id != "" {
+				ready = append(ready, id)
+				queued[id] = true
+				continue
+			}
 			if e.onIdle != nil {
 				e.onIdle()
 			}
 			select {
 			case <-ctx.Done():
 				stopping = true
-			case _, ok := <-e.humanEvents:
-				if ok {
-					e.resetConvergence(exec)
-				} else {
-					e.humanEvents = nil
-				}
 			}
 			continue
 		}
@@ -253,6 +242,10 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 		select {
 		case result := <-results:
 			inflight--
+			if result.humanEvent {
+				e.resetConvergence(exec)
+				exec.Nodes[result.id].humanClosed = result.closeHumanInput
+			}
 			if result.err != nil && ctx.Err() != nil && (errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded)) {
 				e.finishCanceledNode(exec, result)
 			} else if err := e.finishNode(exec, result); err != nil && runErr == nil {
@@ -264,12 +257,6 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 			e.persist(exec)
 		case <-ctx.Done():
 			stopping = true
-		case _, ok := <-e.humanEvents:
-			if ok {
-				e.resetConvergence(exec)
-			} else {
-				e.humanEvents = nil
-			}
 		}
 	}
 
@@ -283,6 +270,32 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 	exec.StoppedReason = "user_interrupt"
 	e.persist(exec)
 	return exec, nil
+}
+
+func (e *Engine) executeHumanInput(execCtx node.ExecutionContext, id string, results chan<- nodeResult) {
+	response, err := e.humanGateway.RequestRound(execCtx.Context, RoundRequest{
+		NodeID: id, Definition: "human-input", Kind: RoundRequestInput,
+	})
+	if err != nil {
+		results <- nodeResult{id: id, err: err}
+		return
+	}
+	ref, err := e.store.Put(artifact.Artifact{
+		ID: id + "-requirement", Kind: artifact.Kind("markdown"), Data: response.Content,
+	})
+	if err != nil {
+		results <- nodeResult{id: id, err: fmt.Errorf("store human input: %w", err)}
+		return
+	}
+	outputs := map[string]artifact.ArtifactRef{"requirement": ref}
+	if err := e.validateOutputs("human-input", id, outputs); err != nil {
+		results <- nodeResult{id: id, err: err}
+		return
+	}
+	results <- nodeResult{
+		id: id, outputs: outputs,
+		humanEvent: true, closeHumanInput: response.Finished,
+	}
 }
 
 func (e *Engine) blockedInputError(def workflow.Definition, exec *WorkflowExecution) error {
@@ -409,6 +422,9 @@ func (e *Engine) ready(def workflow.Definition, exec *WorkflowExecution, id stri
 	if status == StatusPending {
 		return true
 	}
+	if e.isHumanInput(def, id) {
+		return false // Further rounds are requested only after the downstream graph settles.
+	}
 
 	for name, snapshot := range snapshots {
 		previous, ok := ne.Current.Inputs[name]
@@ -423,6 +439,29 @@ func (e *Engine) ready(def workflow.Definition, exec *WorkflowExecution, id stri
 		}
 	}
 	return ne.dirty
+}
+
+func (e *Engine) isHumanInput(def workflow.Definition, id string) bool {
+	return def.Nodes[id].Node == "human-input"
+}
+
+func (e *Engine) nextHumanInput(def workflow.Definition, exec *WorkflowExecution) string {
+	for _, id := range sortedNodeIDs(def.Nodes) {
+		ne := exec.Nodes[id]
+		if e.isHumanInput(def, id) && ne.Current.Status == StatusSucceeded && !ne.humanClosed {
+			return id
+		}
+	}
+	return ""
+}
+
+func sortedNodeIDs(nodes map[string]workflow.NodeSpec) []string {
+	ids := make([]string, 0, len(nodes))
+	for id := range nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func (e *Engine) resolveInputs(def workflow.Definition, exec *WorkflowExecution, id string) map[string]InputSnapshot {
@@ -467,21 +506,6 @@ func latestCompletedRound(ne *NodeExecution) int {
 func (e *Engine) resetConvergence(exec *WorkflowExecution) {
 	for _, ne := range exec.Nodes {
 		ne.machineRuns = 0
-	}
-}
-
-func (e *Engine) consumeHumanEvents(exec *WorkflowExecution) {
-	for e.humanEvents != nil {
-		select {
-		case _, ok := <-e.humanEvents:
-			if !ok {
-				e.humanEvents = nil
-				return
-			}
-			e.resetConvergence(exec)
-		default:
-			return
-		}
 	}
 }
 

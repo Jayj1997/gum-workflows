@@ -11,8 +11,21 @@ projects:
 
 nodes:
 
+  input:
+    node: human-input
+
+  analysis:
+    node: requirement-analysis
+    inputs:
+      requirement:
+        from: input.requirement
+
   coder:
     node: coding-agent
+
+    inputs:
+      analysis-output:
+        from: analysis.analysis-output
 
     config:
       task: 实现 order-system：产出源码与 OpenAPI 文档

@@ -11,8 +11,12 @@ projects:
 # union 消费端（markdown|OpenAPI）接受 OpenAPI 生产者：
 # consumer ⊇ producer 的正向兼容（设计文档 §4：要宽就显式写 union）。
 nodes:
+  input:
+    node: human-input
+
   coder:
     node: coding-agent
+    dependsOn: [input]
 
   writer:
     node: doc-writer

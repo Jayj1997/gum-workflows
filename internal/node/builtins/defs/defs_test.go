@@ -40,7 +40,7 @@ func TestSeedsNodeTypesExactlyThree(t *testing.T) {
 	}
 }
 
-// TestSeedsDefinitions 验收项：四个既有节点按设计文档 §12 定稿契约，
+// TestSeedsDefinitions 验收项：已落地节点按设计文档 §12 定稿契约，
 // 各有 v1 执行器，Latest 可查。
 func TestSeedsDefinitions(t *testing.T) {
 	r, err := NewRegistry()
@@ -48,7 +48,7 @@ func TestSeedsDefinitions(t *testing.T) {
 		t.Fatalf("NewRegistry() unexpected error: %v", err)
 	}
 
-	want := []string{"architecture-design", "coding-agent", "openapi-generator", "requirement-analysis"}
+	want := []string{"architecture-design", "coding-agent", "human-input", "openapi-generator", "requirement-analysis"}
 	if got := r.DefinitionNames(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("DefinitionNames() = %v, want %v", got, want)
 	}
@@ -95,6 +95,14 @@ func TestSeedsContracts(t *testing.T) {
 		t.Errorf("requirement-analysis analysis-output type = %q, want markdown", got)
 	}
 
+	hi, _ := r.Definition("human-input")
+	if len(hi.Inputs) != 0 {
+		t.Errorf("human-input inputs = %+v, want none", hi.Inputs)
+	}
+	if got := hi.Outputs["requirement"].Type; got != "markdown" {
+		t.Errorf("human-input requirement type = %q, want markdown", got)
+	}
+
 	ad, _ := r.Definition("architecture-design")
 	assertPort(t, ad.Inputs, "architecture-design", "analysis-output", "markdown", false)
 	if got := ad.Outputs["architecture"].Type; got != "ArchitectureSpec" {
@@ -132,6 +140,7 @@ func TestSeedsTypeClassification(t *testing.T) {
 	}
 
 	wantType := map[string]definition.NodeType{
+		"human-input":          definition.TypeHuman,
 		"requirement-analysis": definition.TypeAgent,
 		"architecture-design":  definition.TypeAgent,
 		"coding-agent":         definition.TypeAgent,

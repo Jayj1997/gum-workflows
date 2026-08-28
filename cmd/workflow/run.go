@@ -10,8 +10,11 @@ import (
 	"syscall"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
+	"github.com/Jayj1997/gum-workflows/internal/definition"
 	"github.com/Jayj1997/gum-workflows/internal/execution"
 	"github.com/Jayj1997/gum-workflows/internal/project"
+	"github.com/Jayj1997/gum-workflows/internal/workflow"
+	"github.com/mattn/go-isatty"
 )
 
 // runCmd 执行 workflow run <file>（设计计划 §16：不接受业务参数）。
@@ -28,6 +31,9 @@ func runCmd(path string) error {
 		return err
 	}
 	printWarnings(warnings)
+	if containsHumanNode(def, defsRegistry) && !stdinIsTerminal(os.Stdin) {
+		return fmt.Errorf("workflow contains human nodes and requires an interactive terminal on stdin")
+	}
 
 	def, err = pinAndImportDefinitions(ctx, def, executors, defsRegistry, llmConfig)
 	if err != nil {
@@ -82,11 +88,29 @@ func runCmd(path string) error {
 		execution.WithProjectContext(wsCtx),
 		execution.WithExecutionID(executionID),
 		execution.WithWorkflowFile(path),
+		execution.WithHumanGateway(newStdinHumanGateway(os.Stdin, os.Stdout)),
 	)
 	exec, runErr := engine.Run(ctx, def)
 
 	printExecutionSummary(exec)
 	return runErr
+}
+
+func containsHumanNode(def workflow.Definition, defs *definition.Registry) bool {
+	for _, spec := range def.Nodes {
+		d, err := defs.Definition(spec.Node)
+		if err == nil && d.Type == definition.TypeHuman {
+			return true
+		}
+	}
+	return false
+}
+
+// The standard library does not expose a portable terminal ioctl check;
+// isatty covers Unix terminals and Windows Cygwin/MSYS terminals.
+func stdinIsTerminal(file *os.File) bool {
+	fd := file.Fd()
+	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
 }
 
 // printExecutionSummary 输出执行摘要（计划 §42 的验收形态）。

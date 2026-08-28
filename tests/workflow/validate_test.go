@@ -40,13 +40,13 @@ func loadValidatedWorkflow(t *testing.T) workflow.Definition {
 func TestValidatePipelineOnValidWorkflow(t *testing.T) {
 	def := loadValidatedWorkflow(t)
 
-	// 数据依赖应能完整构建 DAG：coder 是唯一源节点。
+	// 数据依赖应能完整构建 DAG：human-input 是唯一源节点。
 	g, err := workflow.BuildGraph(def)
 	if err != nil {
 		t.Fatalf("BuildGraph() unexpected error: %v", err)
 	}
-	if roots := g.Roots(); len(roots) != 1 || roots[0] != "coder" {
-		t.Errorf("Roots() = %v, want [coder]", roots)
+	if roots := g.Roots(); len(roots) != 1 || roots[0] != "input" {
+		t.Errorf("Roots() = %v, want [input]", roots)
 	}
 	if cycle := g.Cycle(); cycle != nil {
 		t.Errorf("Cycle() = %v, want nil", cycle)
@@ -66,7 +66,9 @@ func TestDAGBuilderMinimalChain(t *testing.T) {
 
 	// 期望的完整边集（字典序）：全部为 Data Edge，无一条 Control Edge（计划 §10 的核心主张）。
 	want := []workflow.Edge{
+		{From: "analysis", To: "coder", Type: workflow.DataEdge},
 		{From: "coder", To: "sdk", Type: workflow.DataEdge},
+		{From: "input", To: "analysis", Type: workflow.DataEdge},
 	}
 
 	got := append([]workflow.Edge(nil), g.Edges...)
@@ -86,8 +88,8 @@ func TestDAGBuilderMinimalChain(t *testing.T) {
 		}
 	}
 
-	if roots := g.Roots(); !reflect.DeepEqual(roots, []string{"coder"}) {
-		t.Errorf("Roots() = %v, want [coder]", roots)
+	if roots := g.Roots(); !reflect.DeepEqual(roots, []string{"input"}) {
+		t.Errorf("Roots() = %v, want [input]", roots)
 	}
 	if cycle := g.Cycle(); cycle != nil {
 		t.Errorf("Cycle() = %v, want nil", cycle)

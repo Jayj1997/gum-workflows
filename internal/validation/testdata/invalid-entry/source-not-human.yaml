@@ -1,0 +1,13 @@
+apiVersion: workflow/v1
+kind: workflow
+
+metadata:
+  name: invalid-entry-source-not-human
+
+projects:
+  - name: order-system
+    repository: ../examples/order-system
+
+nodes:
+  build:
+    node: cd
