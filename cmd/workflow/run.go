@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
 	"github.com/Jayj1997/gum-workflows/internal/definition"
 	"github.com/Jayj1997/gum-workflows/internal/execution"
+	"github.com/Jayj1997/gum-workflows/internal/history"
 	"github.com/Jayj1997/gum-workflows/internal/project"
 	"github.com/Jayj1997/gum-workflows/internal/workflow"
 	"github.com/mattn/go-isatty"
@@ -42,6 +44,14 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 	def, err = pinAndImportDefinitions(ctx, def, executors, defsRegistry, llmConfig)
 	if err != nil {
 		return err
+	}
+	var runRecorder execution.RunRecorder
+	historyStore, historyErr := history.Open(ctx, history.DefaultDBPath)
+	if historyErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: run history disabled: %v\n", historyErr)
+	} else {
+		defer historyStore.Close()
+		runRecorder = historyStore
 	}
 
 	// ③ Project Runtime：解析 projects[0] 声明并创建本次 Execution 的 Workspace。
@@ -93,6 +103,7 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 		execution.WithExecutionID(executionID),
 		execution.WithWorkflowFile(path),
 		execution.WithHumanGateway(gateway),
+		execution.WithRunRecorder(runRecorder),
 	)
 	exec, runErr := engine.Run(ctx, def)
 
@@ -119,10 +130,14 @@ func stdinIsTerminal(file *os.File) bool {
 
 // printExecutionSummary 输出执行摘要（计划 §42 的验收形态）。
 func printExecutionSummary(exec *execution.WorkflowExecution) {
+	printExecutionSummaryTo(os.Stdout, exec)
+}
+
+func printExecutionSummaryTo(out io.Writer, exec *execution.WorkflowExecution) {
 	if exec == nil {
 		return
 	}
-	fmt.Printf("\nWorkflow %s %s (%s)\n", exec.Workflow, exec.Status, exec.ID)
+	fmt.Fprintf(out, "\nWorkflow %s %s (%s)\n", exec.Workflow, exec.Status, exec.ID)
 
 	ids := make([]string, 0, len(exec.Nodes))
 	for id := range exec.Nodes {
@@ -130,17 +145,21 @@ func printExecutionSummary(exec *execution.WorkflowExecution) {
 	}
 	sort.Strings(ids)
 
-	fmt.Println("Nodes:")
+	fmt.Fprintln(out, "Nodes:")
 	for _, id := range ids {
 		ne := exec.Nodes[id]
 		line := fmt.Sprintf("  %-13s %-9s %s", id, ne.Current.Status, ne.NodeDefinition)
+		line += fmt.Sprintf("  rounds: %d", ne.Current.Round)
+		if ne.Current.ErrorKind != "" {
+			line += "  error_kind: " + string(ne.Current.ErrorKind)
+		}
 		if ne.Current.Error != "" {
 			line += "  error: " + ne.Current.Error
 		}
-		fmt.Println(line)
+		fmt.Fprintln(out, line)
 	}
 
-	fmt.Println("Artifacts:")
+	fmt.Fprintln(out, "Artifacts:")
 	for _, id := range ids {
 		ne := exec.Nodes[id]
 		names := make([]string, 0, len(ne.Current.Outputs))
@@ -150,7 +169,7 @@ func printExecutionSummary(exec *execution.WorkflowExecution) {
 		sort.Strings(names)
 		for _, name := range names {
 			ref := ne.Current.Outputs[name]
-			fmt.Printf("  %-13s %-14s %s\n", id, name, ref.Kind)
+			fmt.Fprintf(out, "  %-13s %-14s %s\n", id, name, ref.Kind)
 		}
 	}
 }

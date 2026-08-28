@@ -71,6 +71,7 @@ type NodeRun struct {
 type NodeExecution struct {
 	NodeID         string    `json:"node_id"`
 	NodeDefinition string    `json:"node_definition"`
+	NodeExecutor   string    `json:"node_executor"`
 	Current        NodeRun   `json:"current"`
 	History        []NodeRun `json:"history,omitempty"`
 
@@ -112,6 +113,9 @@ func (n *NodeExecution) startRun(runID string, inputs map[string]InputSnapshot, 
 		if n.Current.Status != StatusReady {
 			return fmt.Errorf("node execution %q: start run from %s", n.NodeID, n.Current.Status)
 		}
+		if n.Current.RunID != "" {
+			runID = n.Current.RunID
+		}
 	} else {
 		previous := n.Current
 		if err := n.TransitionTo(StatusReady); err != nil {
@@ -132,16 +136,17 @@ func (n *NodeExecution) startRun(runID string, inputs map[string]InputSnapshot, 
 
 // WorkflowExecution is one independent run of a workflow definition.
 type WorkflowExecution struct {
-	ID            string                    `json:"id"`
-	RunID         string                    `json:"run_id"`
-	Workflow      string                    `json:"workflow"`
-	WorkflowFile  string                    `json:"workflow_file,omitempty"`
-	Status        Status                    `json:"status"`
-	StoppedReason string                    `json:"stopped_reason,omitempty"`
-	Error         string                    `json:"error,omitempty"`
-	StartedAt     time.Time                 `json:"started_at"`
-	FinishedAt    time.Time                 `json:"finished_at,omitempty"`
-	Nodes         map[string]*NodeExecution `json:"nodes"`
+	ID              string                    `json:"id"`
+	RunID           string                    `json:"run_id"`
+	Workflow        string                    `json:"workflow"`
+	WorkflowVersion string                    `json:"workflow_version,omitempty"`
+	WorkflowFile    string                    `json:"workflow_file,omitempty"`
+	Status          Status                    `json:"status"`
+	StoppedReason   string                    `json:"stopped_reason,omitempty"`
+	Error           string                    `json:"error,omitempty"`
+	StartedAt       time.Time                 `json:"started_at"`
+	FinishedAt      time.Time                 `json:"finished_at,omitempty"`
+	Nodes           map[string]*NodeExecution `json:"nodes"`
 }
 
 // Node returns a node execution by workflow node ID.

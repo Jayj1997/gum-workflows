@@ -71,6 +71,16 @@ func WithHumanGateway(gateway HumanGateway) Option {
 // WithWorkflowFile records the source workflow path in state snapshots.
 func WithWorkflowFile(path string) Option { return func(e *Engine) { e.workflowFile = path } }
 
+// RunRecorder receives full execution snapshots for durable history indexing.
+type RunRecorder interface {
+	Record(exec *WorkflowExecution) error
+}
+
+// WithRunRecorder records execution snapshots at the same points as state persistence.
+func WithRunRecorder(recorder RunRecorder) Option {
+	return func(e *Engine) { e.runRecorder = recorder }
+}
+
 // Engine schedules version-driven node rounds until failure or context cancellation.
 type Engine struct {
 	executors        *node.ExecutorRegistry
@@ -84,6 +94,7 @@ type Engine struct {
 	executionID      string
 	workflowFile     string
 	humanGateway     HumanGateway
+	runRecorder      RunRecorder
 	onIdle           func()
 }
 
@@ -120,7 +131,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 	if err != nil {
 		return nil, fmt.Errorf("build graph: %w", err)
 	}
-	nodes, err := e.instantiate(def)
+	nodes, executorVersions, err := e.instantiate(def)
 	if err != nil {
 		return nil, err
 	}
@@ -130,13 +141,13 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 		execID = fmt.Sprintf("execution-%06d", executionSeq.Add(1))
 	}
 	exec := &WorkflowExecution{
-		ID: execID, RunID: uuid.NewString(), Workflow: def.Metadata.Name,
+		ID: execID, Workflow: def.Metadata.Name, WorkflowVersion: def.Metadata.Version,
 		WorkflowFile: e.workflowFile, Status: StatusRunning, StartedAt: time.Now().UTC(),
 		Nodes: make(map[string]*NodeExecution, len(g.NodeIDs)),
 	}
 	for _, id := range g.NodeIDs {
 		exec.Nodes[id] = &NodeExecution{
-			NodeID: id, NodeDefinition: def.Nodes[id].Node,
+			NodeID: id, NodeDefinition: def.Nodes[id].Node, NodeExecutor: executorVersions[id],
 			Current:         NodeRun{Status: StatusPending},
 			consumedControl: map[string]int{}, consumedInputs: map[string]artifact.ArtifactRef{},
 			outputVersions: map[string]int{}, approvalRounds: map[int]approvalDecision{},
@@ -769,17 +780,18 @@ func (e *Engine) declaredOutputs(definitionName string) (map[string]definition.T
 	return declared, nil
 }
 
-func (e *Engine) instantiate(def workflow.Definition) (map[string]node.Node, error) {
+func (e *Engine) instantiate(def workflow.Definition) (map[string]node.Node, map[string]string, error) {
 	ids := make([]string, 0, len(def.Nodes))
 	for id := range def.Nodes {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 	nodes := make(map[string]node.Node, len(ids))
+	versions := make(map[string]string, len(ids))
 	for _, id := range ids {
 		spec := def.Nodes[id]
 		if _, err := e.defs.Definition(spec.Node); err != nil {
-			return nil, fmt.Errorf("node %q: unknown node definition %q (registered: %v)", id, spec.Node, e.defs.DefinitionNames())
+			return nil, nil, fmt.Errorf("node %q: unknown node definition %q (registered: %v)", id, spec.Node, e.defs.DefinitionNames())
 		}
 		var factory node.ExecutorFactory
 		var err error
@@ -789,14 +801,15 @@ func (e *Engine) instantiate(def workflow.Definition) (map[string]node.Node, err
 			factory, err = e.executors.Get(spec.Node, spec.Executor)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("node %q: %w", id, err)
+			return nil, nil, fmt.Errorf("node %q: %w", id, err)
 		}
+		versions[id] = factory.Version()
 		nodes[id], err = factory.Create(node.Config(spec.Config))
 		if err != nil {
-			return nil, fmt.Errorf("node %q: create %q: %w", id, spec.Node, err)
+			return nil, nil, fmt.Errorf("node %q: create %q: %w", id, spec.Node, err)
 		}
 	}
-	return nodes, nil
+	return nodes, versions, nil
 }
 
 func (e *Engine) projectContext(def workflow.Definition) project.Context {
@@ -819,10 +832,14 @@ func (e *Engine) fail(exec *WorkflowExecution, err error) (*WorkflowExecution, e
 }
 
 func (e *Engine) persist(exec *WorkflowExecution) {
-	if e.stateDir == "" {
-		return
+	if e.runRecorder != nil {
+		if err := e.runRecorder.Record(exec); err != nil && !errors.Is(err, context.Canceled) {
+			e.logger.Warn("record run history failed", "execution", exec.ID, "error", err)
+		}
 	}
-	if err := PersistState(filepath.Join(e.stateDir, exec.ID), exec); err != nil && !errors.Is(err, context.Canceled) {
-		e.logger.Error("persist state failed", "execution", exec.ID, "error", err)
+	if e.stateDir != "" {
+		if err := PersistState(filepath.Join(e.stateDir, exec.ID), exec); err != nil && !errors.Is(err, context.Canceled) {
+			e.logger.Error("persist state failed", "execution", exec.ID, "error", err)
+		}
 	}
 }

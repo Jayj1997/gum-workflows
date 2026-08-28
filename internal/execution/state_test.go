@@ -73,6 +73,19 @@ func TestNodeExecutionStartsANewRunWithoutLosingHistory(t *testing.T) {
 	}
 }
 
+func TestNodeExecutionRetainsRecorderAllocatedIDForFirstRound(t *testing.T) {
+	n := NodeExecution{
+		NodeID:  "backend",
+		Current: NodeRun{RunID: "allocated-while-pending", Status: StatusReady},
+	}
+	if err := n.StartRun("engine-generated", nil); err != nil {
+		t.Fatalf("StartRun() unexpected error: %v", err)
+	}
+	if n.Current.RunID != "allocated-while-pending" || n.Current.Round != 1 {
+		t.Fatalf("current identity = %q round %d, want allocated-while-pending round 1", n.Current.RunID, n.Current.Round)
+	}
+}
+
 func TestNodeExecutionCannotStartNewRunAfterStructuralFailure(t *testing.T) {
 	n := NodeExecution{
 		NodeID:  "backend",

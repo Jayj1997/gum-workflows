@@ -31,16 +31,17 @@ func PersistState(dir string, exec *WorkflowExecution) error {
 
 	// WorkflowExecution level metadata does not duplicate node round bodies.
 	top := map[string]any{
-		"id":             exec.ID,
-		"run_id":         exec.RunID,
-		"workflow":       exec.Workflow,
-		"workflow_file":  exec.WorkflowFile,
-		"status":         string(exec.Status),
-		"stopped_reason": exec.StoppedReason,
-		"error":          exec.Error,
-		"started_at":     exec.StartedAt,
-		"finished_at":    exec.FinishedAt,
-		"node_count":     len(exec.Nodes),
+		"id":               exec.ID,
+		"run_id":           exec.RunID,
+		"workflow":         exec.Workflow,
+		"workflow_version": exec.WorkflowVersion,
+		"workflow_file":    exec.WorkflowFile,
+		"status":           string(exec.Status),
+		"stopped_reason":   exec.StoppedReason,
+		"error":            exec.Error,
+		"started_at":       exec.StartedAt,
+		"finished_at":      exec.FinishedAt,
+		"node_count":       len(exec.Nodes),
 	}
 	if err := writeJSON(filepath.Join(dir, "state.json"), top); err != nil {
 		return fmt.Errorf("persist state %s: %w", exec.ID, err)
@@ -55,10 +56,11 @@ func PersistState(dir string, exec *WorkflowExecution) error {
 		nodeState := struct {
 			NodeID         string    `json:"node_id"`
 			NodeDefinition string    `json:"node_definition"`
+			NodeExecutor   string    `json:"node_executor"`
 			Current        NodeRun   `json:"current"`
 			History        []NodeRun `json:"history,omitempty"`
 		}{
-			NodeID: ne.NodeID, NodeDefinition: ne.NodeDefinition, Current: ne.Current,
+			NodeID: ne.NodeID, NodeDefinition: ne.NodeDefinition, NodeExecutor: ne.NodeExecutor, Current: ne.Current,
 			History: summarizeRuns(ne.History),
 		}
 		if err := writeJSON(filepath.Join(nodeDir, "state.json"), nodeState); err != nil {

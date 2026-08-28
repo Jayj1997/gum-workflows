@@ -14,6 +14,9 @@ type migration struct {
 // DefinitionSchemaVersion 是包含五张定义侧表的首个 SQLite schema 版本。
 const DefinitionSchemaVersion = 1
 
+// RunHistorySchemaVersion adds workflow and node-run history tables.
+const RunHistorySchemaVersion = 2
+
 // 新增迁移只允许 append（不改写历史迁移），保证已迁移的库向前兼容。
 var migrations = []migration{
 	{
@@ -72,6 +75,42 @@ var migrations = []migration{
   config_json         TEXT NOT NULL DEFAULT '{}',
   UNIQUE (workflow_id, node_id)
 )`,
+		},
+	},
+	{
+		version: RunHistorySchemaVersion,
+		stmts: []string{
+			`CREATE TABLE workflow_run_history (
+  id               TEXT PRIMARY KEY,
+  workflow_name    TEXT NOT NULL,
+  workflow_version TEXT NOT NULL DEFAULT '',
+  status           TEXT NOT NULL,
+  workflow_file    TEXT NOT NULL DEFAULT '',
+  execution_id     TEXT NOT NULL,
+  error            TEXT NOT NULL DEFAULT '',
+  stopped_reason   TEXT NOT NULL DEFAULT '',
+  started_at       TEXT NOT NULL,
+  finished_at      TEXT
+)`,
+			`CREATE INDEX idx_run_history_started_at ON workflow_run_history (started_at DESC)`,
+			`CREATE INDEX idx_run_history_workflow ON workflow_run_history (workflow_name)`,
+			`CREATE TABLE workflow_node_run_history (
+  id              TEXT PRIMARY KEY,
+  run_id          TEXT NOT NULL REFERENCES workflow_run_history(id) ON DELETE CASCADE,
+  node_id         TEXT NOT NULL,
+  node_definition TEXT NOT NULL,
+  node_executor   TEXT NOT NULL,
+  round           INTEGER NOT NULL,
+  status          TEXT NOT NULL,
+  error           TEXT NOT NULL DEFAULT '',
+  error_kind      TEXT NOT NULL DEFAULT '',
+  inputs_json     TEXT NOT NULL DEFAULT '{}',
+  outputs_json    TEXT NOT NULL DEFAULT '{}',
+  started_at      TEXT,
+  finished_at     TEXT,
+  UNIQUE (run_id, node_id, round)
+)`,
+			`CREATE INDEX idx_node_run_history_run ON workflow_node_run_history (run_id)`,
 		},
 	},
 }

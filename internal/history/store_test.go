@@ -57,7 +57,7 @@ func TestOpenCreatesAndMigrates(t *testing.T) {
 
 	for _, table := range []string{
 		"node_type_definition", "node_definition", "node_executor",
-		"workflow", "node_instance",
+		"workflow", "node_instance", "workflow_run_history", "workflow_node_run_history",
 	} {
 		var name string
 		err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name)
