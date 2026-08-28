@@ -18,3 +18,5 @@
 **2026-08-29（agent 实施记录）：** 新增 `node.Structural` / `node.Interaction` / `node.ErrorKindOf`，未分类错误缺省为 structural，包装链保留 `errors.Is`/`errors.As` 语义。引擎对可恢复的 agent interaction error 保持 Workflow Running，并经 HumanGateway 请求即时 advise；非空 advise 作为 markdown Artifact 注入下一轮，输入快照以 `#advise-retry` 标记并覆盖旧数据边 advise，且重置收敛计数。空行跳过后节点保持 Failed，独立分支继续、失败节点下游保持 Pending。
 
 仅 agent definition 声明 `advise` 输入时开放恢复；否则 interaction error 等价 structural，语义校验同时给出 warning。结构性失败继续 fail-fast，但等待已在途轮完成。测试覆盖错误包装、CLI 提示与解析、重试新 Node Run、优先级、收敛重置、分支隔离、未声明端口降级和在途轮完成。
+
+双轴代码审查发现 advise 提示曾与 Node Run 共用 inflight 计数：并行分支发生结构性错误时可能被仍在等待输入的提示阻塞。已把执行轮与提示分别计数，结构性停止会取消 advise 请求且只等待真实在途 Node Run；新增阻塞 gateway 回归测试。审查同时促成 `NodeRun.ErrorKind` 改用类型化枚举，并消除重复恢复判定。

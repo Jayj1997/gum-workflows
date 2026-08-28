@@ -147,16 +147,22 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 	execCtx := node.ExecutionContext{
 		Context: ctx, Project: e.projectContext(def), Store: e.store, Logger: e.logger,
 	}
+	adviseCtx, cancelAdvise := context.WithCancel(ctx)
+	defer cancelAdvise()
 	results := make(chan nodeResult, max(1, e.parallelism))
 	ready := make([]string, 0, len(g.NodeIDs))
 	queued := map[string]bool{}
 	inflight := 0
+	pendingAdvise := 0
 	stopping := false
 	var runErr error
 
 	for {
 		if ctx.Err() != nil {
 			stopping = true
+		}
+		if stopping {
+			cancelAdvise()
 		}
 		if !stopping {
 			for _, id := range g.NodeIDs {
@@ -204,7 +210,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 
 				if !humanInput && !humanApproval && ne.machineRuns > e.convergenceLimit {
 					ne.Current.Error = "convergence-guard"
-					ne.Current.ErrorKind = "structural"
+					ne.Current.ErrorKind = node.ErrorKindStructural
 					ne.Current.FinishedAt = time.Now().UTC()
 					_ = ne.TransitionTo(StatusFailed)
 					runErr = fmt.Errorf("node %q failed: convergence-guard", id)
@@ -231,10 +237,10 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 			}
 		}
 
-		if inflight == 0 {
-			if stopping {
-				break
-			}
+		if inflight == 0 && stopping {
+			break
+		}
+		if inflight == 0 && pendingAdvise == 0 {
 			if len(ready) > 0 {
 				continue
 			}
@@ -263,12 +269,12 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 		select {
 		case result := <-results:
 			if result.adviseRetry != nil {
-				inflight--
+				pendingAdvise--
 				if result.err != nil {
 					if ctx.Err() == nil || (!errors.Is(result.err, context.Canceled) && !errors.Is(result.err, context.DeadlineExceeded)) {
 						ne := exec.Nodes[result.id]
 						ne.Current.Error = result.err.Error()
-						ne.Current.ErrorKind = string(node.ErrorKindStructural)
+						ne.Current.ErrorKind = node.ErrorKindStructural
 						runErr = fmt.Errorf("node %q advise retry failed: %w", result.id, result.err)
 						stopping = true
 						exec.Status = StatusFailed
@@ -318,15 +324,15 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				if exec.Nodes[result.id].Current.Status == StatusWaitingHuman {
 					_ = exec.Nodes[result.id].TransitionTo(StatusRunning)
 				}
-				recoverable := result.err != nil && e.canAdviseRetry(def, result.id, result.err)
-				if err := e.finishNode(def, exec, result); err != nil && runErr == nil {
-					runErr = err
+				recoverable, finishErr := e.finishNode(def, exec, result)
+				if finishErr != nil && runErr == nil {
+					runErr = finishErr
 					stopping = true
 					exec.Status = StatusFailed
-					exec.Error = err.Error()
+					exec.Error = finishErr.Error()
 				} else if recoverable {
-					inflight++
-					go e.requestAdviseRetry(execCtx, def.Nodes[result.id].Node, result.id, result.err, results)
+					pendingAdvise++
+					go e.requestAdviseRetry(adviseCtx, def.Nodes[result.id].Node, result.id, result.err, results)
 				}
 			}
 			e.persist(exec)
@@ -347,11 +353,14 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 	return exec, nil
 }
 
-func (e *Engine) requestAdviseRetry(execCtx node.ExecutionContext, definitionName, id string, cause error, results chan<- nodeResult) {
-	response, err := e.humanGateway.RequestRound(execCtx.Context, RoundRequest{
+func (e *Engine) requestAdviseRetry(ctx context.Context, definitionName, id string, cause error, results chan<- nodeResult) {
+	response, err := e.humanGateway.RequestRound(ctx, RoundRequest{
 		NodeID: id, Definition: definitionName, Kind: RoundRequestAdviseRetry, Error: cause.Error(),
 	})
-	results <- nodeResult{id: id, adviseRetry: &response, err: err}
+	select {
+	case results <- nodeResult{id: id, adviseRetry: &response, err: err}:
+	case <-ctx.Done():
+	}
 }
 
 func (e *Engine) requestHumanApproval(execCtx node.ExecutionContext, request RoundRequest, id string, results chan<- nodeResult) {
@@ -435,7 +444,7 @@ func (e *Engine) executeNode(execCtx node.ExecutionContext, def workflow.Definit
 	results <- nodeResult{id: id, outputs: outputs, err: err}
 }
 
-func (e *Engine) finishNode(def workflow.Definition, exec *WorkflowExecution, result nodeResult) error {
+func (e *Engine) finishNode(def workflow.Definition, exec *WorkflowExecution, result nodeResult) (bool, error) {
 	ne := exec.Nodes[result.id]
 	ne.Current.FinishedAt = time.Now().UTC()
 	if result.err != nil {
@@ -444,12 +453,12 @@ func (e *Engine) finishNode(def workflow.Definition, exec *WorkflowExecution, re
 		if kind == node.ErrorKindInteraction && !e.canAdviseRetry(def, result.id, result.err) {
 			kind = node.ErrorKindStructural
 		}
-		ne.Current.ErrorKind = string(kind)
+		ne.Current.ErrorKind = kind
 		_ = ne.TransitionTo(StatusFailed)
 		if kind == node.ErrorKindInteraction {
-			return nil
+			return true, nil
 		}
-		return fmt.Errorf("node %q failed: %w", result.id, result.err)
+		return false, fmt.Errorf("node %q failed: %w", result.id, result.err)
 	}
 
 	versioned := make(map[string]artifact.ArtifactRef, len(result.outputs))
@@ -461,9 +470,9 @@ func (e *Engine) finishNode(def workflow.Definition, exec *WorkflowExecution, re
 			body, err := e.store.Get(ref)
 			if err != nil {
 				ne.Current.Error = err.Error()
-				ne.Current.ErrorKind = "structural"
+				ne.Current.ErrorKind = node.ErrorKindStructural
 				_ = ne.TransitionTo(StatusFailed)
-				return fmt.Errorf("node %q output %q: load artifact for versioning: %w", result.id, name, err)
+				return false, fmt.Errorf("node %q output %q: load artifact for versioning: %w", result.id, name, err)
 			}
 			if body.Version == version {
 				updated.Version = version
@@ -472,9 +481,9 @@ func (e *Engine) finishNode(def workflow.Definition, exec *WorkflowExecution, re
 				updated, err = e.store.Put(body)
 				if err != nil {
 					ne.Current.Error = err.Error()
-					ne.Current.ErrorKind = "structural"
+					ne.Current.ErrorKind = node.ErrorKindStructural
 					_ = ne.TransitionTo(StatusFailed)
-					return fmt.Errorf("node %q output %q: store versioned artifact: %w", result.id, name, err)
+					return false, fmt.Errorf("node %q output %q: store versioned artifact: %w", result.id, name, err)
 				}
 			}
 		} else {
@@ -484,9 +493,9 @@ func (e *Engine) finishNode(def workflow.Definition, exec *WorkflowExecution, re
 	}
 	ne.Current.Outputs = versioned
 	if err := ne.TransitionTo(StatusSucceeded); err != nil {
-		return fmt.Errorf("node %q: %w", result.id, err)
+		return false, fmt.Errorf("node %q: %w", result.id, err)
 	}
-	return nil
+	return false, nil
 }
 
 func (e *Engine) canAdviseRetry(def workflow.Definition, id string, err error) bool {
@@ -511,7 +520,7 @@ func (e *Engine) injectAdviseRetry(exec *WorkflowExecution, id, advice string) e
 	})
 	if err != nil {
 		ne.Current.Error = err.Error()
-		ne.Current.ErrorKind = string(node.ErrorKindStructural)
+		ne.Current.ErrorKind = node.ErrorKindStructural
 		return fmt.Errorf("node %q advise retry: store advise: %w", id, err)
 	}
 	ne.adviseRetry = &InputSnapshot{From: "#advise-retry", Ref: ref}
@@ -522,7 +531,7 @@ func (e *Engine) finishCanceledNode(exec *WorkflowExecution, result nodeResult) 
 	ne := exec.Nodes[result.id]
 	ne.Current.FinishedAt = time.Now().UTC()
 	ne.Current.Error = result.err.Error()
-	ne.Current.ErrorKind = "structural"
+	ne.Current.ErrorKind = node.ErrorKindStructural
 	_ = ne.TransitionTo(StatusFailed)
 }
 
@@ -532,7 +541,7 @@ func (e *Engine) ready(def workflow.Definition, exec *WorkflowExecution, n node.
 	if status == StatusReady {
 		return true
 	}
-	if status != StatusPending && status != StatusSucceeded && !(status == StatusFailed && ne.Current.ErrorKind == string(node.ErrorKindInteraction)) {
+	if status != StatusPending && status != StatusSucceeded && !(status == StatusFailed && ne.Current.ErrorKind == node.ErrorKindInteraction) {
 		return false
 	}
 

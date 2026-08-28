@@ -128,8 +128,6 @@ func (v *SemanticValidator) Validate(def workflow.Definition) ([]Warning, error)
 	return warns, errs.OrNil()
 }
 
-// checkAgentAdvise warns when an agent definition cannot use the in-run
-// recovery path for interaction errors.
 func (v *SemanticValidator) checkAgentAdvise(def workflow.Definition) []Warning {
 	var warnings []Warning
 	for _, id := range sortedKeys(def.Nodes) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
 	"github.com/Jayj1997/gum-workflows/internal/definition"
@@ -224,5 +225,69 @@ func TestStructuralFailureWaitsForInflightRound(t *testing.T) {
 	}
 	if got := exec.Node("inflight").Current.Status; got != StatusSucceeded {
 		t.Errorf("inflight status = %s, want Succeeded", got)
+	}
+}
+
+type blockingAdviseGateway struct {
+	started chan struct{}
+}
+
+func (g blockingAdviseGateway) RequestRound(ctx context.Context, req RoundRequest) (RoundResponse, error) {
+	if req.Kind != RoundRequestAdviseRetry {
+		return RoundResponse{}, errors.New("unexpected human request")
+	}
+	close(g.started)
+	<-ctx.Done()
+	return RoundResponse{}, ctx.Err()
+}
+
+func TestStructuralFailureDoesNotWaitForAdvisePrompt(t *testing.T) {
+	promptStarted := make(chan struct{})
+	releaseStructural := make(chan struct{})
+	interaction := fnFactory{
+		definition: "a-interaction",
+		inputs:     map[string]definition.InputPort{"advise": {Type: "markdown", Optional: true}},
+		create: func(node.Config) (node.Node, error) {
+			return callbackNode(func(node.ExecutionContext, map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
+				return nil, node.Interaction(errors.New("invalid response"))
+			}), nil
+		},
+	}
+	structural := fnFactory{
+		definition: "b-structural",
+		create: func(node.Config) (node.Node, error) {
+			return callbackNode(func(node.ExecutionContext, map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
+				<-releaseStructural
+				return nil, errors.New("network unavailable")
+			}), nil
+		},
+	}
+	dr, er := newTestRegistries(t, interaction, structural)
+	done := make(chan struct{})
+	var exec *WorkflowExecution
+	var runErr error
+	go func() {
+		exec, runErr = NewEngine(er, dr, artifact.NewMemStore(), nil,
+			WithParallelism(2), WithHumanGateway(blockingAdviseGateway{started: promptStarted})).Run(context.Background(), workflow.Definition{
+			APIVersion: workflow.APIVersionV1,
+			Kind:       workflow.KindWorkflow,
+			Metadata:   workflow.Metadata{Name: "structural-cancels-prompt"},
+			Nodes: map[string]workflow.NodeSpec{
+				"interaction": {Node: "a-interaction"},
+				"structural":  {Node: "b-structural"},
+			},
+		})
+		close(done)
+	}()
+
+	<-promptStarted
+	close(releaseStructural)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Run() waited for advise prompt after structural failure")
+	}
+	if runErr == nil || exec.Status != StatusFailed {
+		t.Fatalf("Run() = %s/%v, want Failed/error", exec.Status, runErr)
 	}
 }

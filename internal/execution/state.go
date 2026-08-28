@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
+	"github.com/Jayj1997/gum-workflows/internal/node"
 )
 
 // Status is shared by workflow executions and node runs.
@@ -61,7 +62,7 @@ type NodeRun struct {
 	Inputs     map[string]InputSnapshot        `json:"inputs,omitempty"`
 	Outputs    map[string]artifact.ArtifactRef `json:"outputs,omitempty"`
 	Error      string                          `json:"error,omitempty"`
-	ErrorKind  string                          `json:"error_kind,omitempty"`
+	ErrorKind  node.ErrorKind                  `json:"error_kind,omitempty"`
 	StartedAt  time.Time                       `json:"started_at,omitempty"`
 	FinishedAt time.Time                       `json:"finished_at,omitempty"`
 }
@@ -88,7 +89,7 @@ func (n *NodeExecution) TransitionTo(next Status) error {
 	if !CanTransitionTo(n.Current.Status, next) {
 		return fmt.Errorf("node execution %q: illegal transition %s -> %s", n.NodeID, n.Current.Status, next)
 	}
-	if n.Current.Status == StatusFailed && next == StatusReady && n.Current.ErrorKind != "interaction" {
+	if n.Current.Status == StatusFailed && next == StatusReady && n.Current.ErrorKind != node.ErrorKindInteraction {
 		return fmt.Errorf("node execution %q: only interaction failures may transition Failed -> Ready", n.NodeID)
 	}
 	n.Current.Status = next
