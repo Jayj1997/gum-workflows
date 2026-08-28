@@ -1,6 +1,7 @@
 package history
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ func TestRecordUpsertsWorkflowAndOneRowPerNodeRound(t *testing.T) {
 		},
 	}
 
-	if err := store.Record(exec); err != nil {
+	if err := store.Record(context.Background(), exec); err != nil {
 		t.Fatalf("Record(initial): %v", err)
 	}
 	if _, err := uuid.Parse(exec.RunID); err != nil {
@@ -47,7 +48,7 @@ func TestRecordUpsertsWorkflowAndOneRowPerNodeRound(t *testing.T) {
 	exec.Status = execution.StatusFailed
 	exec.Error = "node failed"
 	exec.FinishedAt = started.Add(3 * time.Second)
-	if err := store.Record(exec); err != nil {
+	if err := store.Record(context.Background(), exec); err != nil {
 		t.Fatalf("Record(update): %v", err)
 	}
 	if exec.RunID != firstRunID {
@@ -92,7 +93,7 @@ func TestRecordUpsertsWorkflowAndOneRowPerNodeRound(t *testing.T) {
 	exec.StoppedReason = "user_interrupt"
 	exec.Error = ""
 	exec.FinishedAt = started.Add(6 * time.Second)
-	if err := store.Record(exec); err != nil {
+	if err := store.Record(context.Background(), exec); err != nil {
 		t.Fatalf("Record(second round): %v", err)
 	}
 	if err := store.db.QueryRow(`SELECT count(*) FROM workflow_node_run_history WHERE run_id = ?`, exec.RunID).Scan(&count); err != nil {

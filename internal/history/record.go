@@ -13,14 +13,13 @@ import (
 )
 
 // Record idempotently writes a full workflow execution snapshot and all node rounds.
-func (s *Store) Record(exec *execution.WorkflowExecution) error {
+func (s *Store) Record(ctx context.Context, exec *execution.WorkflowExecution) error {
 	if exec == nil {
 		return fmt.Errorf("record run: execution must not be nil")
 	}
 	if exec.RunID == "" {
 		exec.RunID = uuid.NewString()
 	}
-	ctx := context.Background()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("record run %s: begin tx: %w", exec.RunID, err)

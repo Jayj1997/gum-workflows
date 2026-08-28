@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -14,7 +15,7 @@ type recordingRunRecorder struct {
 	err       error
 }
 
-func (r *recordingRunRecorder) Record(exec *WorkflowExecution) error {
+func (r *recordingRunRecorder) Record(_ context.Context, exec *WorkflowExecution) error {
 	data, err := json.Marshal(exec)
 	if err != nil {
 		return err

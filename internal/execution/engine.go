@@ -73,7 +73,7 @@ func WithWorkflowFile(path string) Option { return func(e *Engine) { e.workflowF
 
 // RunRecorder receives full execution snapshots for durable history indexing.
 type RunRecorder interface {
-	Record(exec *WorkflowExecution) error
+	Record(ctx context.Context, exec *WorkflowExecution) error
 }
 
 // WithRunRecorder records execution snapshots at the same points as state persistence.
@@ -153,7 +153,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 			outputVersions: map[string]int{}, approvalRounds: map[int]approvalDecision{},
 		}
 	}
-	e.persist(exec)
+	e.persist(ctx, exec)
 
 	execCtx := node.ExecutionContext{
 		Context: ctx, Project: e.projectContext(def), Store: e.store, Logger: e.logger,
@@ -197,15 +197,15 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 					ne.machineRuns++
 				}
 				if err := ne.prepareRun(uuid.NewString(), inputs); err != nil {
-					return e.fail(exec, fmt.Errorf("node %q: %w", id, err))
+					return e.fail(ctx, exec, fmt.Errorf("node %q: %w", id, err))
 				}
-				e.persist(exec)
+				e.persist(ctx, exec)
 				startStatus := StatusRunning
 				if humanApproval {
 					startStatus = StatusWaitingHuman
 				}
 				if err := ne.startPreparedRun(startStatus); err != nil {
-					return e.fail(exec, fmt.Errorf("node %q: %w", id, err))
+					return e.fail(ctx, exec, fmt.Errorf("node %q: %w", id, err))
 				}
 				ne.adviseRetry = nil
 				for _, dep := range def.Nodes[id].DependsOn {
@@ -225,11 +225,11 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 					stopping = true
 					exec.Status = StatusFailed
 					exec.Error = runErr.Error()
-					e.persist(exec)
+					e.persist(ctx, exec)
 					break
 				}
 
-				e.persist(exec)
+				e.persist(ctx, exec)
 				inflight++
 				if humanInput {
 					go e.executeHumanInput(execCtx, def.Nodes[id].Node, humanNode, id, results)
@@ -288,11 +288,11 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 						exec.Status = StatusFailed
 						exec.Error = runErr.Error()
 					}
-					e.persist(exec)
+					e.persist(ctx, exec)
 					continue
 				}
 				if result.adviseRetry.Skip || result.adviseRetry.Advise == "" {
-					e.persist(exec)
+					e.persist(ctx, exec)
 					continue
 				}
 				if err := e.injectAdviseRetry(exec, result.id, result.adviseRetry.Advise); err != nil {
@@ -303,20 +303,20 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				} else {
 					e.resetConvergence(exec)
 				}
-				e.persist(exec)
+				e.persist(ctx, exec)
 				continue
 			}
 			if result.approvalDecision != nil {
 				ne := exec.Nodes[result.id]
 				if err := ne.TransitionTo(StatusRunning); err != nil {
-					return e.fail(exec, fmt.Errorf("node %q: %w", result.id, err))
+					return e.fail(ctx, exec, fmt.Errorf("node %q: %w", result.id, err))
 				}
 				e.resetConvergence(exec)
 				ne.approvalRounds[ne.Current.Round] = approvalDecision{
 					approved: result.approvalDecision.Approved,
 					advise:   result.approvalDecision.Advise,
 				}
-				e.persist(exec)
+				e.persist(ctx, exec)
 				approvalNode, _ := asHumanApprovalNode(nodes[result.id])
 				go e.executeHumanApproval(execCtx, def.Nodes[result.id].Node, approvalNode, result.id, *result.approvalDecision, results)
 				continue
@@ -343,7 +343,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 					go e.requestAdviseRetry(adviseCtx, def.Nodes[result.id].Node, result.id, result.err, results)
 				}
 			}
-			e.persist(exec)
+			e.persist(ctx, exec)
 		case <-ctx.Done():
 			stopping = true
 		}
@@ -352,12 +352,12 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 	exec.FinishedAt = time.Now().UTC()
 	if runErr != nil {
 		exec.Status = StatusFailed
-		e.persist(exec)
+		e.persist(context.WithoutCancel(ctx), exec)
 		return exec, runErr
 	}
 	exec.Status = StatusStopped
 	exec.StoppedReason = "user_interrupt"
-	e.persist(exec)
+	e.persist(context.WithoutCancel(ctx), exec)
 	return exec, nil
 }
 
@@ -820,17 +820,17 @@ func (e *Engine) projectContext(def workflow.Definition) project.Context {
 	return ctx
 }
 
-func (e *Engine) fail(exec *WorkflowExecution, err error) (*WorkflowExecution, error) {
+func (e *Engine) fail(ctx context.Context, exec *WorkflowExecution, err error) (*WorkflowExecution, error) {
 	exec.Status = StatusFailed
 	exec.Error = err.Error()
 	exec.FinishedAt = time.Now().UTC()
-	e.persist(exec)
+	e.persist(context.WithoutCancel(ctx), exec)
 	return exec, err
 }
 
-func (e *Engine) persist(exec *WorkflowExecution) {
+func (e *Engine) persist(ctx context.Context, exec *WorkflowExecution) {
 	if e.runRecorder != nil {
-		if err := e.runRecorder.Record(exec); err != nil && !errors.Is(err, context.Canceled) {
+		if err := e.runRecorder.Record(ctx, exec); err != nil && !errors.Is(err, context.Canceled) {
 			e.logger.Warn("record run history failed", "execution", exec.ID, "error", err)
 		}
 	}

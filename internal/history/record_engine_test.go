@@ -65,8 +65,8 @@ type cancelingRecorder struct {
 	cancel context.CancelFunc
 }
 
-func (r cancelingRecorder) Record(exec *execution.WorkflowExecution) error {
-	if err := r.store.Record(exec); err != nil {
+func (r cancelingRecorder) Record(ctx context.Context, exec *execution.WorkflowExecution) error {
+	if err := r.store.Record(ctx, exec); err != nil {
 		return err
 	}
 	if review := exec.Node("review"); review != nil && review.Current.Round == 2 && review.Current.Status == execution.StatusSucceeded {
@@ -138,6 +138,13 @@ func TestEngineApprovalRoundsAreRecordedOneRowPerRound(t *testing.T) {
 	}
 	if exec.Status != execution.StatusStopped {
 		t.Fatalf("execution status = %s, want Stopped", exec.Status)
+	}
+	var recordedStatus string
+	if err := store.db.QueryRow(`SELECT status FROM workflow_run_history WHERE id = ?`, exec.RunID).Scan(&recordedStatus); err != nil {
+		t.Fatal(err)
+	}
+	if recordedStatus != "Stopped" {
+		t.Errorf("recorded workflow status = %q, want Stopped after cancellation", recordedStatus)
 	}
 
 	rows, err := store.db.Query(`SELECT id, round FROM workflow_node_run_history WHERE run_id = ? AND node_id = 'review' ORDER BY round`, exec.RunID)
