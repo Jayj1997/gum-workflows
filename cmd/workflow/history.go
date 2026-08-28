@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/Jayj1997/gum-workflows/internal/definition"
@@ -19,7 +20,7 @@ func pinAndImportDefinitions(
 	definitions *definition.Registry,
 	llmConfig *llm.Config,
 ) (workflow.Definition, error) {
-	store, err := history.Open(history.DefaultDBPath)
+	store, err := history.Open(ctx, history.DefaultDBPath)
 	if err != nil {
 		return workflow.Definition{}, fmt.Errorf("open history database: %w", err)
 	}
@@ -117,7 +118,7 @@ func workflowRows(
 	instances := make([]history.NodeInstanceRow, 0, len(ids))
 	for _, id := range ids {
 		spec := def.Nodes[id]
-		factory, err := resolveExecutor(executors, spec)
+		factory, err := resolveExecutor(ctx, store, executors, spec)
 		if err != nil {
 			return history.WorkflowRow{}, nil, workflow.Definition{}, fmt.Errorf("node %q executor: %w", id, err)
 		}
@@ -163,11 +164,62 @@ func workflowRows(
 	return workflowRow, instances, def, nil
 }
 
-func resolveExecutor(registry *node.ExecutorRegistry, spec workflow.NodeSpec) (node.ExecutorFactory, error) {
+func resolveExecutor(ctx context.Context, store *history.Store, registry *node.ExecutorRegistry, spec workflow.NodeSpec) (node.ExecutorFactory, error) {
 	if spec.Executor != "" {
 		return registry.Get(spec.Node, spec.Executor)
 	}
-	return registry.Latest(spec.Node)
+	latest, err := registry.Latest(spec.Node)
+	if err != nil {
+		return nil, err
+	}
+	version := latest.Version()
+	databaseVersions, err := store.ExecutorVersions(ctx, spec.Node)
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range databaseVersions {
+		if definition.CompareVersions(candidate, version) > 0 {
+			version = candidate
+		}
+	}
+	return registry.Get(spec.Node, version)
+}
+
+func validateExistingDatabaseExecutors(ctx context.Context, dbPath string, def workflow.Definition, registry *node.ExecutorRegistry) error {
+	if _, err := os.Stat(dbPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat history database: %w", err)
+	}
+	store, err := history.OpenReadOnly(ctx, dbPath)
+	if err != nil {
+		return fmt.Errorf("open history database read-only: %w", err)
+	}
+	defer store.Close()
+	version, err := store.UserVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("read history database schema version: %w", err)
+	}
+	if version < history.DefinitionSchemaVersion {
+		return nil
+	}
+
+	ids := make([]string, 0, len(def.Nodes))
+	for id := range def.Nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		spec := def.Nodes[id]
+		if spec.Executor != "" {
+			continue
+		}
+		if _, err := resolveExecutor(ctx, store, registry, spec); err != nil {
+			return fmt.Errorf("node %q executor: %w", id, err)
+		}
+	}
+	return nil
 }
 
 func requirements(items []definition.Requirement) []string {

@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// seedRows 返回一份最小但结构完整的种子 + workflow + instances，
-// 覆盖五表与 JSON 列（requires/inputs/outputs/projects/config/depends_on）。
 func seedRows() (nodeTypes []NodeTypeDefRow, defs []NodeDefRow, execs []NodeExecRow,
 	wf WorkflowRow, instances []NodeInstanceRow) {
 	nodeTypes = []NodeTypeDefRow{
@@ -49,7 +47,6 @@ func seedRows() (nodeTypes []NodeTypeDefRow, defs []NodeDefRow, execs []NodeExec
 	return
 }
 
-// TestImportDefinitionsRoundTrip：导入种子后五表内容正确，JSON 列可往返。
 func TestImportDefinitionsRoundTrip(t *testing.T) {
 	s, _ := openTest(t)
 	nt, defs, _, _, _ := seedRows()
@@ -122,7 +119,6 @@ SELECT requires_json, inputs_json, outputs_json FROM node_definition WHERE name 
 	}
 }
 
-// TestImportWorkflowRoundTrip：导入 workflow + instances 后内容正确；FK 完整。
 func TestImportWorkflowRoundTrip(t *testing.T) {
 	s, _ := openTest(t)
 	nt, defs, _, _, _ := seedRows()
@@ -177,7 +173,6 @@ func TestImportWorkflowRoundTrip(t *testing.T) {
 	}
 }
 
-// TestImportIsIdempotent：重复导入同键覆盖、id 复用、UUID 稳定。
 func TestImportIsIdempotent(t *testing.T) {
 	s, _ := openTest(t)
 	nt, defs, _, _, _ := seedRows()
@@ -283,7 +278,6 @@ func TestImportWorkflowReplacesRemovedInstances(t *testing.T) {
 	}
 }
 
-// execIDFor 取某 (node_definition_id, version) 的 executor id。
 func execIDFor(t *testing.T, s *Store, defID, version string) string {
 	t.Helper()
 	var id string

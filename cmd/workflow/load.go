@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -25,7 +26,10 @@ import (
 // Go 实现集与 YAML 声明集双向 diff，任一不一致即报错（设计文档 §6.9）。
 // agent 节点的 llm/target_model 解析需要用户级 llm.yaml（设计文档 §3.4）：
 // 找不到时以 nil 注入，由语义校验决定「无 agent 节点则放行、有则报错」。
-func loadAndValidate(path string) (workflow.Definition, []byte, *node.ExecutorRegistry, *definition.Registry, *llm.Config, []validation.Warning, error) {
+func loadAndValidate(ctx context.Context, path string) (workflow.Definition, []byte, *node.ExecutorRegistry, *definition.Registry, *llm.Config, []validation.Warning, error) {
+	if err := ctx.Err(); err != nil {
+		return workflow.Definition{}, nil, nil, nil, nil, nil, fmt.Errorf("load workflow: %w", err)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return workflow.Definition{}, nil, nil, nil, nil, nil, fmt.Errorf("read workflow file: %w", err)

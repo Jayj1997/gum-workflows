@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// nowFunc 供测试注入稳定时间戳。
 type nowFunc func() time.Time
 
 // ImportDefinitions 幂等导入内嵌种子三类定义（设计文档 §8.2 步骤 1）：
@@ -76,6 +75,31 @@ WHERE d.name = ? AND e.version = ?`, definitionName, version).Scan(&id)
 		return "", fmt.Errorf("lookup node executor (%s, %s): %w", definitionName, version, err)
 	}
 	return id, nil
+}
+
+// ExecutorVersions 返回数据库中某 Node Definition 已导入的全部执行器版本。
+func (s *Store) ExecutorVersions(ctx context.Context, definitionName string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT e.version FROM node_executor e
+JOIN node_definition d ON d.id = e.node_definition_id
+WHERE d.name = ?`, definitionName)
+	if err != nil {
+		return nil, fmt.Errorf("list node executor versions for %q: %w", definitionName, err)
+	}
+	defer rows.Close()
+
+	var versions []string
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return nil, fmt.Errorf("scan node executor version for %q: %w", definitionName, err)
+		}
+		versions = append(versions, version)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate node executor versions for %q: %w", definitionName, err)
+	}
+	return versions, nil
 }
 
 // ImportWorkflow 幂等导入本次 workflow 及其 node instances
@@ -145,19 +169,10 @@ func deleteStaleNodeInstances(ctx context.Context, tx *sql.Tx, workflowID string
 	return nil
 }
 
-// upsertNodeType 按 name upsert：命中则复用 id 并更新展示字段，否则生成新 UUID。
 func upsertNodeType(ctx context.Context, tx *sql.Tx, t NodeTypeDefRow) error {
-	id := t.ID
-	if id == "" {
-		existing, err := selectIDByName(ctx, tx, "node_type_definition", "name", t.Name)
-		if err != nil {
-			return err
-		}
-		if existing != "" {
-			id = existing
-		} else {
-			id = uuid.NewString()
-		}
+	id, err := stableID(ctx, tx, t.ID, "node_type_definition", "name", t.Name, "", "")
+	if err != nil {
+		return err
 	}
 	reqJSON, err := marshalSlice(t.Requires, "requires_json")
 	if err != nil {
@@ -173,19 +188,10 @@ ON CONFLICT(name) DO UPDATE SET
 	return err
 }
 
-// upsertNodeDef 按 name upsert。
 func upsertNodeDef(ctx context.Context, tx *sql.Tx, d NodeDefRow) error {
-	id := d.ID
-	if id == "" {
-		existing, err := selectIDByName(ctx, tx, "node_definition", "name", d.Name)
-		if err != nil {
-			return err
-		}
-		if existing != "" {
-			id = existing
-		} else {
-			id = uuid.NewString()
-		}
+	id, err := stableID(ctx, tx, d.ID, "node_definition", "name", d.Name, "", "")
+	if err != nil {
+		return err
 	}
 	reqJSON, err := marshalSlice(d.Requires, "requires_json")
 	if err != nil {
@@ -212,8 +218,6 @@ ON CONFLICT(name) DO UPDATE SET
 	return err
 }
 
-// upsertNodeExec 按 (node_definition_id, version) upsert。
-// NodeDefinitionID 若未填，则按 Node 名在事务内查 node_definition.id 回填。
 func upsertNodeExec(ctx context.Context, tx *sql.Tx, e NodeExecRow) error {
 	defID := e.NodeDefinitionID
 	if defID == "" {
@@ -233,19 +237,11 @@ func upsertNodeExec(ctx context.Context, tx *sql.Tx, e NodeExecRow) error {
 		defID = existing
 	}
 
-	id := e.ID
-	if id == "" {
-		existing, err := selectIDByTwo(ctx, tx, "node_executor", "node_definition_id", defID, "version", e.Version)
-		if err != nil {
-			return err
-		}
-		if existing != "" {
-			id = existing
-		} else {
-			id = uuid.NewString()
-		}
+	id, err := stableID(ctx, tx, e.ID, "node_executor", "node_definition_id", defID, "version", e.Version)
+	if err != nil {
+		return err
 	}
-	_, err := tx.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 INSERT INTO node_executor (id, node_definition_id, version, name, description, updates, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(node_definition_id, version) DO UPDATE SET
@@ -256,19 +252,10 @@ ON CONFLICT(node_definition_id, version) DO UPDATE SET
 	return err
 }
 
-// upsertWorkflow 按 (name, version) 覆盖式 upsert，返回该 workflow 的 id。
 func upsertWorkflow(ctx context.Context, tx *sql.Tx, wf WorkflowRow) (string, error) {
-	id := wf.ID
-	if id == "" {
-		existing, err := selectIDByTwo(ctx, tx, "workflow", "name", wf.Name, "version", wf.Version)
-		if err != nil {
-			return "", err
-		}
-		if existing != "" {
-			id = existing
-		} else {
-			id = uuid.NewString()
-		}
+	id, err := stableID(ctx, tx, wf.ID, "workflow", "name", wf.Name, "version", wf.Version)
+	if err != nil {
+		return "", err
 	}
 	projJSON, err := marshalSlice(wf.Projects, "projects_json")
 	if err != nil {
@@ -284,20 +271,10 @@ ON CONFLICT(name, version) DO UPDATE SET
 	return id, err
 }
 
-// upsertNodeInstance 按 (workflow_id, node_id) upsert。
-// node_definition_id 与 node_executor_id 必须已存在（FK）。
 func upsertNodeInstance(ctx context.Context, tx *sql.Tx, inst NodeInstanceRow) error {
-	id := inst.ID
-	if id == "" {
-		existing, err := selectIDByTwo(ctx, tx, "node_instance", "workflow_id", inst.WorkflowID, "node_id", inst.NodeID)
-		if err != nil {
-			return err
-		}
-		if existing != "" {
-			id = existing
-		} else {
-			id = uuid.NewString()
-		}
+	id, err := stableID(ctx, tx, inst.ID, "node_instance", "workflow_id", inst.WorkflowID, "node_id", inst.NodeID)
+	if err != nil {
+		return err
 	}
 	inJSON, err := marshalMap(inst.Inputs, "inputs_json")
 	if err != nil {
@@ -331,11 +308,6 @@ ON CONFLICT(workflow_id, node_id) DO UPDATE SET
 	return err
 }
 
-// selectIDByName 按单个自然键列查已有行的 id（命中返回 id，未命中返回 ""）。
-func selectIDByName(ctx context.Context, tx *sql.Tx, table, keyCol, keyVal string) (string, error) {
-	return selectIDByTwo(ctx, tx, table, keyCol, keyVal, "", "")
-}
-
 func marshalSlice[T any](value []T, field string) ([]byte, error) {
 	if value == nil {
 		value = []T{}
@@ -358,8 +330,21 @@ func marshalMap[V any](value map[string]V, field string) ([]byte, error) {
 	return data, nil
 }
 
-// selectIDByTwo 按两列自然键查已有行的 id。keyCol2 为空时退化为单键查询。
-func selectIDByTwo(ctx context.Context, tx *sql.Tx, table, keyCol1, keyVal1, keyCol2, keyVal2 string) (string, error) {
+func stableID(ctx context.Context, tx *sql.Tx, provided, table, keyCol1, keyVal1, keyCol2, keyVal2 string) (string, error) {
+	if provided != "" {
+		return provided, nil
+	}
+	existing, err := selectID(ctx, tx, table, keyCol1, keyVal1, keyCol2, keyVal2)
+	if err != nil {
+		return "", err
+	}
+	if existing != "" {
+		return existing, nil
+	}
+	return uuid.NewString(), nil
+}
+
+func selectID(ctx context.Context, tx *sql.Tx, table, keyCol1, keyVal1, keyCol2, keyVal2 string) (string, error) {
 	q := fmt.Sprintf(`SELECT id FROM %s WHERE %s = ?`, table, keyCol1)
 	args := []any{keyVal1}
 	if keyCol2 != "" {
@@ -377,8 +362,6 @@ func selectIDByTwo(ctx context.Context, tx *sql.Tx, table, keyCol1, keyVal1, key
 	return id, nil
 }
 
-// nowStamp 返回 RFC3339 时间戳。从 context 中取注入的 nowFunc（测试用），
-// 未注入则用 time.Now。
 func nowStamp(ctx context.Context) string {
 	if fn, ok := ctx.Value(nowKey{}).(nowFunc); ok && fn != nil {
 		return fn().UTC().Format(time.RFC3339)
@@ -386,10 +369,8 @@ func nowStamp(ctx context.Context) string {
 	return time.Now().UTC().Format(time.RFC3339)
 }
 
-// nowKey 是 context key 类型，避免与其他包冲突。
 type nowKey struct{}
 
-// withNow 返回注入了 nowFunc 的 context（测试专用）。
 func withNow(ctx context.Context, fn nowFunc) context.Context {
 	return context.WithValue(ctx, nowKey{}, fn)
 }

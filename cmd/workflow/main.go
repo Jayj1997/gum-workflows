@@ -7,9 +7,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
+	"github.com/Jayj1997/gum-workflows/internal/history"
 	"github.com/Jayj1997/gum-workflows/internal/validation"
 )
 
@@ -37,9 +39,13 @@ func run(args []string) error {
 // validateCmd 执行校验管线（设计计划 §21 两层校验），与 run 共用 loadAndValidate。
 // warning 不阻断校验（环降为提示，票 06），以 warning 前缀打印到 stderr。
 func validateCmd(path string) error {
-	def, _, _, _, _, warnings, err := loadAndValidate(path)
+	ctx := context.Background()
+	def, _, executors, _, _, warnings, err := loadAndValidate(ctx, path)
 	if err != nil {
 		return err
+	}
+	if err := validateExistingDatabaseExecutors(ctx, history.DefaultDBPath, def, executors); err != nil {
+		return fmt.Errorf("validate database executor resolution: %w", err)
 	}
 
 	printWarnings(warnings)

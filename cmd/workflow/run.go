@@ -19,13 +19,14 @@ import (
 //	Load YAML -> CUE Validate -> Parse -> Semantic Validate ->
 //	Create Execution -> Initialize Project/Workspace -> Execute -> Persist
 func runCmd(path string) error {
-	def, data, executors, defsRegistry, llmConfig, warnings, err := loadAndValidate(path)
+	ctx := context.Background()
+	def, data, executors, defsRegistry, llmConfig, warnings, err := loadAndValidate(ctx, path)
 	if err != nil {
 		return err
 	}
 	printWarnings(warnings)
 
-	def, err = pinAndImportDefinitions(context.Background(), def, executors, defsRegistry, llmConfig)
+	def, err = pinAndImportDefinitions(ctx, def, executors, defsRegistry, llmConfig)
 	if err != nil {
 		return err
 	}
@@ -78,7 +79,7 @@ func runCmd(path string) error {
 		execution.WithProjectContext(wsCtx),
 		execution.WithExecutionID(executionID),
 	)
-	exec, runErr := engine.Run(context.Background(), def)
+	exec, runErr := engine.Run(ctx, def)
 
 	printExecutionSummary(exec)
 	return runErr

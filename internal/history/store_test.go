@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -16,12 +17,11 @@ func ctxWithNow() context.Context {
 	return withNow(context.Background(), func() time.Time { return fixedTime })
 }
 
-// openTest 打开临时库，注入稳定时间戳。
 func openTest(t *testing.T) (*Store, string) {
 	t.Helper()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "sub", "gum-workflows.db") // 验证父目录自动创建
-	s, err := openAt(ctxWithNow(), dbPath)
+	s, err := Open(ctxWithNow(), dbPath)
 	if err != nil {
 		t.Fatalf("openAt: %v", err)
 	}
@@ -29,7 +29,6 @@ func openTest(t *testing.T) (*Store, string) {
 	return s, dbPath
 }
 
-// TestOpenCreatesAndMigrates：首次 Open 建库与五表；user_version 推进到 1。
 func TestOpenCreatesAndMigrates(t *testing.T) {
 	s, dbPath := openTest(t)
 
@@ -39,6 +38,21 @@ func TestOpenCreatesAndMigrates(t *testing.T) {
 	}
 	if v != latestUserVersion() {
 		t.Fatalf("user_version = %d, want %d", v, latestUserVersion())
+	}
+	for _, tc := range []struct {
+		pragma string
+		want   string
+	}{
+		{pragma: "journal_mode", want: "wal"},
+		{pragma: "busy_timeout", want: "5000"},
+		{pragma: "foreign_keys", want: "1"},
+	} {
+		var got string
+		if err := s.db.QueryRow(`PRAGMA ` + tc.pragma).Scan(&got); err != nil {
+			t.Errorf("read PRAGMA %s: %v", tc.pragma, err)
+		} else if got != tc.want {
+			t.Errorf("PRAGMA %s = %q, want %q", tc.pragma, got, tc.want)
+		}
 	}
 
 	for _, table := range []string{
@@ -52,18 +66,16 @@ func TestOpenCreatesAndMigrates(t *testing.T) {
 		}
 	}
 
-	// 库文件确实落盘。
 	if _, err := os.Stat(dbPath); err != nil {
 		t.Errorf("db file not created: %v", err)
 	}
 }
 
-// TestOpenIsIdempotent：重复 Open 同一文件不重放迁移、不报错。
 func TestOpenIsIdempotent(t *testing.T) {
 	_, dbPath := openTest(t)
 
 	// 第二次 Open 同一文件：迁移应空操作。
-	s2, err := openAt(ctxWithNow(), dbPath)
+	s2, err := Open(ctxWithNow(), dbPath)
 	if err != nil {
 		t.Fatalf("second openAt: %v", err)
 	}
@@ -78,7 +90,33 @@ func TestOpenIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestForeignKeyCascade：删除 workflow 行应级联删除其 node_instance。
+func TestConcurrentOpenIsIdempotent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "gum-workflows.db")
+	start := make(chan struct{})
+	errs := make(chan error, 8)
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			store, err := Open(context.Background(), dbPath)
+			if err == nil {
+				err = store.Close()
+			}
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("concurrent Open: %v", err)
+		}
+	}
+}
+
 func TestForeignKeyCascade(t *testing.T) {
 	s, _ := openTest(t)
 
@@ -121,7 +159,6 @@ func TestForeignKeyCascade(t *testing.T) {
 	}
 }
 
-// selectID 是测试辅助：按单列自然键查 id（命中返回，否则 ""）。
 func (s *Store) selectID(ctx context.Context, table, col, val string) (string, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx,

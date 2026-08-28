@@ -58,6 +58,29 @@ SELECT
 		t.Errorf("definition table counts = %q, want %q", got, "3|4|4|1|2")
 	}
 	if got := sqliteQuery(t, dbPath, `
+SELECT name, requires_json FROM node_type_definition ORDER BY name;`); got != "agent|[\"llm\"]\nautomation|[]\nhuman|[]" {
+		t.Errorf("node type definitions = %q", got)
+	}
+	if got := sqliteQuery(t, dbPath, `
+SELECT name, type, requires_json,
+       json_extract(inputs_json, '$.openapi.type'),
+       json_extract(outputs_json, '$.source-code.type')
+FROM node_definition WHERE name = 'coding-agent';`); got != `coding-agent|agent|["project"]|OpenAPI|SourceCode` {
+		t.Errorf("coding-agent definition = %q", got)
+	}
+	if got := sqliteQuery(t, dbPath, `
+SELECT d.name, e.version, e.name
+FROM node_executor e JOIN node_definition d ON d.id = e.node_definition_id
+ORDER BY d.name;`); got != "architecture-design|v1|architecture-design-v1\ncoding-agent|v1|coding-agent-v1\nopenapi-generator|v1|openapi-generator-v1\nrequirement-analysis|v1|requirement-analysis-v1" {
+		t.Errorf("node executor definitions = %q", got)
+	}
+	if got := sqliteQuery(t, dbPath, `
+SELECT name, version, json_extract(projects_json, '$[0].name'),
+       json_extract(projects_json, '$[0].repository')
+FROM workflow;`); got != "minimal-development|1.0|order-system|./project" {
+		t.Errorf("workflow definition = %q", got)
+	}
+	if got := sqliteQuery(t, dbPath, `
 SELECT ni.node_id, e.version, ni.llm_provider, ni.llm_model
 FROM node_instance ni
 JOIN node_executor e ON e.id = ni.node_executor_id
@@ -167,11 +190,77 @@ func TestRunStopsWhenDefinitionDatabaseCannotOpen(t *testing.T) {
 	if err == nil {
 		t.Fatalf("run succeeded with unusable database path:\n%s", out)
 	}
-	if !strings.Contains(out, "open history database") {
+	if !strings.Contains(out, "history database") {
 		t.Errorf("error does not identify definition import startup failure:\n%s", out)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".workflow", "executions")); err == nil {
 		t.Error("engine created execution state after database failure")
+	}
+}
+
+func TestRunRejectsNewerDatabaseExecutorWithoutBinaryImplementation(t *testing.T) {
+	tmp := t.TempDir()
+	src := absPath(t, filepath.Join("..", "..", "examples", "minimal"))
+	if err := copyTree(t, src, filepath.Join(tmp, "minimal")); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(tmp, "minimal")
+	if out, err := runInDir(t, dir, "run", "workflow.yaml"); err != nil {
+		t.Fatalf("initial run failed: %v\n%s", err, out)
+	}
+	dbPath := filepath.Join(dir, ".workflow", "gum-workflows.db")
+	sqliteQuery(t, dbPath, `
+INSERT INTO node_executor (id, node_definition_id, version, name, created_at)
+SELECT '00000000-0000-0000-0000-000000000002', id, 'v2', 'coding-agent-v2', '2026-08-28T00:00:00Z'
+FROM node_definition WHERE name = 'coding-agent';`)
+
+	validateOut, validateErr := runInDir(t, dir, "validate", "workflow.yaml")
+	if validateErr == nil {
+		t.Fatalf("validate ignored database executor v2:\n%s", validateOut)
+	}
+	if !strings.Contains(validateOut, `executor "v2"`) || !strings.Contains(validateOut, "coding-agent") {
+		t.Errorf("validate error does not identify unavailable executor:\n%s", validateOut)
+	}
+
+	out, err := runInDir(t, dir, "run", "workflow.yaml")
+	if err == nil {
+		t.Fatalf("run silently downgraded from database executor v2:\n%s", out)
+	}
+	if !strings.Contains(out, `executor "v2"`) || !strings.Contains(out, "coding-agent") {
+		t.Errorf("error does not identify unavailable pinned executor:\n%s", out)
+	}
+}
+
+func TestRunMigratesExistingVersionZeroDatabaseBeforeResolution(t *testing.T) {
+	tmp := t.TempDir()
+	src := absPath(t, filepath.Join("..", "..", "examples", "minimal"))
+	if err := copyTree(t, src, filepath.Join(tmp, "minimal")); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(tmp, "minimal")
+	dbPath := filepath.Join(dir, ".workflow", "gum-workflows.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		t.Fatalf("create workflow dir: %v", err)
+	}
+	sqliteQuery(t, dbPath, `PRAGMA user_version = 0;`)
+
+	validateOut, err := runInDir(t, dir, "validate", "workflow.yaml")
+	if err != nil {
+		t.Fatalf("validate rejected version-zero database: %v\n%s", err, validateOut)
+	}
+	if got := sqliteQuery(t, dbPath, `PRAGMA user_version;`); got != "0" {
+		t.Errorf("validate changed user_version to %q, want 0", got)
+	}
+	if got := sqliteQuery(t, dbPath, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'node_executor';`); got != "0" {
+		t.Errorf("validate created node_executor table, count = %q, want 0", got)
+	}
+
+	out, err := runInDir(t, dir, "run", "workflow.yaml")
+	if err != nil {
+		t.Fatalf("run did not migrate version-zero database: %v\n%s", err, out)
+	}
+	if got := sqliteQuery(t, dbPath, `SELECT count(*) FROM node_instance;`); got != "2" {
+		t.Errorf("node instance count after migration = %q, want 2", got)
 	}
 }
 
