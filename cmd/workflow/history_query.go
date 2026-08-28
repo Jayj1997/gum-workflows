@@ -122,6 +122,18 @@ func printRunDetail(out io.Writer, run *history.RunDetail) {
 			fmt.Fprintf(out, "  error: %s", item.Error)
 		}
 		fmt.Fprintln(out)
+		for _, round := range item.RoundDetails {
+			fmt.Fprintf(out, "    Round %d %s  duration: %s  inputs: %d  outputs: %d",
+				round.Round, round.Status, formatHistoryDuration(round.StartedAt, round.FinishedAt),
+				round.Inputs, round.Outputs)
+			if round.ErrorKind != "" {
+				fmt.Fprintf(out, "  error_kind: %s", round.ErrorKind)
+			}
+			if round.Error != "" {
+				fmt.Fprintf(out, "  error: %s", round.Error)
+			}
+			fmt.Fprintln(out)
+		}
 	}
 }
 

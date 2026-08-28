@@ -17,7 +17,7 @@ type RunSummary struct {
 	ID              string
 	Workflow        string
 	WorkflowVersion string
-	Status          string
+	Status          execution.Status
 	StartedAt       time.Time
 	FinishedAt      time.Time
 	NodesCompleted  int
@@ -39,7 +39,7 @@ type NodeSummary struct {
 	NodeID         string
 	NodeDefinition string
 	NodeExecutor   string
-	Status         string
+	Status         execution.Status
 	Error          string
 	ErrorKind      string
 	StartedAt      time.Time
@@ -47,6 +47,19 @@ type NodeSummary struct {
 	Rounds         int
 	Inputs         int
 	Outputs        int
+	RoundDetails   []NodeRoundSummary
+}
+
+// NodeRoundSummary is the compact history of one node execution round.
+type NodeRoundSummary struct {
+	Round      int
+	Status     execution.Status
+	Error      string
+	ErrorKind  string
+	StartedAt  time.Time
+	FinishedAt time.Time
+	Inputs     int
+	Outputs    int
 }
 
 // NodeDetail contains every recorded round for one node in a workflow run.
@@ -62,7 +75,7 @@ type NodeDetail struct {
 type NodeRound struct {
 	RunID      string
 	Round      int
-	Status     string
+	Status     execution.Status
 	Error      string
 	ErrorKind  string
 	Inputs     map[string]execution.InputSnapshot
@@ -75,15 +88,19 @@ type NodeRound struct {
 func (s *Store) ListRuns(ctx context.Context) ([]RunSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT r.id, r.workflow_name, r.workflow_version, r.status, r.started_at, r.finished_at,
-       (SELECT count(DISTINCT n.node_id)
+       (SELECT count(*)
           FROM workflow_node_run_history n
-         WHERE n.run_id = r.id AND n.status <> 'Pending') AS nodes_completed,
+         WHERE n.run_id = r.id
+           AND n.round = (SELECT max(latest.round)
+                            FROM workflow_node_run_history latest
+                           WHERE latest.run_id = n.run_id AND latest.node_id = n.node_id)
+           AND n.status <> ?) AS nodes_completed,
        (SELECT count(DISTINCT n.node_id)
           FROM workflow_node_run_history n
          WHERE n.run_id = r.id) AS nodes_total
   FROM workflow_run_history r
  ORDER BY r.started_at DESC, r.id DESC
- LIMIT 20`)
+	LIMIT 20`, string(execution.StatusPending))
 	if err != nil {
 		return nil, fmt.Errorf("list workflow runs: %w", err)
 	}
@@ -92,14 +109,16 @@ SELECT r.id, r.workflow_name, r.workflow_version, r.status, r.started_at, r.fini
 	runs := make([]RunSummary, 0, 20)
 	for rows.Next() {
 		var run RunSummary
+		var status string
 		var started string
 		var finished sql.NullString
 		if err := rows.Scan(
-			&run.ID, &run.Workflow, &run.WorkflowVersion, &run.Status, &started, &finished,
+			&run.ID, &run.Workflow, &run.WorkflowVersion, &status, &started, &finished,
 			&run.NodesCompleted, &run.NodesTotal,
 		); err != nil {
 			return nil, fmt.Errorf("scan workflow run: %w", err)
 		}
+		run.Status = execution.Status(status)
 		var err error
 		run.StartedAt, err = parseStoredTime(started)
 		if err != nil {
@@ -128,6 +147,7 @@ func (s *Store) GetRun(ctx context.Context, idOrPrefix string) (*RunDetail, erro
 	}
 
 	var run RunDetail
+	var status string
 	var started string
 	var finished sql.NullString
 	err = s.db.QueryRowContext(ctx, `
@@ -135,12 +155,13 @@ SELECT id, workflow_name, workflow_version, status, workflow_file, execution_id,
        error, stopped_reason, started_at, finished_at
   FROM workflow_run_history
  WHERE id = ?`, runID).Scan(
-		&run.ID, &run.Workflow, &run.WorkflowVersion, &run.Status, &run.WorkflowFile,
+		&run.ID, &run.Workflow, &run.WorkflowVersion, &status, &run.WorkflowFile,
 		&run.ExecutionID, &run.Error, &run.StoppedReason, &started, &finished,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get workflow run %s: %w", runID, err)
 	}
+	run.Status = execution.Status(status)
 	run.StartedAt, err = parseStoredTime(started)
 	if err != nil {
 		return nil, fmt.Errorf("parse workflow run %s started_at: %w", runID, err)
@@ -157,7 +178,7 @@ SELECT id, workflow_name, workflow_version, status, workflow_file, execution_id,
 		return nil, err
 	}
 	for _, node := range run.Nodes {
-		if node.Status != "Pending" {
+		if node.Status != execution.StatusPending {
 			run.NodesCompleted++
 		}
 	}
@@ -186,14 +207,16 @@ SELECT id, node_definition, node_executor, round, status, error, error_kind,
 	detail := &NodeDetail{RunID: runID, NodeID: nodeID}
 	for rows.Next() {
 		var round NodeRound
+		var status string
 		var inputsJSON, outputsJSON string
 		var started, finished sql.NullString
 		if err := rows.Scan(
 			&round.RunID, &detail.NodeDefinition, &detail.NodeExecutor, &round.Round,
-			&round.Status, &round.Error, &round.ErrorKind, &inputsJSON, &outputsJSON, &started, &finished,
+			&status, &round.Error, &round.ErrorKind, &inputsJSON, &outputsJSON, &started, &finished,
 		); err != nil {
 			return nil, fmt.Errorf("scan run %s node %q round: %w", runID, nodeID, err)
 		}
+		round.Status = execution.Status(status)
 		if err := json.Unmarshal([]byte(inputsJSON), &round.Inputs); err != nil {
 			return nil, fmt.Errorf("decode run %s node %q round %d inputs: %w", runID, nodeID, round.Round, err)
 		}
@@ -265,17 +288,11 @@ SELECT id FROM workflow_run_history
 
 func (s *Store) listLatestNodes(ctx context.Context, runID string) ([]NodeSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT n.node_id, n.node_definition, n.node_executor, n.status, n.error, n.error_kind,
-       n.inputs_json, n.outputs_json, n.started_at, n.finished_at, latest.rounds
-  FROM workflow_node_run_history n
-  JOIN (
-        SELECT node_id, max(round) AS latest_round, count(*) AS rounds
-          FROM workflow_node_run_history
-         WHERE run_id = ?
-         GROUP BY node_id
-       ) latest ON latest.node_id = n.node_id AND latest.latest_round = n.round
- WHERE n.run_id = ?
- ORDER BY n.node_id`, runID, runID)
+SELECT node_id, node_definition, node_executor, round, status, error, error_kind,
+       inputs_json, outputs_json, started_at, finished_at
+  FROM workflow_node_run_history
+ WHERE run_id = ?
+ ORDER BY node_id, round`, runID)
 	if err != nil {
 		return nil, fmt.Errorf("list nodes for run %s: %w", runID, err)
 	}
@@ -283,36 +300,48 @@ SELECT n.node_id, n.node_definition, n.node_executor, n.status, n.error, n.error
 
 	var nodes []NodeSummary
 	for rows.Next() {
-		var node NodeSummary
+		var nodeID, nodeDefinition, nodeExecutor, status string
+		var round NodeRoundSummary
 		var inputsJSON, outputsJSON string
 		var started, finished sql.NullString
 		if err := rows.Scan(
-			&node.NodeID, &node.NodeDefinition, &node.NodeExecutor, &node.Status,
-			&node.Error, &node.ErrorKind, &inputsJSON, &outputsJSON, &started, &finished, &node.Rounds,
+			&nodeID, &nodeDefinition, &nodeExecutor, &round.Round, &status,
+			&round.Error, &round.ErrorKind, &inputsJSON, &outputsJSON, &started, &finished,
 		); err != nil {
 			return nil, fmt.Errorf("scan node for run %s: %w", runID, err)
 		}
+		round.Status = execution.Status(status)
 		var inputs, outputs map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(inputsJSON), &inputs); err != nil {
-			return nil, fmt.Errorf("decode run %s node %q inputs: %w", runID, node.NodeID, err)
+			return nil, fmt.Errorf("decode run %s node %q round %d inputs: %w", runID, nodeID, round.Round, err)
 		}
 		if err := json.Unmarshal([]byte(outputsJSON), &outputs); err != nil {
-			return nil, fmt.Errorf("decode run %s node %q outputs: %w", runID, node.NodeID, err)
+			return nil, fmt.Errorf("decode run %s node %q round %d outputs: %w", runID, nodeID, round.Round, err)
 		}
-		node.Inputs, node.Outputs = len(inputs), len(outputs)
+		round.Inputs, round.Outputs = len(inputs), len(outputs)
 		if started.Valid {
-			node.StartedAt, err = parseStoredTime(started.String)
+			round.StartedAt, err = parseStoredTime(started.String)
 			if err != nil {
-				return nil, fmt.Errorf("parse run %s node %q started_at: %w", runID, node.NodeID, err)
+				return nil, fmt.Errorf("parse run %s node %q round %d started_at: %w", runID, nodeID, round.Round, err)
 			}
 		}
 		if finished.Valid {
-			node.FinishedAt, err = parseStoredTime(finished.String)
+			round.FinishedAt, err = parseStoredTime(finished.String)
 			if err != nil {
-				return nil, fmt.Errorf("parse run %s node %q finished_at: %w", runID, node.NodeID, err)
+				return nil, fmt.Errorf("parse run %s node %q round %d finished_at: %w", runID, nodeID, round.Round, err)
 			}
 		}
-		nodes = append(nodes, node)
+		if len(nodes) == 0 || nodes[len(nodes)-1].NodeID != nodeID {
+			nodes = append(nodes, NodeSummary{
+				NodeID: nodeID, NodeDefinition: nodeDefinition, NodeExecutor: nodeExecutor,
+			})
+		}
+		node := &nodes[len(nodes)-1]
+		node.Status, node.Error, node.ErrorKind = round.Status, round.Error, round.ErrorKind
+		node.StartedAt, node.FinishedAt = round.StartedAt, round.FinishedAt
+		node.Inputs, node.Outputs = round.Inputs, round.Outputs
+		node.RoundDetails = append(node.RoundDetails, round)
+		node.Rounds = len(node.RoundDetails)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate nodes for run %s: %w", runID, err)

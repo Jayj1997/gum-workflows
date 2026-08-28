@@ -92,6 +92,7 @@ func TestHistoryShowsRunDetailsByPrefix(t *testing.T) {
 		"Run " + runID, "Workflow:", "history-demo v1", "Status:", "Stopped",
 		"Stopped reason:", "user_interrupt", "State dir:", ".workflow/executions/execution-000007",
 		"Nodes:", "worker", "coding-agent", "rounds: 2", "inputs: 1", "outputs: 1",
+		"Round 1 Failed", "error_kind: interaction", "Round 2 Succeeded",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("run detail missing %q:\n%s", want, out)

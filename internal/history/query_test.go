@@ -52,6 +52,32 @@ func TestListRunsReturnsNewestTwentyWithDistinctNodeProgress(t *testing.T) {
 	}
 }
 
+func TestListRunsCountsOnlyTheLatestRoundOfEachNode(t *testing.T) {
+	store, _ := openTest(t)
+	exec := &execution.WorkflowExecution{
+		RunID: "99999999-1111-4111-8111-111111111111", ID: "execution-000099", Workflow: "queued-retry",
+		Status: execution.StatusRunning, StartedAt: fixedTime,
+		Nodes: map[string]*execution.NodeExecution{
+			"worker": {
+				NodeID: "worker", NodeDefinition: "coding-agent", NodeExecutor: "v1",
+				History: []execution.NodeRun{{Round: 1, Status: execution.StatusSucceeded}},
+				Current: execution.NodeRun{Round: 2, Status: execution.StatusPending},
+			},
+		},
+	}
+	if err := store.Record(context.Background(), exec); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := store.ListRuns(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runs[0].NodesCompleted != 0 || runs[0].NodesTotal != 1 {
+		t.Errorf("latest-round progress = %d/%d, want 0/1", runs[0].NodesCompleted, runs[0].NodesTotal)
+	}
+}
+
 func TestGetNodeRunReturnsAllRoundsAndArtifactReferences(t *testing.T) {
 	store, _ := openTest(t)
 	started := time.Date(2026, 8, 29, 10, 0, 0, 0, time.UTC)
