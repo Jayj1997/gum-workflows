@@ -33,7 +33,7 @@ func TestRecordUpsertsWorkflowAndOneRowPerNodeRound(t *testing.T) {
 	}
 	firstRunID := exec.RunID
 	var firstNodeRunID string
-	if err := store.db.QueryRow(`SELECT id FROM workflow_node_run_history WHERE run_id = ? AND node_id = ? AND round = 1`, exec.RunID, "review").Scan(&firstNodeRunID); err != nil {
+	if err := store.db.QueryRow(`SELECT id FROM workflow_node_run_history WHERE run_id = ? AND node_id = ? AND round = 0`, exec.RunID, "review").Scan(&firstNodeRunID); err != nil {
 		t.Fatalf("query initial node row: %v", err)
 	}
 

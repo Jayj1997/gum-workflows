@@ -47,6 +47,7 @@ func TestRunRecorderObservesInitialRoundAndTerminalSnapshots(t *testing.T) {
 		round    int
 	}{
 		{StatusRunning, StatusPending, 0},
+		{StatusRunning, StatusReady, 1},
 		{StatusRunning, StatusRunning, 1},
 		{StatusRunning, StatusSucceeded, 1},
 		{StatusStopped, StatusSucceeded, 1},

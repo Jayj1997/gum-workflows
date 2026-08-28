@@ -99,22 +99,33 @@ func (n *NodeExecution) TransitionTo(next Status) error {
 
 // StartRun archives a prior completed round and starts the next running round.
 func (n *NodeExecution) StartRun(runID string, inputs map[string]InputSnapshot) error {
-	return n.startRun(runID, inputs, StatusRunning)
+	if err := n.prepareRun(runID, inputs); err != nil {
+		return err
+	}
+	return n.startPreparedRun(StatusRunning)
 }
 
 // StartWaitingRun archives a prior completed round and starts a human round waiting for a response.
 func (n *NodeExecution) StartWaitingRun(runID string, inputs map[string]InputSnapshot) error {
-	return n.startRun(runID, inputs, StatusWaitingHuman)
+	if err := n.prepareRun(runID, inputs); err != nil {
+		return err
+	}
+	return n.startPreparedRun(StatusWaitingHuman)
 }
 
-func (n *NodeExecution) startRun(runID string, inputs map[string]InputSnapshot, next Status) error {
+func (n *NodeExecution) prepareRun(runID string, inputs map[string]InputSnapshot) error {
 	previousRound := n.Current.Round
 	if previousRound == 0 {
-		if n.Current.Status != StatusReady {
+		if n.Current.Status != StatusPending && n.Current.Status != StatusReady {
 			return fmt.Errorf("node execution %q: start run from %s", n.NodeID, n.Current.Status)
 		}
 		if n.Current.RunID != "" {
 			runID = n.Current.RunID
+		}
+		if n.Current.Status == StatusPending {
+			if err := n.TransitionTo(StatusReady); err != nil {
+				return err
+			}
 		}
 	} else {
 		previous := n.Current
@@ -125,12 +136,19 @@ func (n *NodeExecution) startRun(runID string, inputs map[string]InputSnapshot, 
 	}
 
 	n.Current = NodeRun{
-		RunID:     runID,
-		Round:     previousRound + 1,
-		Status:    StatusReady,
-		Inputs:    inputs,
-		StartedAt: time.Now().UTC(),
+		RunID:  runID,
+		Round:  previousRound + 1,
+		Status: StatusReady,
+		Inputs: inputs,
 	}
+	return nil
+}
+
+func (n *NodeExecution) startPreparedRun(next Status) error {
+	if n.Current.Status != StatusReady {
+		return fmt.Errorf("node execution %q: start prepared run from %s", n.NodeID, n.Current.Status)
+	}
+	n.Current.StartedAt = time.Now().UTC()
 	return n.TransitionTo(next)
 }
 

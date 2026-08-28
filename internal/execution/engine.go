@@ -178,11 +178,6 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 		if !stopping {
 			for _, id := range g.NodeIDs {
 				if !queued[id] && e.ready(def, exec, nodes[id], id) {
-					if exec.Nodes[id].Current.Round == 0 {
-						if err := exec.Nodes[id].TransitionTo(StatusReady); err != nil {
-							return e.fail(exec, err)
-						}
-					}
 					ready = append(ready, id)
 					queued[id] = true
 				}
@@ -201,14 +196,16 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 				if !humanInput && !humanApproval {
 					ne.machineRuns++
 				}
-				var startErr error
-				if humanApproval {
-					startErr = ne.StartWaitingRun(uuid.NewString(), inputs)
-				} else {
-					startErr = ne.StartRun(uuid.NewString(), inputs)
+				if err := ne.prepareRun(uuid.NewString(), inputs); err != nil {
+					return e.fail(exec, fmt.Errorf("node %q: %w", id, err))
 				}
-				if startErr != nil {
-					return e.fail(exec, fmt.Errorf("node %q: %w", id, startErr))
+				e.persist(exec)
+				startStatus := StatusRunning
+				if humanApproval {
+					startStatus = StatusWaitingHuman
+				}
+				if err := ne.startPreparedRun(startStatus); err != nil {
+					return e.fail(exec, fmt.Errorf("node %q: %w", id, err))
 				}
 				ne.adviseRetry = nil
 				for _, dep := range def.Nodes[id].DependsOn {
