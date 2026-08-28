@@ -20,3 +20,5 @@
 仅 agent definition 声明 `advise` 输入时开放恢复；否则 interaction error 等价 structural，语义校验同时给出 warning。结构性失败继续 fail-fast，但等待已在途轮完成。测试覆盖错误包装、CLI 提示与解析、重试新 Node Run、优先级、收敛重置、分支隔离、未声明端口降级和在途轮完成。
 
 双轴代码审查发现 advise 提示曾与 Node Run 共用 inflight 计数：并行分支发生结构性错误时可能被仍在等待输入的提示阻塞。已把执行轮与提示分别计数，结构性停止会取消 advise 请求且只等待真实在途 Node Run；新增阻塞 gateway 回归测试。审查同时促成 `NodeRun.ErrorKind` 改用类型化枚举，并消除重复恢复判定。
+
+修复后复审：Standards 与 Spec 两轴均无剩余发现。验证：`go test ./...`、`go test -race ./internal/execution ./cmd/workflow`、`go vet ./...` 全绿（使用 `/private/tmp/gum-workflows-go-cache`）。
