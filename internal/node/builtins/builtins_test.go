@@ -225,3 +225,19 @@ func TestCodingAgentProducesOpenAPIAsSource(t *testing.T) {
 		t.Errorf("outputs missing code: %+v", outputs)
 	}
 }
+
+func TestCodingAgentPublishesCodeAfterSuccessfulAdapterCall(t *testing.T) {
+	ctx := newExecCtx(t, t.TempDir())
+	n, err := newCodingAgentExecutor(openAPIOnlyAgent{}).Create(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outputs, err := n.Execute(ctx, nil)
+	if err != nil {
+		t.Fatalf("Execute() unexpected error: %v", err)
+	}
+	if got := outputs["code"]; got.Kind != artifact.KindSourceCode || got.URI != ctx.Project.Workspace {
+		t.Errorf("code output = %+v, want SourceCode ref to %q", got, ctx.Project.Workspace)
+	}
+}

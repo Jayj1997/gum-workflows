@@ -136,7 +136,11 @@ _Avoid_: 把「全图静止」当作自动 Succeeded 的结束条件。
 全 Workflow 恰好一个源节点（无 inputs、无 dependsOn），且必须是 human-input：work（需求）必须来自人。用户主动触发开启工作流；产出一轮后可继续等待下一轮输入，直至用户 Finish。
 
 **Data Edge / Control Edge**:
-Data Edge 由 `inputs.<name>.from: <node-id>.<output>` 隐式产生，表达数据依赖；Control Edge 由 `dependsOn` 显式声明，只表达执行顺序。数据依赖永远不以 dependsOn 表达。
+Data Edge 由 `inputs.<name>.from: <node-id>.<output>` 隐式产生，表达 Node 间数据依赖；Control Edge 由 `dependsOn` 显式声明，只表达执行顺序。数据依赖永远不以 dependsOn 表达。Workflow Context Binding 虽复用 `inputs.from` 语法，但不产生 Node Edge。
+
+**Workflow Context Binding（工作流上下文绑定）**:
+Runtime 向 Node input 提供内建、类型化 ArtifactRef 的绑定。当前唯一绑定 `project.code: SourceCode` 指向本次 Run 的 In-place Project Workspace；它没有 Artifact Store 本体，不复制或内联源码，也不是字符串模板或 OS 环境变量。`project` 是保留的 Context 名，不得作为 Node ID。
+_Avoid_: 把 `project.code` 当作名为 project 的 Node output、普通字符串路径或源码快照。
 
 **Ready（就绪）**:
 节点唯一的调度关注点：inputs 收集完毕且 Control 前驱已完成即可运行。运行前校验（含环提醒）只是提示，不是节点运行的先决条件。

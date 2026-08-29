@@ -191,31 +191,27 @@ func (n codingAgentNode) Execute(ctx node.ExecutionContext, inputs map[string]ar
 		return nil, fmt.Errorf("coding-agent: %w", err)
 	}
 
-	outputs := make(map[string]artifact.ArtifactRef)
-	for _, ref := range produced {
-		switch ref.Kind {
-		case artifact.KindSourceCode:
-			outputs["code"] = artifact.ArtifactRef{
-				ID: "code", Kind: artifact.KindSourceCode, URI: ctx.Project.Workspace,
-			}
-		case artifact.KindOpenAPI:
-			// Agent 返回的 URI 指向 Workspace 文件（外部引用）；
-			// 重新写入 Store，使下游通过 Store 读取（Artifact 是唯一数据通道，§13）。
-			content, err := os.ReadFile(ref.URI)
-			if err != nil {
-				return nil, fmt.Errorf("coding-agent: read openapi %q: %w", ref.URI, err)
-			}
-			stored, err := ctx.Store.Put(artifact.Artifact{
-				ID: "openapi", Kind: artifact.KindOpenAPI, Version: "1", Data: string(content),
-			})
-			if err != nil {
-				return nil, fmt.Errorf("coding-agent: put openapi: %w", err)
-			}
-			outputs["openapi"] = stored
-		}
+	// Coding Agent 成功轮总会发布共享 Workspace 的 code 事件；版本由 Engine 分配。
+	outputs := map[string]artifact.ArtifactRef{
+		"code": {ID: "code", Kind: artifact.KindSourceCode, URI: ctx.Project.Workspace},
 	}
-	if len(outputs) == 0 {
-		return nil, fmt.Errorf("coding-agent: agent produced no recognizable artifacts")
+	for _, ref := range produced {
+		if ref.Kind != artifact.KindOpenAPI {
+			continue
+		}
+		// Agent 返回的 URI 指向 Workspace 文件（外部引用）；
+		// 重新写入 Store，使下游通过 Store 读取（Artifact 是唯一数据通道，§13）。
+		content, err := os.ReadFile(ref.URI)
+		if err != nil {
+			return nil, fmt.Errorf("coding-agent: read openapi %q: %w", ref.URI, err)
+		}
+		stored, err := ctx.Store.Put(artifact.Artifact{
+			ID: "openapi", Kind: artifact.KindOpenAPI, Version: "1", Data: string(content),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("coding-agent: put openapi: %w", err)
+		}
+		outputs["openapi"] = stored
 	}
 	return outputs, nil
 }

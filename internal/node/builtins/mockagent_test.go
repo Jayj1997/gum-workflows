@@ -21,6 +21,16 @@ type capturingAgent struct {
 	inputs []artifact.ArtifactRef
 }
 
+type openAPIOnlyAgent struct{}
+
+func (openAPIOnlyAgent) Execute(_ context.Context, _ agent.Task, proj project.Context, _ []artifact.ArtifactRef) ([]artifact.ArtifactRef, error) {
+	path := filepath.Join(proj.Workspace, "openapi-only.yaml")
+	if err := os.WriteFile(path, []byte("openapi: 3.1.0\n"), 0o644); err != nil {
+		return nil, err
+	}
+	return []artifact.ArtifactRef{{ID: "openapi", Kind: artifact.KindOpenAPI, URI: path}}, nil
+}
+
 func (a *capturingAgent) Execute(_ context.Context, _ agent.Task, proj project.Context, inputs []artifact.ArtifactRef) ([]artifact.ArtifactRef, error) {
 	a.inputs = append([]artifact.ArtifactRef(nil), inputs...)
 	taskFile := filepath.Join(proj.Workspace, "captured-task.md")
