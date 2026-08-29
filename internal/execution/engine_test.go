@@ -10,6 +10,7 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
 	"github.com/Jayj1997/gum-workflows/internal/definition"
 	"github.com/Jayj1997/gum-workflows/internal/node"
+	"github.com/Jayj1997/gum-workflows/internal/project"
 	"github.com/Jayj1997/gum-workflows/internal/workflow"
 )
 
@@ -172,8 +173,8 @@ func chainContracts() map[string]mockFactory {
 				"frontend-sdk":    {Type: "FrontendSDK", Optional: true},
 			},
 			outputs: map[string]definition.OutputPort{
-				"source-code": {Type: "SourceCode"},
-				"openapi":     {Type: "OpenAPI"},
+				"code":    {Type: "SourceCode"},
+				"openapi": {Type: "OpenAPI"},
 			},
 		},
 		"openapi-generator": {
@@ -338,7 +339,7 @@ func TestRunMinimalChain(t *testing.T) {
 		}
 	}
 
-	// 输出数量：coder 2（source-code + openapi）、sdk 1（frontend-sdk），共 3。
+	// 输出数量：coder 2（code + openapi）、sdk 1（frontend-sdk），共 3。
 	total := 0
 	for _, ns := range exec.Nodes {
 		total += len(ns.Current.Outputs)
@@ -400,6 +401,53 @@ func TestRunControlDependency(t *testing.T) {
 	// Control Edge 不携带数据：deploy 不产出也不消费。
 	if len(exec.Nodes["deploy"].Current.Outputs) != 0 {
 		t.Errorf("deploy outputs = %d, want 0", len(exec.Nodes["deploy"].Current.Outputs))
+	}
+}
+
+func TestRunResolvesProjectCodeContextToInPlaceWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	var received artifact.ArtifactRef
+	dr, er := newTestRegistries(t, fnFactory{
+		definition: "code-check",
+		inputs:     map[string]definition.InputPort{"code": {Type: "SourceCode"}},
+		create: func(node.Config) (node.Node, error) {
+			return callbackNode(func(_ node.ExecutionContext, inputs map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
+				received = inputs["code"]
+				return nil, nil
+			}), nil
+		},
+	})
+	def := workflow.Definition{
+		APIVersion: workflow.APIVersionV1,
+		Kind:       workflow.KindWorkflow,
+		Metadata:   workflow.Metadata{Name: "project-check"},
+		Nodes: map[string]workflow.NodeSpec{
+			"check": {
+				Node:   "code-check",
+				Inputs: map[string]workflow.InputBinding{"code": {From: "project.code"}},
+			},
+		},
+	}
+	e := NewEngine(er, dr, artifact.NewMemStore(), nil, WithProjectContext(project.Context{
+		Repository: project.Repository{Path: workspace},
+		Workspace:  workspace,
+	}))
+
+	exec, err := runUntilStopped(t, e, def)
+	if err != nil {
+		t.Fatalf("Run() unexpected error: %v", err)
+	}
+	want := artifact.ArtifactRef{
+		ID: "project-code", Kind: artifact.KindSourceCode, Version: "1", URI: workspace,
+	}
+	if received != want {
+		t.Errorf("code input = %+v, want %+v", received, want)
+	}
+	if got := exec.Nodes["check"].Current.Inputs["code"]; got.From != "project.code" || got.Ref != want {
+		t.Errorf("recorded code input = %+v, want project.code and %+v", got, want)
+	}
+	if _, err := e.store.Get(received); err == nil {
+		t.Error("project.code unexpectedly has an Artifact Store body; want workspace reference only")
 	}
 }
 

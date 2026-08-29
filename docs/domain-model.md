@@ -37,6 +37,8 @@ WorkflowExecution ── NodeExecution ── Node Run(round 1..n)
 | Data Edge | `inputs.<port>.from: <node-id>.<output>` | 传递生产者最新已完成版本的 `ArtifactRef` |
 | Control Edge | `dependsOn: [<node-id>]` | 只表达执行顺序，不传数据 |
 
+Workflow Context Binding 复用 input binding 语法，但不形成 Node Edge。当前唯一内建 Context 是 `project.code: SourceCode`：Runtime 在 Run 启动后把它解析为 `ID=project-code`、初始 `Version=1`、URI 指向规范化 In-place Project Workspace 的 ArtifactRef。它没有 Artifact Store 本体，不使用字符串模板、OS 环境变量或源码内联；`project` 因而是保留的 Context 名，不能用作 Node ID。
+
 `workflow.BuildGraph` 保留 Data/Control 类型并用于调度分析。环不再是校验错误：含 human 的环是正常审批/意见迭代；纯机器环产生 warning，并由运行时收敛保护兜底。
 
 全 Workflow 必须恰好一个无 inputs、无 dependsOn 的源 Node，且其 Node Type 必须是 human。当前内置入口是 `human-input`。
@@ -51,7 +53,7 @@ ArtifactRef = ID + Kind + Version + URI
 
 Node 只接收与返回 `map[端口名]ArtifactRef`。需要内容时由 Node 自己调用 `artifact.Store.Get`；大型源码 Artifact 只保存 Workspace/repository 等引用信息，不在 Node 间复制本体。
 
-同一 Node output 每次成功轮产生新版本。旧 Artifact 不删除；下游新一轮的 `InputSnapshot` 同时记录 YAML `from` 与实际消费的版本，运行历史因此可以回答某一轮消费、产出了什么。
+同一 Node output 每次成功轮产生新版本。Coding Agent 成功轮的 `code: SourceCode` 指向共享 Workspace，新版本用于触发绑定 `backend.code` 的下游；失败轮不发布 `code`。旧 Artifact 不删除；下游新一轮的 `InputSnapshot` 同时记录 YAML `from` 与实际消费的版本，运行历史因此可以回答某一轮消费、产出了什么。历史中的 code ArtifactRef 只证明当时的消费身份和触发链，不承诺恢复当时的源码状态。
 
 ## 4. Node、契约与 Executor
 
@@ -81,7 +83,7 @@ Run 前会交叉检查：
 | `human-input` | human | — | `requirement: markdown` |
 | `requirement-analysis` | agent | `requirement: markdown` | `rationality: int`、`analysis-output: markdown` |
 | `architecture-design` | agent | `analysis-output: markdown` | `architecture: ArchitectureSpec` |
-| `coding-agent` | agent | optional `analysis-output` / `architecture` / `openapi` / `frontend-sdk` / `advise` | `source-code: SourceCode`、`openapi: OpenAPI` |
+| `coding-agent` | agent | optional `analysis-output` / `architecture` / `openapi` / `frontend-sdk` / `advise` | `code: SourceCode`、`openapi: OpenAPI` |
 | `openapi-generator` | automation | `openapi: OpenAPI` | `frontend-sdk: FrontendSDK` |
 | `human-approval` | human | —；以 dependsOn 挂接被审 Node | `approve: bool`、`advise: markdown` |
 

@@ -97,8 +97,8 @@ func TestConsistencyExposesYAMLContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := d.Outputs["source-code"]; !ok {
-		t.Errorf("coding-agent outputs missing source-code: %+v", d.Outputs)
+	if _, ok := d.Outputs["code"]; !ok {
+		t.Errorf("coding-agent outputs missing code: %+v", d.Outputs)
 	}
 	if d.Inputs["architecture"].Type != "ArchitectureSpec" {
 		t.Errorf("coding-agent architecture input type = %q", d.Inputs["architecture"].Type)

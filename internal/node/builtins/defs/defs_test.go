@@ -127,8 +127,8 @@ func TestSeedsContracts(t *testing.T) {
 	assertPort(t, ca.Inputs, "coding-agent", "openapi", "OpenAPI", true)
 	assertPort(t, ca.Inputs, "coding-agent", "frontend-sdk", "FrontendSDK", true)
 	assertPort(t, ca.Inputs, "coding-agent", "advise", "markdown", true)
-	if got := ca.Outputs["source-code"].Type; got != "SourceCode" {
-		t.Errorf("coding-agent source-code type = %q, want SourceCode", got)
+	if got := ca.Outputs["code"].Type; got != "SourceCode" {
+		t.Errorf("coding-agent code type = %q, want SourceCode", got)
 	}
 	if got := ca.Outputs["openapi"].Type; got != "OpenAPI" {
 		t.Errorf("coding-agent openapi type = %q, want OpenAPI", got)

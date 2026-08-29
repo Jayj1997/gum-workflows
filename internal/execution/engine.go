@@ -132,6 +132,10 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 	if err != nil {
 		return nil, err
 	}
+	projectCtx := e.projectContext(def)
+	if usesProjectCode(def) && projectCtx.Workspace == "" {
+		return nil, fmt.Errorf("workflow context project.code: in-place Project Workspace must not be empty")
+	}
 
 	runID := e.runID
 	if runID == "" {
@@ -153,7 +157,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 	e.persist(ctx, exec)
 
 	execCtx := node.ExecutionContext{
-		Context: ctx, Project: e.projectContext(def), Store: e.store, Logger: e.logger,
+		Context: ctx, Project: projectCtx, Store: e.store, Logger: e.logger,
 	}
 	adviseCtx, cancelAdvise := context.WithCancel(ctx)
 	defer cancelAdvise()
@@ -423,6 +427,9 @@ func (e *Engine) blockedInputError(def workflow.Definition, exec *WorkflowExecut
 			}
 			fromNode, fromOutput, err := workflow.ParseRef(binding.From)
 			if err != nil {
+				continue
+			}
+			if workflow.IsWorkflowContext(fromNode) {
 				continue
 			}
 			completed, ok := latestCompleted(exec.Nodes[fromNode])
@@ -703,6 +710,10 @@ func (e *Engine) resolveDataInputs(def workflow.Definition, exec *WorkflowExecut
 		if err != nil {
 			continue
 		}
+		if ref, ok := e.workflowContextRef(def, fromNode, fromOutput); ok {
+			inputs[name] = InputSnapshot{From: binding.From, Ref: ref}
+			continue
+		}
 		completed, ok := latestCompleted(exec.Nodes[fromNode])
 		if !ok {
 			continue
@@ -713,6 +724,29 @@ func (e *Engine) resolveDataInputs(def workflow.Definition, exec *WorkflowExecut
 		}
 	}
 	return inputs
+}
+
+func (e *Engine) workflowContextRef(def workflow.Definition, contextName, outputName string) (artifact.ArtifactRef, bool) {
+	if contextName != workflow.ProjectContextName || outputName != workflow.ProjectCodeOutput {
+		return artifact.ArtifactRef{}, false
+	}
+	return artifact.ArtifactRef{
+		ID:      "project-code",
+		Kind:    artifact.KindSourceCode,
+		Version: "1",
+		URI:     e.projectContext(def).Workspace,
+	}, true
+}
+
+func usesProjectCode(def workflow.Definition) bool {
+	for _, spec := range def.Nodes {
+		for _, binding := range spec.Inputs {
+			if binding.From == workflow.ProjectContextName+"."+workflow.ProjectCodeOutput {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func latestCompleted(ne *NodeExecution) (NodeRun, bool) {

@@ -84,8 +84,8 @@ func testFactories() []fakeFactory {
 				"advise":          {Type: "markdown", Optional: true},
 			},
 			outputs: map[string]definition.OutputPort{
-				"source-code": {Type: "SourceCode"},
-				"openapi":     {Type: "OpenAPI"},
+				"code":    {Type: "SourceCode"},
+				"openapi": {Type: "OpenAPI"},
 			},
 		},
 		{
@@ -93,6 +93,11 @@ func testFactories() []fakeFactory {
 			nodeType:   definition.TypeAutomation,
 			inputs:     map[string]definition.InputPort{"openapi": {Type: "OpenAPI"}},
 			outputs:    map[string]definition.OutputPort{"frontend-sdk": {Type: "FrontendSDK"}},
+		},
+		{
+			definition: "code-check",
+			nodeType:   definition.TypeAutomation,
+			inputs:     map[string]definition.InputPort{"code": {Type: "SourceCode"}},
 		},
 		{
 			// union 消费端：验证 consumer ⊇ producer 的正向兼容
@@ -552,6 +557,101 @@ func TestSemanticProgrammaticChecks(t *testing.T) {
 		var verrs ValidationErrors
 		if ok := asValidationErrors(err, &verrs); !ok || len(verrs) < 1 {
 			t.Fatalf("Validate() error = %v, want aggregated ValidationErrors", err)
+		}
+	})
+}
+
+func TestSemanticWorkflowContextBindings(t *testing.T) {
+	base := workflow.Definition{
+		APIVersion: workflow.APIVersionV1,
+		Kind:       workflow.KindWorkflow,
+		Metadata:   workflow.Metadata{Name: "context-bindings"},
+		Projects:   []workflow.ProjectSpec{{Name: "p", Repository: "."}},
+		Nodes: map[string]workflow.NodeSpec{
+			"input": {Node: "human-input"},
+			"check": {
+				Node:      "code-check",
+				DependsOn: []string{"input"},
+				Inputs:    map[string]workflow.InputBinding{"code": {From: "project.code"}},
+			},
+		},
+	}
+
+	t.Run("project code is a typed SourceCode binding", func(t *testing.T) {
+		if _, err := testValidator(t).Validate(base); err != nil {
+			t.Fatalf("Validate() unexpected error: %v", err)
+		}
+	})
+
+	t.Run("backend code is a typed node output binding", func(t *testing.T) {
+		config, err := llm.Load([]byte(testLLMYAML))
+		if err != nil {
+			t.Fatal(err)
+		}
+		def := base
+		def.Nodes = map[string]workflow.NodeSpec{
+			"input":   {Node: "human-input"},
+			"backend": {Node: "coding-agent", DependsOn: []string{"input"}},
+			"check": {
+				Node:   "code-check",
+				Inputs: map[string]workflow.InputBinding{"code": {From: "backend.code"}},
+			},
+		}
+		if _, err := testValidator(t, WithLLMConfig(&config)).Validate(def); err != nil {
+			t.Fatalf("Validate() unexpected error: %v", err)
+		}
+	})
+
+	t.Run("context errors are aggregated", func(t *testing.T) {
+		def := base
+		def.Nodes = map[string]workflow.NodeSpec{
+			"input": {Node: "human-input"},
+			"unknown-context": {
+				Node:      "code-check",
+				DependsOn: []string{"input"},
+				Inputs:    map[string]workflow.InputBinding{"code": {From: "missing.code"}},
+			},
+			"unknown-output": {
+				Node:      "code-check",
+				DependsOn: []string{"input"},
+				Inputs:    map[string]workflow.InputBinding{"code": {From: "project.missing"}},
+			},
+			"wrong-type": {
+				Node:      "openapi-generator",
+				DependsOn: []string{"input"},
+				Inputs:    map[string]workflow.InputBinding{"openapi": {From: "project.code"}},
+			},
+		}
+
+		_, err := testValidator(t).Validate(def)
+		if err == nil {
+			t.Fatal("Validate() = nil error, want aggregated context errors")
+		}
+		for _, want := range []string{
+			`node "unknown-context" input "code": references unknown node or workflow context "missing"`,
+			`node "unknown-output" input "code": workflow context "project" has no output "missing"`,
+			`node "wrong-type" input "openapi": artifact type mismatch: project.code produces "SourceCode" but "OpenAPI" is expected`,
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("Validate() error =\n%v\nwant containing %q", err, want)
+			}
+		}
+	})
+
+	t.Run("context names cannot be shadowed by node IDs", func(t *testing.T) {
+		def := base
+		def.Nodes = map[string]workflow.NodeSpec{
+			"project": {Node: "human-input"},
+			"check": {
+				Node:      "code-check",
+				DependsOn: []string{"project"},
+				Inputs:    map[string]workflow.InputBinding{"code": {From: "project.code"}},
+			},
+		}
+
+		_, err := testValidator(t).Validate(def)
+		if err == nil || !strings.Contains(err.Error(), `node "project": ID is reserved for workflow context bindings`) {
+			t.Fatalf("Validate() error = %v, want reserved context name rejection", err)
 		}
 	})
 }

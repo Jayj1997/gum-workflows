@@ -195,7 +195,9 @@ func (n codingAgentNode) Execute(ctx node.ExecutionContext, inputs map[string]ar
 	for _, ref := range produced {
 		switch ref.Kind {
 		case artifact.KindSourceCode:
-			outputs["source-code"] = ref
+			outputs["code"] = artifact.ArtifactRef{
+				ID: "code", Kind: artifact.KindSourceCode, URI: ctx.Project.Workspace,
+			}
 		case artifact.KindOpenAPI:
 			// Agent 返回的 URI 指向 Workspace 文件（外部引用）；
 			// 重新写入 Store，使下游通过 Store 读取（Artifact 是唯一数据通道，§13）。

@@ -12,7 +12,7 @@ import (
 )
 
 // mockAgent 是测试内 Agent：与 agent.MockCodingAgent 行为一致，
-// 产出 source-code 与 openapi（满足最小链路的输出契约）。
+// 产出 code 与 openapi（满足最小链路的输出契约）。
 type mockAgent struct{}
 
 func newMockAgent() *mockAgent { return &mockAgent{} }
@@ -27,7 +27,7 @@ func (a *capturingAgent) Execute(_ context.Context, _ agent.Task, proj project.C
 	if err := os.WriteFile(taskFile, []byte("task"), 0o644); err != nil {
 		return nil, err
 	}
-	return []artifact.ArtifactRef{{ID: "source-code", Kind: artifact.KindSourceCode, URI: taskFile}}, nil
+	return []artifact.ArtifactRef{{ID: "code", Kind: artifact.KindSourceCode, URI: taskFile}}, nil
 }
 
 func (m *mockAgent) Execute(
@@ -54,7 +54,7 @@ func (m *mockAgent) Execute(
 		return nil, err
 	}
 	return []artifact.ArtifactRef{
-		{ID: "source-code", Kind: artifact.KindSourceCode, Version: "1", URI: taskFile},
+		{ID: "code", Kind: artifact.KindSourceCode, Version: "1", URI: taskFile},
 		{ID: "openapi", Kind: artifact.KindOpenAPI, Version: "1", URI: openapiFile},
 	}, nil
 }

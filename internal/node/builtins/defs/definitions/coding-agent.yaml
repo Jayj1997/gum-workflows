@@ -27,9 +27,9 @@ inputs:
     optional: true
     description: 人工审批给出的修改意见。
 outputs:
-  source-code:
+  code:
     type: SourceCode
-    description: 产出的源码引用。
+    description: 指向原地 Project Workspace 的代码引用；成功 Node Run 发布新版本。
   openapi:
     type: OpenAPI
     description: 产出的 OpenAPI 接口文档。

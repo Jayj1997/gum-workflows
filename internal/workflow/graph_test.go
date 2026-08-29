@@ -46,6 +46,31 @@ func TestBuildGraphDataEdges(t *testing.T) {
 	}
 }
 
+func TestBuildGraphDoesNotTreatWorkflowContextAsNodeEdge(t *testing.T) {
+	def := Definition{
+		APIVersion: APIVersionV1,
+		Kind:       KindWorkflow,
+		Metadata:   Metadata{Name: "project-check"},
+		Nodes: map[string]NodeSpec{
+			"check": {
+				Node:   "go-static-analysis",
+				Inputs: map[string]InputBinding{"code": {From: "project.code"}},
+			},
+		},
+	}
+
+	g, err := BuildGraph(def)
+	if err != nil {
+		t.Fatalf("BuildGraph() unexpected error: %v", err)
+	}
+	if len(g.Edges) != 0 {
+		t.Fatalf("Edges = %+v, want no Node edge for project.code", g.Edges)
+	}
+	if roots := g.Roots(); !reflect.DeepEqual(roots, []string{"check"}) {
+		t.Errorf("Roots() = %v, want [check]", roots)
+	}
+}
+
 func TestBuildGraphControlEdge(t *testing.T) {
 	def := Definition{
 		APIVersion: APIVersionV1,

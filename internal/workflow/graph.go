@@ -70,6 +70,9 @@ func BuildGraph(def Definition) (Graph, error) {
 			if err != nil {
 				return Graph{}, fmt.Errorf("node %q input %q: %w", to, name, err)
 			}
+			if IsWorkflowContext(from) {
+				continue
+			}
 			g.addEdge(from, to, DataEdge)
 		}
 		for _, from := range spec.DependsOn {

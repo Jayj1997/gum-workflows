@@ -116,6 +116,7 @@ func (v *SemanticValidator) Validate(def workflow.Definition) ([]Warning, error)
 	}
 
 	v.checkContractKinds(def, &errs)
+	v.checkWorkflowContextNames(def, &errs)
 	v.checkInputs(def, &errs)
 	v.checkDependsOn(def, &errs)
 	v.checkEntry(def, &errs)
@@ -126,6 +127,14 @@ func (v *SemanticValidator) Validate(def workflow.Definition) ([]Warning, error)
 	warns = append(warns, v.checkCycle(def)...)
 
 	return warns, errs.OrNil()
+}
+
+func (v *SemanticValidator) checkWorkflowContextNames(def workflow.Definition, errs *ValidationErrors) {
+	for _, id := range sortedKeys(def.Nodes) {
+		if workflow.IsWorkflowContext(id) {
+			*errs = append(*errs, fmt.Errorf("node %q: ID is reserved for workflow context bindings", id))
+		}
+	}
 }
 
 func (v *SemanticValidator) checkAgentAdvise(def workflow.Definition) []Warning {
@@ -220,9 +229,30 @@ func (v *SemanticValidator) checkInputs(def workflow.Definition, errs *Validatio
 				continue
 			}
 
+			inPort, declared := consumer.Inputs[name]
+			if !declared {
+				*errs = append(*errs, fmt.Errorf("node %q: input %q is not declared in the contract of definition %q",
+					id, name, spec.Node))
+				continue
+			}
+
+			if workflow.IsWorkflowContext(fromNode) {
+				outType, ok := workflow.WorkflowContextOutputType(fromNode, fromOutput)
+				if !ok {
+					*errs = append(*errs, fmt.Errorf("node %q input %q: workflow context %q has no output %q",
+						id, name, fromNode, fromOutput))
+					continue
+				}
+				if !v.compatible(inPort.Type, outType) {
+					*errs = append(*errs, fmt.Errorf("node %q input %q: artifact type mismatch: %s.%s produces %q but %q is expected",
+						id, name, fromNode, fromOutput, outType, inPort.Type))
+				}
+				continue
+			}
+
 			producerSpec, ok := def.Nodes[fromNode]
 			if !ok {
-				*errs = append(*errs, fmt.Errorf("node %q input %q: references unknown node %q", id, name, fromNode))
+				*errs = append(*errs, fmt.Errorf("node %q input %q: references unknown node or workflow context %q", id, name, fromNode))
 				continue
 			}
 			producer, err := v.defs.Definition(producerSpec.Node)
@@ -234,13 +264,6 @@ func (v *SemanticValidator) checkInputs(def workflow.Definition, errs *Validatio
 			if !ok {
 				*errs = append(*errs, fmt.Errorf("node %q input %q: node %q has no output %q",
 					id, name, fromNode, fromOutput))
-				continue
-			}
-
-			inPort, declared := consumer.Inputs[name]
-			if !declared {
-				*errs = append(*errs, fmt.Errorf("node %q: input %q is not declared in the contract of definition %q",
-					id, name, spec.Node))
 				continue
 			}
 			if !v.compatible(inPort.Type, outPort.Type) {

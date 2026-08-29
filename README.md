@@ -45,7 +45,7 @@ Gum-Workflows 面向代码开发、产品经理、测试、设计和运维等能
 |---|---|---|
 | workflow/v1 MVP | 已完成 | YAML Loader、CUE/语义校验、DAG、串行/并行 Engine、Artifact Store、Workspace、Mock Node、CLI 与 e2e |
 | 平台核心 01–14 | 已完成 | 定义体系、迭代引擎、人工在环、LLM 配置解析、SQLite 历史与 history CLI |
-| 14 后产品化 | 实施中 | Local Data Root 与 In-place Project Workspace 已落地；本地 GUI、Draft/Revision、独立 LLM Config、真实 `llm-chat`、Artifact 体验与运行恢复尚未实施 |
+| 14 后产品化 | 实施中 | Local Data Root、In-place Project Workspace 与 `project.code` Workflow Context Binding 已落地；本地 GUI、Draft/Revision、独立 LLM Config、真实 `llm-chat`、Artifact 体验与运行恢复尚未实施 |
 
 平台核心 01–14 已完成：
 
@@ -106,6 +106,7 @@ nodes:
 这表示 `frontend.design` 消费 `ui-design.design-file`。Runtime 因此知道 Frontend 必须等待 UI Design 产出，而无需再把数据依赖重复写入 `dependsOn`。
 
 - **Data Edge**：`inputs.<name>.from: <node-id>.<output>`；表达数据依赖。
+- **Workflow Context Binding**：`inputs.code.from: project.code`；把指向 In-place Project Workspace 的类型化 `SourceCode` 引用注入 Node，不形成 Node Data Edge，也不复制源码。
 - **Control Edge**：`dependsOn`；只表达无数据传递的先后约束。
 - **Ready**：`InputsReady AND ControlDependenciesCompleted`。
 - **Artifact 不变式**：Node 间只传 `ArtifactRef`，数据本体由 Artifact Store 管理。
@@ -198,7 +199,7 @@ nodes:
 | `human-input` | human | — | `requirement: markdown` | stdin |
 | `requirement-analysis` | agent | `requirement: markdown` | `rationality: int`、`analysis-output: markdown` | Mock |
 | `architecture-design` | agent | `analysis-output: markdown` | `architecture: ArchitectureSpec` | Mock |
-| `coding-agent` | agent | 多个可选开发 Artifact | `source-code: SourceCode`、`openapi: OpenAPI` | Mock |
+| `coding-agent` | agent | 多个可选开发 Artifact | `code: SourceCode`、`openapi: OpenAPI` | Mock |
 | `openapi-generator` | automation | `openapi: OpenAPI` | `frontend-sdk: FrontendSDK` | Mock |
 | `human-approval` | human | —；dependsOn 被审 Node | `approve: bool`、`advise: markdown` | stdin |
 
@@ -281,7 +282,6 @@ Agent Node
 - **Container Execution Environment**：首版使用 Host Execution Environment 和客户 PATH，只运行受信任项目；后续增加可复用的容器配置，固定工具链、网络与资源策略。
 - **Windows / WSL Script Runtime**：首批内置 Automation Script 只使用一份 POSIX `check.sh` 支持 Darwin/Linux，不提供 PowerShell 变体。后续单独设计 Windows 宿主上的统一 POSIX Script Runtime 或 WSL 后端，包括发行版、路径映射、PATH/工具发现、文件权限与进程取消语义。
 - **条件执行与 Skipped 传播**：首批 Code Quality Check 只产出结构化结果供人类查看或下游 Node 消费，不新增自动路由语义。后续单独设计类型化 `when`、条件重新求值、false/else、Skipped 传播与迭代图中的 Artifact 版本语义。
-- **Workflow Context Binding**：单独设计 Runtime 提供的类型化上下文引用，例如让没有前置开发 Node 的质量检查直接绑定 Run 初始 `project.code` Artifact。需区分内建上下文、用户变量、OS 环境变量与字符串模板，并保持 Artifact 是 Node 间唯一数据通道。
 - **用户自定义 Automation Script**：在预制质量节点的固定 Script Bundle/Result Adapter 协议稳定后，允许用户通过编辑脚本创建 automation Node Executor，而不是在 Node Instance 中填写一条任意 shell command。需单独设计脚本包身份/版本、跨平台运行时、Result Channel/Schema、权限、校验、分发和升级语义；不属于首批 Code Quality Check 实现范围。
 
 只有产品 v1 的领域模型和交互稳定后，才规划 Workflow 导入/导出、Git 版本管理、Workflow Pack、AI 修改 Workflow、内置 Workflow 库和云同步。

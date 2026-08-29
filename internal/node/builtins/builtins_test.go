@@ -151,12 +151,12 @@ func TestCodingAgentNodeWritesTaskInWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() unexpected error: %v", err)
 	}
-	if ref := outputs["source-code"]; ref.Kind != artifact.KindSourceCode {
-		t.Errorf("source-code kind = %q", ref.Kind)
+	if ref := outputs["code"]; ref.Kind != artifact.KindSourceCode {
+		t.Errorf("code kind = %q", ref.Kind)
 	}
-	// Mock Agent 的产出 URI 指向 Workspace 内文件。
-	if !strings.HasPrefix(outputs["source-code"].URI, ws) {
-		t.Errorf("source-code URI = %q, want under workspace %q", outputs["source-code"].URI, ws)
+	// Code Artifact 指向共享的 In-place Project Workspace，不是某个文件或源码副本。
+	if outputs["code"].URI != ws {
+		t.Errorf("code URI = %q, want workspace %q", outputs["code"].URI, ws)
 	}
 }
 
@@ -207,7 +207,7 @@ func TestOpenAPIGeneratorNode(t *testing.T) {
 }
 
 // 最小链路的 coding-agent 输出契约：必须产出 openapi（否则 openapi-generator
-// 节点无法运行）。Mock Agent 在源节点场景（无输入）即产出 source-code + openapi。
+// 节点无法运行）。Mock Agent 在源节点场景（无输入）即产出 code + openapi。
 func TestCodingAgentProducesOpenAPIAsSource(t *testing.T) {
 	ctx := newExecCtx(t, t.TempDir())
 
@@ -221,7 +221,7 @@ func TestCodingAgentProducesOpenAPIAsSource(t *testing.T) {
 	if _, ok := outputs["openapi"]; !ok {
 		t.Errorf("outputs missing openapi: %+v", outputs)
 	}
-	if _, ok := outputs["source-code"]; !ok {
-		t.Errorf("outputs missing source-code: %+v", outputs)
+	if _, ok := outputs["code"]; !ok {
+		t.Errorf("outputs missing code: %+v", outputs)
 	}
 }

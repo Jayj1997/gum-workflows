@@ -53,7 +53,7 @@ func (m *MockCodingAgent) Execute(
 
 	return []artifact.ArtifactRef{
 		{
-			ID:      "source-code",
+			ID:      "code",
 			Kind:    artifact.KindSourceCode,
 			Version: "1",
 			URI:     taskFile,

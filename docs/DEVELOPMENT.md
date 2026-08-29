@@ -143,7 +143,7 @@ Workflow: Running -> Stopped | Failed
 - `metadata`：`name`，可选 `version` / `description`。
 - `projects[]`：`name`、`repository`；当前语义要求恰好一个项目。
 - `nodes.<id>`：`node`，可选 `executor`、`llm`、`target_model`、`metadata`、`inputs`、`dependsOn`、`config`。
-- `inputs.<name>.from` 采用 `<node-id>.<output>`，产生 Data Edge；`dependsOn` 只产生 Control Edge。
+- `inputs.<name>.from` 通常采用 `<node-id>.<output>` 并产生 Data Edge；内建 `project.code` 是 Workflow Context Binding，传递指向 In-place Project Workspace 的 `SourceCode` ArtifactRef，不产生 Node Edge。`project` 是保留的 Context 名，不得作为 Node ID；`dependsOn` 只产生 Control Edge。
 
 新增 workflow 字段等于 Schema 变更，必须先修订设计并决定是否进入 workflow/v2。`retry/timeout/parallelism/environment/hooks` 当前禁止加入 workflow/v1。
 

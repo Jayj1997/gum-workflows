@@ -149,3 +149,40 @@ func TestRecordRejectsMissingRunIdentity(t *testing.T) {
 		t.Fatal("Record() = nil error, want missing Run ID rejection")
 	}
 }
+
+func TestRecordPreservesConsumedCodeArtifactRef(t *testing.T) {
+	store, _ := openTest(t)
+	codeRef := artifact.ArtifactRef{
+		ID: "project-code", Kind: artifact.KindSourceCode, Version: "1", URI: "/workspace/project",
+	}
+	exec := &execution.WorkflowExecution{
+		RunID: uuid.NewString(), Workflow: "project-check", Status: execution.StatusStopped,
+		StartedAt: fixedTime, FinishedAt: fixedTime.Add(time.Second),
+		Nodes: map[string]*execution.NodeExecution{
+			"check": {
+				NodeID: "check", NodeDefinition: "code-check", NodeExecutor: "v1",
+				Current: execution.NodeRun{
+					RunID: uuid.NewString(), Round: 1, Status: execution.StatusSucceeded,
+					Inputs: map[string]execution.InputSnapshot{
+						"code": {From: "project.code", Ref: codeRef},
+					},
+					StartedAt: fixedTime, FinishedAt: fixedTime.Add(time.Second),
+				},
+			},
+		},
+	}
+
+	if err := store.Record(context.Background(), exec); err != nil {
+		t.Fatalf("Record(): %v", err)
+	}
+	detail, err := store.GetNodeRun(context.Background(), exec.RunID, "check")
+	if err != nil {
+		t.Fatalf("GetNodeRun(): %v", err)
+	}
+	if detail == nil || len(detail.Rounds) != 1 {
+		t.Fatalf("GetNodeRun() = %+v, want one round", detail)
+	}
+	if got := detail.Rounds[0].Inputs["code"]; got.From != "project.code" || got.Ref != codeRef {
+		t.Errorf("stored code input = %+v, want project.code and %+v", got, codeRef)
+	}
+}
