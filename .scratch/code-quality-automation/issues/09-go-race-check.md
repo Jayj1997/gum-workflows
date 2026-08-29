@@ -18,3 +18,4 @@
 ## Comments
 
 - 2026-08-30：实现完成。新增 `go-race-check` v1 定义、不可变 POSIX Bundle、运行前 Race Requirement 诊断、严格 Race Result/Adapter 与 Engine/Node Run 验收；Result 只报告本次执行观察到的 race，不作全局无竞态承诺。
+- 2026-08-30：双轴 review 的 Standards 侧无硬性违规；已将 finding kind 收紧为领域类型。Spec 侧发现并修复空/无语义 Go JSON 误判、多 package 失败分类使用全局状态、缺少 GOOS/host mismatch fixture 三项问题。重复 Bundle/Result envelope plumbing 仅记为判断性 smell，本票不为后续 Complexity 提前扩展通用抽象。

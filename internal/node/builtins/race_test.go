@@ -83,6 +83,7 @@ func TestRaceExecutorDiagnosesRaceRequirementsBeforeRun(t *testing.T) {
 	tests := []struct {
 		name, requirementMode, want string
 	}{
+		{name: "target platform differs from host", requirementMode: "host-mismatch", want: "must match host"},
 		{name: "CGO disabled", requirementMode: "cgo-disabled", want: "CGO_ENABLED=1"},
 		{name: "unsupported architecture", requirementMode: "unsupported-arch", want: "does not support"},
 		{name: "missing C compiler", requirementMode: "missing-cc", want: "C compiler"},
@@ -163,6 +164,7 @@ case "$1" in
       GOVERSION) printf 'go1.25.0\n/go\n%s\n%s\n1\n' "$FAKE_GOOS" "$FAKE_GOARCH" ;;
       GOOS)
         case "$FAKE_RACE_REQUIREMENT" in
+          host-mismatch) printf 'unsupported-os\n%s\n1\nfake-cc\n' "$FAKE_GOARCH" ;;
           cgo-disabled) printf '%s\n%s\n0\nfake-cc\n' "$FAKE_GOOS" "$FAKE_GOARCH" ;;
           unsupported-arch) printf '%s\nwasm\n1\nfake-cc\n' "$FAKE_GOOS" ;;
           missing-cc) printf '%s\n%s\n1\nmissing-race-cc\n' "$FAKE_GOOS" "$FAKE_GOARCH" ;;
@@ -179,10 +181,10 @@ case "$1" in
   test)
     printf '%s\n' "$*" > "$FAKE_GO_ARGS"
     case "$FAKE_GO_MODE" in
-      passed) printf '%s\n' '{"Action":"run","Package":"example.com/app","Test":"TestSafe"}' '{"Action":"pass","Package":"example.com/app","Test":"TestSafe"}' ;;
-      race) printf '%s\n' '{"Action":"run","Package":"example.com/app","Test":"TestRace"}' '{"Action":"output","Package":"example.com/app","Test":"TestRace","Output":"WARNING: DATA RACE\\n"}' '{"Action":"fail","Package":"example.com/app","Test":"TestRace"}'; exit 1 ;;
-      test-failure) printf '%s\n' '{"Action":"run","Package":"example.com/app","Test":"TestBroken"}' '{"Action":"output","Package":"example.com/app","Test":"TestBroken","Output":"app_test.go:9: wrong value\\n"}' '{"Action":"fail","Package":"example.com/app","Test":"TestBroken"}'; exit 1 ;;
-      compile-failure) printf '%s\n' '{"Action":"output","Package":"example.com/app","Output":"./app.go:4: undefined: missing\\n"}'; exit 1 ;;
+      passed) printf '%s\n' '{"Action":"run","Package":"example.com/app","Test":"TestSafe"}' '{"Action":"pass","Package":"example.com/app","Test":"TestSafe"}' '{"Action":"pass","Package":"example.com/app"}' ;;
+      race) printf '%s\n' '{"Action":"run","Package":"example.com/app","Test":"TestRace"}' '{"Action":"output","Package":"example.com/app","Test":"TestRace","Output":"WARNING: DATA RACE\\n"}' '{"Action":"fail","Package":"example.com/app","Test":"TestRace"}' '{"Action":"fail","Package":"example.com/app"}'; exit 1 ;;
+      test-failure) printf '%s\n' '{"Action":"run","Package":"example.com/app","Test":"TestBroken"}' '{"Action":"output","Package":"example.com/app","Test":"TestBroken","Output":"app_test.go:9: wrong value\\n"}' '{"Action":"fail","Package":"example.com/app","Test":"TestBroken"}' '{"Action":"fail","Package":"example.com/app"}'; exit 1 ;;
+      compile-failure) printf '%s\n' '{"Action":"output","Package":"example.com/app","Output":"./app.go:4: undefined: missing\\n"}' '{"Action":"fail","Package":"example.com/app"}'; exit 1 ;;
       invalid-json) printf '{not-json}\n'; exit 1 ;;
       *) printf 'unexpected fake mode: %s\n' "$FAKE_GO_MODE" >&2; exit 2 ;;
     esac

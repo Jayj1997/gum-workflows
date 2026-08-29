@@ -15,12 +15,13 @@ func TestRaceAdapterBuildsHonestPassedRaceFailureAndNotApplicableResults(t *test
 		exitCode                       int
 		verdict                        Verdict
 		races                          *int
-		findingKind                    string
+		findingKind                    RaceFindingKind
 	}{
 		{
 			name: "no race observed", packages: "example.com/app\n",
 			events: `{"Action":"run","Package":"example.com/app","Test":"TestSafe"}` + "\n" +
-				`{"Action":"pass","Package":"example.com/app","Test":"TestSafe"}` + "\n",
+				`{"Action":"pass","Package":"example.com/app","Test":"TestSafe"}` + "\n" +
+				`{"Action":"pass","Package":"example.com/app"}` + "\n",
 			verdict: VerdictPassed, races: intPointer(0),
 		},
 		{
@@ -28,24 +29,27 @@ func TestRaceAdapterBuildsHonestPassedRaceFailureAndNotApplicableResults(t *test
 			events: `{"Action":"run","Package":"example.com/app","Test":"TestRace"}` + "\n" +
 				`{"Action":"output","Package":"example.com/app","Test":"TestRace","Output":"WARNING: DATA RACE\\n"}` + "\n" +
 				`{"Action":"output","Package":"example.com/app","Test":"TestRace","Output":"race detected during execution of test\\n"}` + "\n" +
-				`{"Action":"fail","Package":"example.com/app","Test":"TestRace"}` + "\n",
-			verdict: VerdictFailed, races: intPointer(1), findingKind: "race",
+				`{"Action":"fail","Package":"example.com/app","Test":"TestRace"}` + "\n" +
+				`{"Action":"fail","Package":"example.com/app"}` + "\n",
+			verdict: VerdictFailed, races: intPointer(1), findingKind: RaceFindingObserved,
 		},
 		{
 			name: "ordinary test failure", packages: "example.com/app\n", exitCode: 1,
 			events: `{"Action":"run","Package":"example.com/app","Test":"TestBroken"}` + "\n" +
 				`{"Action":"output","Package":"example.com/app","Test":"TestBroken","Output":"app_test.go:9: wrong value\\n"}` + "\n" +
-				`{"Action":"fail","Package":"example.com/app","Test":"TestBroken"}` + "\n",
-			verdict: VerdictFailed, races: intPointer(0), findingKind: "test-failure",
+				`{"Action":"fail","Package":"example.com/app","Test":"TestBroken"}` + "\n" +
+				`{"Action":"fail","Package":"example.com/app"}` + "\n",
+			verdict: VerdictFailed, races: intPointer(0), findingKind: RaceFindingTestFailure,
 		},
 		{
 			name: "compile failure", packages: "example.com/app\n", exitCode: 1,
-			events:  `{"Action":"output","Package":"example.com/app","Output":"./app.go:4: undefined: missing\\n"}` + "\n",
-			verdict: VerdictFailed, races: intPointer(0), findingKind: "compile-failure",
+			events: `{"Action":"output","Package":"example.com/app","Output":"./app.go:4: undefined: missing\\n"}` + "\n" +
+				`{"Action":"fail","Package":"example.com/app"}` + "\n",
+			verdict: VerdictFailed, races: intPointer(0), findingKind: RaceFindingCompileFailure,
 		},
 		{
 			name: "package loading failure", exitCode: 1, stderr: "pattern ./...: directory prefix . does not contain main module\n",
-			verdict: VerdictFailed, races: intPointer(0), findingKind: "package-failure",
+			verdict: VerdictFailed, races: intPointer(0), findingKind: RaceFindingPackageFailure,
 		},
 		{name: "no Go package", verdict: VerdictNotApplicable},
 	}
@@ -83,6 +87,8 @@ func TestRaceAdapterRejectsDamagedOrInfrastructureEvidence(t *testing.T) {
 		reportedExit *int
 	}{
 		{name: "invalid Go JSON", events: "{not-json}\n", exitCode: 1},
+		{name: "empty successful Go JSON", exitCode: 0},
+		{name: "meaningless successful Go JSON", events: "{}\n", exitCode: 0},
 		{name: "infrastructure exit", exitCode: 125},
 		{name: "mismatched exit", exitCode: 1, reportedExit: intPointer(0)},
 	}
@@ -97,6 +103,21 @@ func TestRaceAdapterRejectsDamagedOrInfrastructureEvidence(t *testing.T) {
 				t.Fatalf("AdaptRaceResult() error = %v, want Structural Error", err)
 			}
 		})
+	}
+}
+
+func TestRaceAdapterClassifiesFailurePerPackage(t *testing.T) {
+	events := `{"Action":"run","Package":"example.com/safe","Test":"TestSafe"}` + "\n" +
+		`{"Action":"pass","Package":"example.com/safe","Test":"TestSafe"}` + "\n" +
+		`{"Action":"pass","Package":"example.com/safe"}` + "\n" +
+		`{"Action":"output","Package":"example.com/broken","Output":"./broken.go:4: undefined: missing\\n"}` + "\n" +
+		`{"Action":"fail","Package":"example.com/broken"}` + "\n"
+	result, err := AdaptRaceResult(raceExecutionFixture(t, "example.com/safe\nexample.com/broken\n", events, "", 1))
+	if err != nil {
+		t.Fatalf("AdaptRaceResult() unexpected error: %v", err)
+	}
+	if len(result.Findings) != 1 || result.Findings[0].Package != "example.com/broken" || result.Findings[0].Kind != RaceFindingCompileFailure {
+		t.Fatalf("findings = %+v, want compile failure for broken package", result.Findings)
 	}
 }
 

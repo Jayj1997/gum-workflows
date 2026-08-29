@@ -57,24 +57,28 @@ func AdaptRaceResult(record ExecutionRecord) (RaceResult, error) {
 	if err != nil {
 		return RaceResult{}, node.Structural(fmt.Errorf("race result adapter: %w", err))
 	}
+	packageNames := nonEmptyLines(packages)
+	if err := validateGoTestEventCompletion(packageNames, events, record.ExitCode); err != nil {
+		return RaceResult{}, node.Structural(fmt.Errorf("race result adapter: %w", err))
+	}
 
 	raceCount := 0
 	findings := make([]RaceFinding, 0)
-	anyTestRun := false
-	lastOutput := ""
-	lastPackage := ""
+	testRan := make(map[string]bool)
+	racePackages := make(map[string]bool)
+	lastOutput := make(map[string]string)
 	for _, event := range events {
 		if event.Action == "run" && event.Test != "" {
-			anyTestRun = true
+			testRan[event.Package] = true
 		}
 		if output := strings.TrimSpace(event.Output); output != "" {
-			lastOutput = output
-			lastPackage = event.Package
+			lastOutput[event.Package] = output
 		}
 		if strings.Contains(event.Output, "WARNING: DATA RACE") {
 			raceCount++
+			racePackages[event.Package] = true
 			findings = append(findings, RaceFinding{
-				Tool: "go test -race", Kind: "race", Package: event.Package,
+				Tool: "go test -race", Kind: RaceFindingObserved, Package: event.Package,
 				Message: "data race observed during this invocation",
 			})
 		}
@@ -92,26 +96,37 @@ func AdaptRaceResult(record ExecutionRecord) (RaceResult, error) {
 		StartedAt: record.StartedAt, FinishedAt: record.FinishedAt,
 	}
 	switch {
-	case strings.TrimSpace(string(packages)) == "" && record.ExitCode == 0:
+	case len(packageNames) == 0 && record.ExitCode == 0:
 		result.Verdict = VerdictNotApplicable
 		result.Metrics.RacesDetected = RaceMetric{Reason: "no Go packages"}
-	case raceCount > 0:
-		result.Verdict = VerdictFailed
 	case record.ExitCode != 0:
 		result.Verdict = VerdictFailed
-		kind := "compile-failure"
-		if strings.TrimSpace(string(packages)) == "" {
-			kind = "package-failure"
-		} else if anyTestRun {
-			kind = "test-failure"
+		if len(packageNames) == 0 {
+			message, messageErr := raceFailureMessage(record, "")
+			if messageErr != nil {
+				return RaceResult{}, node.Structural(fmt.Errorf("race result adapter: %w", messageErr))
+			}
+			result.Findings = append(result.Findings, RaceFinding{Tool: "go test -race", Kind: RaceFindingPackageFailure, Message: message})
+		} else {
+			for _, packageName := range failedGoTestPackages(events) {
+				if racePackages[packageName] {
+					continue
+				}
+				kind := RaceFindingCompileFailure
+				if testRan[packageName] {
+					kind = RaceFindingTestFailure
+				}
+				message, messageErr := raceFailureMessage(record, lastOutput[packageName])
+				if messageErr != nil {
+					return RaceResult{}, node.Structural(fmt.Errorf("race result adapter: %w", messageErr))
+				}
+				result.Findings = append(result.Findings, RaceFinding{
+					Tool: "go test -race", Kind: kind, Package: packageName, Message: message,
+				})
+			}
 		}
-		message, messageErr := raceFailureMessage(record, lastOutput)
-		if messageErr != nil {
-			return RaceResult{}, node.Structural(fmt.Errorf("race result adapter: %w", messageErr))
-		}
-		result.Findings = append(result.Findings, RaceFinding{
-			Tool: "go test -race", Kind: kind, Package: lastPackage, Message: message,
-		})
+	case raceCount > 0:
+		result.Verdict = VerdictFailed
 	default:
 		result.Verdict = VerdictPassed
 	}
@@ -119,6 +134,53 @@ func AdaptRaceResult(record ExecutionRecord) (RaceResult, error) {
 		return RaceResult{}, node.Structural(fmt.Errorf("race result adapter: %w", err))
 	}
 	return result, nil
+}
+
+func nonEmptyLines(data []byte) []string {
+	var lines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func validateGoTestEventCompletion(packages []string, events []goTestEvent, exitCode int) error {
+	if len(packages) == 0 {
+		return nil
+	}
+	terminal := make(map[string]string)
+	for _, event := range events {
+		if event.Test == "" && (event.Action == "pass" || event.Action == "fail" || event.Action == "skip") {
+			terminal[event.Package] = event.Action
+		}
+	}
+	if exitCode == 0 {
+		for _, packageName := range packages {
+			if action := terminal[packageName]; action != "pass" && action != "skip" {
+				return fmt.Errorf("test.json lacks a successful terminal event for package %q", packageName)
+			}
+		}
+		return nil
+	}
+	if len(failedGoTestPackages(events)) == 0 {
+		return fmt.Errorf("test.json lacks a failed package terminal event")
+	}
+	return nil
+}
+
+func failedGoTestPackages(events []goTestEvent) []string {
+	seen := make(map[string]bool)
+	var packages []string
+	for _, event := range events {
+		if event.Test != "" || event.Action != "fail" || event.Package == "" || seen[event.Package] {
+			continue
+		}
+		seen[event.Package] = true
+		packages = append(packages, event.Package)
+	}
+	return packages
 }
 
 func decodeGoTestEvents(data []byte) ([]goTestEvent, error) {

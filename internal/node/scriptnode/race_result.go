@@ -50,12 +50,26 @@ type RaceMetric struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
+// RaceFindingKind identifies why one race-check invocation failed.
+type RaceFindingKind string
+
+const (
+	// RaceFindingObserved records one race-detector report.
+	RaceFindingObserved RaceFindingKind = "race"
+	// RaceFindingTestFailure records a test failure in a package that ran tests.
+	RaceFindingTestFailure RaceFindingKind = "test-failure"
+	// RaceFindingCompileFailure records a failed package that never started a test.
+	RaceFindingCompileFailure RaceFindingKind = "compile-failure"
+	// RaceFindingPackageFailure records a failure before any package could be listed.
+	RaceFindingPackageFailure RaceFindingKind = "package-failure"
+)
+
 // RaceFinding records an observed race or a project test/build failure.
 type RaceFinding struct {
-	Tool    string `json:"tool"`
-	Kind    string `json:"kind"`
-	Package string `json:"package,omitempty"`
-	Message string `json:"message"`
+	Tool    string          `json:"tool"`
+	Kind    RaceFindingKind `json:"kind"`
+	Package string          `json:"package,omitempty"`
+	Message string          `json:"message"`
 }
 
 // Validate enforces the closed race-result contract and cross-field invariants.
@@ -99,7 +113,7 @@ func (r RaceResult) Validate() error {
 			return fmt.Errorf("findings[%d] must identify go test -race and a message", i)
 		}
 		switch finding.Kind {
-		case "race", "test-failure", "compile-failure", "package-failure":
+		case RaceFindingObserved, RaceFindingTestFailure, RaceFindingCompileFailure, RaceFindingPackageFailure:
 		default:
 			return fmt.Errorf("findings[%d].kind %q is invalid", i, finding.Kind)
 		}
