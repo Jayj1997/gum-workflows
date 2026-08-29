@@ -1,0 +1,15 @@
+apiVersion: nodeDefinition/v1
+kind: nodeDefinition
+metadata:
+  name: go-race-check
+  description: 使用用户本机 Go Race Detector 运行全量测试并报告本次观察到的竞态。
+type: automation
+requires: [project]
+inputs:
+  code:
+    type: SourceCode
+    description: 指向原地 Project Workspace 的代码引用。
+outputs:
+  result:
+    type: QualityCheckResult
+    description: 严格且不过度承诺的竞态质量检查结果。

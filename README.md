@@ -45,7 +45,7 @@ Gum-Workflows 面向代码开发、产品经理、测试、设计和运维等能
 |---|---|---|
 | workflow/v1 MVP | 已完成 | YAML Loader、CUE/语义校验、DAG、串行/并行 Engine、Artifact Store、Workspace、Mock Node、CLI 与 e2e |
 | 平台核心 01–14 | 已完成 | 定义体系、迭代引擎、人工在环、LLM 配置解析、SQLite 历史与 history CLI |
-| 14 后产品化 | 实施中 | Local Data Root、In-place Project Workspace、`project.code` Workflow Context Binding 与真实 `go-static-analysis` tracer bullet 已落地；其余质量节点、本地 GUI、Draft/Revision、独立 LLM Config、真实 `llm-chat`、Artifact 体验与运行恢复尚未实施 |
+| 14 后产品化 | 实施中 | Local Data Root、In-place Project Workspace、`project.code` Workflow Context Binding 与真实 Static/Coverage/Race 三个 Go 质量节点已落地；Complexity、本地 GUI、Draft/Revision、独立 LLM Config、真实 `llm-chat`、Artifact 体验与运行恢复尚未实施 |
 
 平台核心 01–14 已完成：
 
@@ -58,7 +58,7 @@ Gum-Workflows 面向代码开发、产品经理、测试、设计和运维等能
 - human-input、human-approval、advise retry 与错误二分；
 - SQLite Node Run 历史、三级 history CLI 与 fullstack Demo。
 
-> 当前 agent 与 OpenAPI Generator 仍为 Mock；`go-static-analysis` 已通过固定 POSIX Script Bundle 真实运行用户 PATH 中的 Go 工具链。`internal/llm` 当前只负责配置与解析，不包含真实网络调用。
+> 当前 agent 与 OpenAPI Generator 仍为 Mock；Static/Coverage/Race 三个 Go 质量节点已通过固定 POSIX Script Bundle 真实运行用户 PATH 中的 Go 工具链。`internal/llm` 当前只负责配置与解析，不包含真实网络调用。
 
 当前 `run`、Artifact 与全局 `history` 使用用户级 Local Data Root，不再向项目写入 `.workflow`。可用 `GUM_WORKFLOWS_DATA_ROOT` 指定该目录；未指定时使用操作系统默认的用户应用数据位置。Run UUID 同时作为历史主键与 `runs/<run-id>/` 目录身份。旧项目内 `.workflow` 数据不会自动扫描；开发期需要保留时可显式调用 `history.MigrateLegacy` 一次性迁移。
 
@@ -202,9 +202,11 @@ nodes:
 | `coding-agent` | agent | 多个可选开发 Artifact | `code: SourceCode`、`openapi: OpenAPI` | Mock |
 | `openapi-generator` | automation | `openapi: OpenAPI` | `frontend-sdk: FrontendSDK` | Mock |
 | `go-static-analysis` | automation | `code: SourceCode` | `result: QualityCheckResult` | 真实 `go vet` ScriptNode（Darwin/Linux） |
+| `go-coverage-check` | automation | `code: SourceCode` | `result: QualityCheckResult` | 真实 statement coverage ScriptNode（Darwin/Linux） |
+| `go-race-check` | automation | `code: SourceCode` | `result: QualityCheckResult` | 真实 Go Race Detector ScriptNode（Darwin/Linux） |
 | `human-approval` | human | —；dependsOn 被审 Node | `approve: bool`、`advise: markdown` | stdin |
 
-`go-static-analysis` 固定运行 full-scope `go vet -json ./...`：无诊断、发现诊断和无 Go package 分别形成 `passed`、`failed`、`not-applicable` 的 `qualityCheckResult/v1`；工具或产物故障是 Structural Error。下一批质量节点与真实 `llm-chat` 仍需按各自票据实施。
+`go-static-analysis` 固定运行 full-scope `go vet -json ./...`；`go-coverage-check` 固定运行禁用缓存的 full-scope Go JSON 测试并按 statement coverage 阈值判定；`go-race-check` 在平台、CGO 和 C 编译器 Requirement 满足后固定运行 `go test -race -count=1 -json ./...`。三者都以 `passed`、`failed`、`not-applicable` 的严格 `qualityCheckResult/v1` 表达业务结果，工具或产物故障是 Structural Error。Race 的 `passed` 只表示本次执行未观察到 race，不声称项目不存在数据竞争。Complexity 与真实 `llm-chat` 仍需按各自票据实施。
 
 ## LLM Config 方向
 

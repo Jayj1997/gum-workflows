@@ -1,0 +1,8 @@
+apiVersion: nodeExecutor/v1
+kind: nodeExecutor
+metadata:
+  name: go-race-check-v1
+  description: go-race-check 的首个不可变 POSIX Script Bundle。
+node: go-race-check
+version: v1
+updates: 首个版本：在 Darwin/Linux 上运行全量 Go Race Detector 并生成 QualityCheckResult。

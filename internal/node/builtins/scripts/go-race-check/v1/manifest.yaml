@@ -1,0 +1,22 @@
+apiVersion: automationScript/v1
+kind: automationScript
+node: go-race-check
+executor: v1
+entry: check.sh
+platforms: [darwin, linux]
+requirements:
+  executables: [sh, go, tee]
+toolOutputs:
+  - path: packages.txt
+    required: true
+  - path: test.json
+    required: true
+  - path: test-exit.txt
+    required: true
+  - path: go-version.txt
+    required: true
+  - path: go-env.txt
+    required: true
+  - path: cc.txt
+    required: true
+resultAdapter: go-race-check/v1

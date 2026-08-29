@@ -59,6 +59,7 @@ type Toolchain struct {
 	GOOS            string `json:"goos"`
 	GOARCH          string `json:"goarch"`
 	CGOEnabled      string `json:"cgoEnabled"`
+	CCompiler       string `json:"cCompiler,omitempty"`
 }
 
 // StaticFinding is one go vet or package-loading diagnostic.

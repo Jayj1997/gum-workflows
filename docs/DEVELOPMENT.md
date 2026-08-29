@@ -35,7 +35,7 @@ gum-workflows/
 │   ├── workflow/                 # workflow/v1、严格加载、Data/Control Graph
 │   ├── validation/               # CUE + 聚合语义校验与 warning
 │   ├── node/                     # Node、ExecutorFactory、ExecutorRegistry
-│   │   ├── builtins/             # Mock/Human Executor、真实 Go Static/Coverage 与内嵌定义/Script Bundle
+│   │   ├── builtins/             # Mock/Human Executor、真实 Go Static/Coverage/Race 与内嵌定义/Script Bundle
 │   │   └── scriptnode/           # automationScript/v1、流式进程执行与 Result Adapter 合同
 │   ├── execution/                # 迭代引擎、HumanGateway、Node Run 状态与快照
 │   ├── history/                  # SQLite 迁移、定义导入、Run Record 与 Query

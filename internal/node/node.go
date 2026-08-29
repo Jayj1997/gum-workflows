@@ -49,6 +49,7 @@ type ToolchainDiagnostics struct {
 	GOOS            string `json:"goos,omitempty"`
 	GOARCH          string `json:"goarch,omitempty"`
 	CGOEnabled      string `json:"cgoEnabled,omitempty"`
+	CCompiler       string `json:"cCompiler,omitempty"`
 }
 
 // RunDiagnostics records non-sensitive facts needed to explain host script execution.
