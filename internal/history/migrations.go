@@ -21,6 +21,9 @@ const RunHistorySchemaVersion = 2
 // the Workflow Run UUID is now the only Run and directory identity.
 const StableRunIdentitySchemaVersion = 3
 
+// NodeRunDiagnosticsSchemaVersion preserves immutable script and host execution facts.
+const NodeRunDiagnosticsSchemaVersion = 4
+
 // 新增迁移只允许 append（不改写历史迁移），保证已迁移的库向前兼容。
 var migrations = []migration{
 	{
@@ -121,6 +124,12 @@ var migrations = []migration{
 		version: StableRunIdentitySchemaVersion,
 		stmts: []string{
 			`ALTER TABLE workflow_run_history DROP COLUMN execution_id`,
+		},
+	},
+	{
+		version: NodeRunDiagnosticsSchemaVersion,
+		stmts: []string{
+			`ALTER TABLE workflow_node_run_history ADD COLUMN diagnostics_json TEXT NOT NULL DEFAULT '{}'`,
 		},
 	},
 }

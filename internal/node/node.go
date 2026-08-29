@@ -19,9 +19,30 @@ import (
 type ExecutionContext struct {
 	context.Context
 
-	Project project.Context
-	Store   artifact.Store
-	Logger  *slog.Logger
+	Project     project.Context
+	Store       artifact.Store
+	Logger      *slog.Logger
+	Run         RunContext
+	Diagnostics *RunDiagnostics
+}
+
+// RunContext identifies the Local Data Root locations owned by one Node Run.
+type RunContext struct {
+	WorkflowRunID string
+	NodeRunID     string
+	LogsDir       string
+	ToolOutputDir string
+}
+
+// RunDiagnostics records non-sensitive facts needed to explain host script execution.
+type RunDiagnostics struct {
+	BundleDigest  string                          `json:"bundleDigest,omitempty"`
+	CWD           string                          `json:"cwd,omitempty"`
+	Arguments     []string                        `json:"arguments,omitempty"`
+	Launcher      string                          `json:"launcher,omitempty"`
+	Executables   map[string]string               `json:"executables,omitempty"`
+	ResultAdapter string                          `json:"resultAdapter,omitempty"`
+	Logs          map[string]artifact.ArtifactRef `json:"logs,omitempty"`
 }
 
 // Node 是整个 MVP 最核心的接口（设计计划 §30，设计文档 §6.9 瘦身版）。
@@ -53,4 +74,14 @@ type ExecutorFactory interface {
 
 	// Create 依据 config 创建 Node 实例，config 内容非法时返回错误。
 	Create(config Config) (Node, error)
+}
+
+// ExecutorValidator lets immutable executors verify packaged assets during startup assembly.
+type ExecutorValidator interface {
+	ValidateExecutor() error
+}
+
+// HostRequirementValidator lets semantic validation diagnose unsupported hosts before Run.
+type HostRequirementValidator interface {
+	ValidateHostRequirements() error
 }

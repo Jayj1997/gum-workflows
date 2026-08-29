@@ -109,6 +109,11 @@ func (v *SemanticValidator) Validate(def workflow.Definition) ([]Warning, error)
 		if _, err := f.Create(node.Config(spec.Config)); err != nil {
 			errs = append(errs, fmt.Errorf("node %q: create %q: %w", id, spec.Node, err))
 		}
+		if host, ok := f.(node.HostRequirementValidator); ok {
+			if err := host.ValidateHostRequirements(); err != nil {
+				errs = append(errs, fmt.Errorf("node %q: executor host requirements: %w", id, err))
+			}
+		}
 	}
 	if len(errs) > 0 {
 		// 实例化失败时无法继续做 Contract 级检查。

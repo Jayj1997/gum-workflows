@@ -186,3 +186,47 @@ func TestRecordPreservesConsumedCodeArtifactRef(t *testing.T) {
 		t.Errorf("stored code input = %+v, want project.code and %+v", got, codeRef)
 	}
 }
+
+func TestRecordPreservesStaticResultAndExecutionDiagnostics(t *testing.T) {
+	store, _ := openTest(t)
+	resultRef := artifact.ArtifactRef{
+		ID: "go-static-analysis-result", Kind: artifact.KindQualityCheckResult, Version: "1", URI: "7.json",
+	}
+	diagnostics := node.RunDiagnostics{
+		BundleDigest: "sha256:abc", CWD: "/workspace/project",
+		Arguments: []string{"/workspace/project", "/data/tool-output"},
+		Launcher:  "/bin/sh", ResultAdapter: "go-static-analysis/v1",
+		Executables: map[string]string{"go": "/usr/local/bin/go"},
+		Logs: map[string]artifact.ArtifactRef{
+			"stdout": {ID: "stdout", Kind: artifact.KindLog, URI: "/data/stdout.log"},
+		},
+	}
+	exec := &execution.WorkflowExecution{
+		RunID: uuid.NewString(), Workflow: "static-history", Status: execution.StatusStopped,
+		StartedAt: fixedTime, FinishedAt: fixedTime.Add(time.Second),
+		Nodes: map[string]*execution.NodeExecution{
+			"check": {
+				NodeID: "check", NodeDefinition: "go-static-analysis", NodeExecutor: "v1",
+				Current: execution.NodeRun{
+					RunID: uuid.NewString(), Round: 1, Status: execution.StatusSucceeded,
+					Outputs: map[string]artifact.ArtifactRef{"result": resultRef}, Diagnostics: diagnostics,
+					StartedAt: fixedTime, FinishedAt: fixedTime.Add(time.Second),
+				},
+			},
+		},
+	}
+	if err := store.Record(context.Background(), exec); err != nil {
+		t.Fatalf("Record(): %v", err)
+	}
+	detail, err := store.GetNodeRun(context.Background(), exec.RunID, "check")
+	if err != nil {
+		t.Fatalf("GetNodeRun(): %v", err)
+	}
+	round := detail.Rounds[0]
+	if round.Outputs["result"] != resultRef {
+		t.Errorf("result ref = %+v", round.Outputs["result"])
+	}
+	if round.Diagnostics.BundleDigest != diagnostics.BundleDigest || round.Diagnostics.ResultAdapter != diagnostics.ResultAdapter {
+		t.Errorf("diagnostics = %+v, want %+v", round.Diagnostics, diagnostics)
+	}
+}

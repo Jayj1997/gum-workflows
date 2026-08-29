@@ -11,13 +11,15 @@ type Kind string
 
 // MVP 阶段支持的 Artifact 类型（设计计划 §14）。
 const (
-	KindRequirementSpec  Kind = "RequirementSpec"
-	KindArchitectureSpec Kind = "ArchitectureSpec"
-	KindOpenAPI          Kind = "OpenAPI"
-	KindFrontendSDK      Kind = "FrontendSDK"
-	KindSourceCode       Kind = "SourceCode"
-	KindTestReport       Kind = "TestReport"
-	KindApprovalResult   Kind = "ApprovalResult"
+	KindRequirementSpec    Kind = "RequirementSpec"
+	KindArchitectureSpec   Kind = "ArchitectureSpec"
+	KindOpenAPI            Kind = "OpenAPI"
+	KindFrontendSDK        Kind = "FrontendSDK"
+	KindSourceCode         Kind = "SourceCode"
+	KindTestReport         Kind = "TestReport"
+	KindApprovalResult     Kind = "ApprovalResult"
+	KindQualityCheckResult Kind = "QualityCheckResult"
+	KindLog                Kind = "Log"
 )
 
 // Artifact 是数据本体。大型数据（如源码）不应放进 Data，

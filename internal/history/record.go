@@ -74,9 +74,13 @@ func recordNodeRun(ctx context.Context, tx *sql.Tx, workflowRunID string, ne *ex
 	if err != nil {
 		return fmt.Errorf("record node %q round %d outputs: %w", ne.NodeID, round, err)
 	}
+	diagnostics, err := marshalObject(run.Diagnostics)
+	if err != nil {
+		return fmt.Errorf("record node %q round %d diagnostics: %w", ne.NodeID, round, err)
+	}
 	args := []any{
 		workflowRunID, ne.NodeID, ne.NodeDefinition, ne.NodeExecutor, round,
-		run.Status, run.Error, run.ErrorKind, inputs, outputs,
+		run.Status, run.Error, run.ErrorKind, inputs, outputs, diagnostics,
 		nullableTime(run.StartedAt), nullableTime(run.FinishedAt), run.RunID,
 	}
 	result, err := tx.ExecContext(ctx, `
@@ -91,6 +95,7 @@ UPDATE workflow_node_run_history SET
   error_kind = ?,
   inputs_json = ?,
   outputs_json = ?,
+  diagnostics_json = ?,
   started_at = ?,
   finished_at = ?
 WHERE id = ?`, args...)
@@ -108,8 +113,8 @@ WHERE id = ?`, args...)
 	var storedID string
 	if err := tx.QueryRowContext(ctx, `
 INSERT INTO workflow_node_run_history
-  (id, run_id, node_id, node_definition, node_executor, round, status, error, error_kind, inputs_json, outputs_json, started_at, finished_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  (id, run_id, node_id, node_definition, node_executor, round, status, error, error_kind, inputs_json, outputs_json, diagnostics_json, started_at, finished_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(run_id, node_id, round) DO UPDATE SET
   node_definition = excluded.node_definition,
   node_executor = excluded.node_executor,
@@ -118,11 +123,12 @@ ON CONFLICT(run_id, node_id, round) DO UPDATE SET
   error_kind = excluded.error_kind,
   inputs_json = excluded.inputs_json,
   outputs_json = excluded.outputs_json,
+  diagnostics_json = excluded.diagnostics_json,
   started_at = excluded.started_at,
   finished_at = excluded.finished_at
 RETURNING id`,
 		run.RunID, workflowRunID, ne.NodeID, ne.NodeDefinition, ne.NodeExecutor, round,
-		run.Status, run.Error, run.ErrorKind, inputs, outputs,
+		run.Status, run.Error, run.ErrorKind, inputs, outputs, diagnostics,
 		nullableTime(run.StartedAt), nullableTime(run.FinishedAt)).Scan(&storedID); err != nil {
 		return fmt.Errorf("record node %q round %d: %w", ne.NodeID, round, err)
 	}

@@ -45,7 +45,7 @@ Gum-Workflows 面向代码开发、产品经理、测试、设计和运维等能
 |---|---|---|
 | workflow/v1 MVP | 已完成 | YAML Loader、CUE/语义校验、DAG、串行/并行 Engine、Artifact Store、Workspace、Mock Node、CLI 与 e2e |
 | 平台核心 01–14 | 已完成 | 定义体系、迭代引擎、人工在环、LLM 配置解析、SQLite 历史与 history CLI |
-| 14 后产品化 | 实施中 | Local Data Root、In-place Project Workspace 与 `project.code` Workflow Context Binding 已落地；本地 GUI、Draft/Revision、独立 LLM Config、真实 `llm-chat`、Artifact 体验与运行恢复尚未实施 |
+| 14 后产品化 | 实施中 | Local Data Root、In-place Project Workspace、`project.code` Workflow Context Binding 与真实 `go-static-analysis` tracer bullet 已落地；其余质量节点、本地 GUI、Draft/Revision、独立 LLM Config、真实 `llm-chat`、Artifact 体验与运行恢复尚未实施 |
 
 平台核心 01–14 已完成：
 
@@ -58,7 +58,7 @@ Gum-Workflows 面向代码开发、产品经理、测试、设计和运维等能
 - human-input、human-approval、advise retry 与错误二分；
 - SQLite Node Run 历史、三级 history CLI 与 fullstack Demo。
 
-> 当前内置 Node 仍为 Mock 实现；`internal/llm` 当前只负责配置与解析，不包含真实网络调用。
+> 当前 agent 与 OpenAPI Generator 仍为 Mock；`go-static-analysis` 已通过固定 POSIX Script Bundle 真实运行用户 PATH 中的 Go 工具链。`internal/llm` 当前只负责配置与解析，不包含真实网络调用。
 
 当前 `run`、Artifact 与全局 `history` 使用用户级 Local Data Root，不再向项目写入 `.workflow`。可用 `GUM_WORKFLOWS_DATA_ROOT` 指定该目录；未指定时使用操作系统默认的用户应用数据位置。Run UUID 同时作为历史主键与 `runs/<run-id>/` 目录身份。旧项目内 `.workflow` 数据不会自动扫描；开发期需要保留时可显式调用 `history.MigrateLegacy` 一次性迁移。
 
@@ -201,9 +201,10 @@ nodes:
 | `architecture-design` | agent | `analysis-output: markdown` | `architecture: ArchitectureSpec` | Mock |
 | `coding-agent` | agent | 多个可选开发 Artifact | `code: SourceCode`、`openapi: OpenAPI` | Mock |
 | `openapi-generator` | automation | `openapi: OpenAPI` | `frontend-sdk: FrontendSDK` | Mock |
+| `go-static-analysis` | automation | `code: SourceCode` | `result: QualityCheckResult` | 真实 `go vet` ScriptNode（Darwin/Linux） |
 | `human-approval` | human | —；dependsOn 被审 Node | `approve: bool`、`advise: markdown` | stdin |
 
-14 后产品化阶段首先实现简单但真实的 `llm-chat` Agent Node，以验证真实模型调用、文本/图片输入、多轮对话、流式输出、模型能力和 Artifact 预览。
+`go-static-analysis` 固定运行 full-scope `go vet -json ./...`：无诊断、发现诊断和无 Go package 分别形成 `passed`、`failed`、`not-applicable` 的 `qualityCheckResult/v1`；工具或产物故障是 Structural Error。下一批质量节点与真实 `llm-chat` 仍需按各自票据实施。
 
 ## LLM Config 方向
 

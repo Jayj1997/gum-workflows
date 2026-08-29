@@ -38,7 +38,7 @@ Node Instance 的组合声明，附项目声明。一个 Workflow 可运行任�
 **LLM Model（模型）**:
 Provider 下可选用的具体模型（如 gpt-4o），携带可选生成参数（temperature 等）。默认解析链：默认 Provider（显式 default，缺省取第一个）-> 默认 Model（同理）。
 
-### 14 后产品侧（已确认、未实现）
+### 14 后产品侧（已确认、部分已实现）
 
 **LLM Config（大模型配置）**:
 用户级、跨 Workflow 复用的一条模型连接配置：名称 + 协议 + Base URL + API Key 引用 + 模型目录 + 默认模型。多个 Agent Node 可以选择同一条 LLM Config，不在各 Node 中重复填写连接信息。

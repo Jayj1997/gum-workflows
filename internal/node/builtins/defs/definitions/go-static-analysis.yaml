@@ -1,0 +1,15 @@
+apiVersion: nodeDefinition/v1
+kind: nodeDefinition
+metadata:
+  name: go-static-analysis
+  description: 使用用户本机 Go 工具链对原地 Project Workspace 运行全量 go vet。
+type: automation
+requires: [project]
+inputs:
+  code:
+    type: SourceCode
+    description: 指向原地 Project Workspace 的代码引用。
+outputs:
+  result:
+    type: QualityCheckResult
+    description: 严格的静态分析质量检查结果。

@@ -32,6 +32,7 @@ func RegisterAll(registry *node.ExecutorRegistry) error {
 		architectureExecutor{},
 		newCodingAgentExecutor(agent.NewMockCodingAgent()),
 		openapiGeneratorExecutor{},
+		staticAnalysisExecutor{},
 	}
 	for _, f := range factories {
 		if err := registry.Register(f); err != nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
 	"github.com/Jayj1997/gum-workflows/internal/execution"
+	"github.com/Jayj1997/gum-workflows/internal/node"
 )
 
 // RunSummary is one row in the recent-run history list.
@@ -72,15 +73,16 @@ type NodeDetail struct {
 
 // NodeRound is one recorded execution attempt with artifact references only.
 type NodeRound struct {
-	NodeRunID  string
-	Round      int
-	Status     execution.Status
-	Error      string
-	ErrorKind  string
-	Inputs     map[string]execution.InputSnapshot
-	Outputs    map[string]artifact.ArtifactRef
-	StartedAt  time.Time
-	FinishedAt time.Time
+	NodeRunID   string
+	Round       int
+	Status      execution.Status
+	Error       string
+	ErrorKind   string
+	Inputs      map[string]execution.InputSnapshot
+	Outputs     map[string]artifact.ArtifactRef
+	Diagnostics node.RunDiagnostics
+	StartedAt   time.Time
+	FinishedAt  time.Time
 }
 
 // ListRuns returns the 20 most recently started workflow runs.
@@ -192,12 +194,25 @@ func (s *Store) GetNodeRun(ctx context.Context, idOrPrefix, nodeID string) (*Nod
 	if err != nil || !found {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	hasDiagnostics, err := s.nodeRunsHaveDiagnostics(ctx)
+	if err != nil {
+		return nil, err
+	}
+	query := `
+SELECT id, node_definition, node_executor, round, status, error, error_kind,
+       inputs_json, outputs_json, diagnostics_json, started_at, finished_at
+  FROM workflow_node_run_history
+ WHERE run_id = ? AND node_id = ?
+ ORDER BY round`
+	if !hasDiagnostics {
+		query = `
 SELECT id, node_definition, node_executor, round, status, error, error_kind,
        inputs_json, outputs_json, started_at, finished_at
   FROM workflow_node_run_history
  WHERE run_id = ? AND node_id = ?
- ORDER BY round`, runID, nodeID)
+ ORDER BY round`
+	}
+	rows, err := s.db.QueryContext(ctx, query, runID, nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("get run %s node %q: %w", runID, nodeID, err)
 	}
@@ -207,12 +222,17 @@ SELECT id, node_definition, node_executor, round, status, error, error_kind,
 	for rows.Next() {
 		var round NodeRound
 		var status string
-		var inputsJSON, outputsJSON string
+		var inputsJSON, outputsJSON, diagnosticsJSON string
 		var started, finished sql.NullString
-		if err := rows.Scan(
+		scanArgs := []any{
 			&round.NodeRunID, &detail.NodeDefinition, &detail.NodeExecutor, &round.Round,
-			&status, &round.Error, &round.ErrorKind, &inputsJSON, &outputsJSON, &started, &finished,
-		); err != nil {
+			&status, &round.Error, &round.ErrorKind, &inputsJSON, &outputsJSON,
+		}
+		if hasDiagnostics {
+			scanArgs = append(scanArgs, &diagnosticsJSON)
+		}
+		scanArgs = append(scanArgs, &started, &finished)
+		if err := rows.Scan(scanArgs...); err != nil {
 			return nil, fmt.Errorf("scan run %s node %q round: %w", runID, nodeID, err)
 		}
 		round.Status = execution.Status(status)
@@ -221,6 +241,11 @@ SELECT id, node_definition, node_executor, round, status, error, error_kind,
 		}
 		if err := json.Unmarshal([]byte(outputsJSON), &round.Outputs); err != nil {
 			return nil, fmt.Errorf("decode run %s node %q round %d outputs: %w", runID, nodeID, round.Round, err)
+		}
+		if hasDiagnostics {
+			if err := json.Unmarshal([]byte(diagnosticsJSON), &round.Diagnostics); err != nil {
+				return nil, fmt.Errorf("decode run %s node %q round %d diagnostics: %w", runID, nodeID, round.Round, err)
+			}
 		}
 		if started.Valid {
 			round.StartedAt, err = parseStoredTime(started.String)
@@ -243,6 +268,17 @@ SELECT id, node_definition, node_executor, round, status, error, error_kind,
 		return nil, nil
 	}
 	return detail, nil
+}
+
+func (s *Store) nodeRunsHaveDiagnostics(ctx context.Context) (bool, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `
+SELECT count(*)
+  FROM pragma_table_info('workflow_node_run_history')
+ WHERE name = 'diagnostics_json'`).Scan(&count); err != nil {
+		return false, fmt.Errorf("inspect node run diagnostics schema: %w", err)
+	}
+	return count == 1, nil
 }
 
 func (s *Store) resolveRunID(ctx context.Context, prefix string) (string, bool, error) {

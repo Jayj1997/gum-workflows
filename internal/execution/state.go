@@ -56,15 +56,16 @@ type InputSnapshot struct {
 
 // NodeRun is one execution round of a node instance.
 type NodeRun struct {
-	RunID      string                          `json:"run_id"`
-	Round      int                             `json:"round"`
-	Status     Status                          `json:"status"`
-	Inputs     map[string]InputSnapshot        `json:"inputs,omitempty"`
-	Outputs    map[string]artifact.ArtifactRef `json:"outputs,omitempty"`
-	Error      string                          `json:"error,omitempty"`
-	ErrorKind  node.ErrorKind                  `json:"error_kind,omitempty"`
-	StartedAt  time.Time                       `json:"started_at,omitempty"`
-	FinishedAt time.Time                       `json:"finished_at,omitempty"`
+	RunID       string                          `json:"run_id"`
+	Round       int                             `json:"round"`
+	Status      Status                          `json:"status"`
+	Inputs      map[string]InputSnapshot        `json:"inputs,omitempty"`
+	Outputs     map[string]artifact.ArtifactRef `json:"outputs,omitempty"`
+	Diagnostics node.RunDiagnostics             `json:"diagnostics,omitempty"`
+	Error       string                          `json:"error,omitempty"`
+	ErrorKind   node.ErrorKind                  `json:"error_kind,omitempty"`
+	StartedAt   time.Time                       `json:"started_at,omitempty"`
+	FinishedAt  time.Time                       `json:"finished_at,omitempty"`
 }
 
 // NodeExecution holds the current node run and all completed earlier rounds.

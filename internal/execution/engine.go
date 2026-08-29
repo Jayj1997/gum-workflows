@@ -119,6 +119,7 @@ type nodeResult struct {
 	closeHumanInput  bool
 	approvalDecision *RoundResponse
 	adviseRetry      *RoundResponse
+	diagnostics      node.RunDiagnostics
 }
 
 // Run keeps a settled workflow Running at an idle wait point. Context cancellation
@@ -232,16 +233,17 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 
 				e.persist(ctx, exec)
 				inflight++
+				nodeExecCtx := e.nodeRunExecutionContext(execCtx, runID, ne.Current.RunID)
 				if humanInput {
-					go e.executeHumanInput(execCtx, def.Nodes[id].Node, humanNode, id, results)
+					go e.executeHumanInput(nodeExecCtx, def.Nodes[id].Node, humanNode, id, results)
 				} else if humanApproval {
 					request := RoundRequest{
 						NodeID: id, Definition: def.Nodes[id].Node, Kind: RoundRequestApproval,
 						Artifacts: e.artifactSummaries(exec), AdviseHistory: e.adviseHistory(exec.Nodes[id]),
 					}
-					go e.requestHumanApproval(execCtx, request, id, results)
+					go e.requestHumanApproval(nodeExecCtx, request, id, results)
 				} else {
-					go e.executeNode(execCtx, def, nodes[id], id, inputs, results)
+					go e.executeNode(nodeExecCtx, def, nodes[id], id, inputs, results)
 				}
 			}
 		}
@@ -453,11 +455,28 @@ func (e *Engine) executeNode(execCtx node.ExecutionContext, def workflow.Definit
 	if err == nil {
 		err = e.validateOutputs(def.Nodes[id].Node, id, outputs)
 	}
-	results <- nodeResult{id: id, outputs: outputs, err: err}
+	var diagnostics node.RunDiagnostics
+	if execCtx.Diagnostics != nil {
+		diagnostics = *execCtx.Diagnostics
+	}
+	results <- nodeResult{id: id, outputs: outputs, err: err, diagnostics: diagnostics}
+}
+
+func (e *Engine) nodeRunExecutionContext(base node.ExecutionContext, workflowRunID, nodeRunID string) node.ExecutionContext {
+	diagnostics := &node.RunDiagnostics{}
+	base.Diagnostics = diagnostics
+	base.Run = node.RunContext{WorkflowRunID: workflowRunID, NodeRunID: nodeRunID}
+	if e.stateDir != "" {
+		nodeRunDir := filepath.Join(e.stateDir, workflowRunID, "node-runs", nodeRunID)
+		base.Run.LogsDir = filepath.Join(nodeRunDir, "logs")
+		base.Run.ToolOutputDir = filepath.Join(nodeRunDir, "tool-output")
+	}
+	return base
 }
 
 func (e *Engine) finishNode(def workflow.Definition, exec *WorkflowExecution, result nodeResult) (bool, error) {
 	ne := exec.Nodes[result.id]
+	ne.Current.Diagnostics = result.diagnostics
 	ne.Current.FinishedAt = time.Now().UTC()
 	if result.err != nil {
 		ne.Current.Error = result.err.Error()

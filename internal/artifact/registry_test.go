@@ -16,6 +16,8 @@ func TestNewRegistryContainsMVPKinds(t *testing.T) {
 		KindSourceCode,
 		KindTestReport,
 		KindApprovalResult,
+		KindQualityCheckResult,
+		KindLog,
 	} {
 		if !r.Has(k) {
 			t.Errorf("Has(%s) = false, want true", k)
@@ -24,8 +26,8 @@ func TestNewRegistryContainsMVPKinds(t *testing.T) {
 	if r.Has("FigmaDesign") {
 		t.Error(`Has("FigmaDesign") = true, want false`)
 	}
-	if got := len(r.Kinds()); got != 7 {
-		t.Errorf("len(Kinds()) = %d, want 7", got)
+	if got := len(r.Kinds()); got != 9 {
+		t.Errorf("len(Kinds()) = %d, want 9", got)
 	}
 }
 

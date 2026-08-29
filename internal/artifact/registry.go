@@ -23,6 +23,8 @@ func NewRegistry() *Registry {
 		KindSourceCode,
 		KindTestReport,
 		KindApprovalResult,
+		KindQualityCheckResult,
+		KindLog,
 	} {
 		r.kinds[k] = true
 	}

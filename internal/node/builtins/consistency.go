@@ -38,6 +38,14 @@ func CheckConsistency(executors *node.ExecutorRegistry, defs *definition.Registr
 			continue
 		}
 		for _, v := range executors.Versions(def) {
+			factory, err := executors.Get(def, v)
+			if err == nil {
+				if validator, ok := factory.(node.ExecutorValidator); ok {
+					if validateErr := validator.ValidateExecutor(); validateErr != nil {
+						return fmt.Errorf("executor (%s, %s) packaged assets: %w", def, v, validateErr)
+					}
+				}
+			}
 			if !versions[v] {
 				missingYAML = append(missingYAML, fmt.Sprintf("(%s, %s)", def, v))
 			}
