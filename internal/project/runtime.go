@@ -52,7 +52,8 @@ func (r *Runtime) Resolve(workflowFile string, spec Spec) (Context, error) {
 }
 
 // CreateWorkspace 为指定 Execution 创建 Workspace 并把项目复制进去
-// （计划 §17：.workflow/executions/<id>/workspace/project）。
+// 当前 Workspace 位于 Runtime Paths 的 runs/<id>/workspace/project；切换为
+// In-place Project Workspace 属于后续产品化票据。
 // 返回填好 Workspace 路径的 ProjectContext。
 func (r *Runtime) CreateWorkspace(ctx Context, executionID string) (Context, error) {
 	if ctx.Repository.Path == "" {

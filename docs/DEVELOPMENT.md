@@ -16,8 +16,8 @@
 | 终端检测 | `github.com/mattn/go-isatty` |
 | 并发 | 标准库 goroutine / channel；调度状态由 Engine 主循环串行推进 |
 | 日志 | 标准库 `log/slog` |
-| Artifact 与快照 | 文件系统 `.workflow/executions/<execution-id>/` |
-| 定义与运行历史 | SQLite `.workflow/gum-workflows.db`（`modernc.org/sqlite`） |
+| Artifact、快照与 Workspace | 用户级 Local Data Root 的 `runs/<execution-id>/` |
+| 定义与运行历史 | 用户级 Local Data Root 的 SQLite `product.db`（`modernc.org/sqlite`） |
 
 `modernc.org/sqlite` 是平台核心唯一获批的数据库依赖：标准库不提供 SQLite 驱动，而本项目需要本地、单文件、零服务、可迁移且无 CGO 的统一定义与运行历史索引。数据库只保存定义、状态和 `ArtifactRef`；Artifact 本体与 Workspace 仍在文件系统。
 
@@ -73,7 +73,7 @@ artifact、project、runtimepath ──> 标准库
 - `execution` 是唯一驱动 Node Run 的包；它通过消费方接口 `HumanGateway` 与 `RunRecorder` 隔离终端和持久化适配器，不 import `cmd` 或 `history`。
 - `history` 实现 `execution.RunRecorder`，以 DTO 接收定义导入数据，不反向 import `definition`、`workflow` 或 `llm`。
 - `artifact` 与 `project` 是基础包，不 import 其他 `internal/` 包。Node 之间只传 `ArtifactRef`。
-- `runtimepath` 只计算数据库、Execution、Artifact、日志与临时产物路径，不创建文件；具体命令是否允许写入由 `cmd/workflow` 决定。
+- `runtimepath` 只解析用户级 Local Data Root 并计算数据库、Run、Node Run、Artifact、日志与 tool-output 路径，不创建文件；优先级为测试注入、`GUM_WORKFLOWS_DATA_ROOT`、产品设置、操作系统默认应用数据目录，具体命令是否允许写入由 `cmd/workflow` 决定。
 - Registry 禁止在 `init()` 隐式注册；内嵌定义与 Go Executor 必须由 CLI 组装层显式加载、校验并注册。
 
 类型与运行语义详见 `docs/domain-model.md`。
@@ -159,7 +159,7 @@ Workflow: Running -> Stopped | Failed
 - 单元测试跟随源码；跨包测试放 `tests/`；fixture 使用 `testdata/`，文件系统使用 `t.TempDir()`。
 - 单元与 e2e 禁止网络、禁止依赖真实 `$HOME`；LLM 配置通过临时 `XDG_CONFIG_HOME` 注入。
 - 默认表驱动。测试公共接缝，不测试私有调度细节：`validation.Validate`、注入 fake Gateway/Recorder/Executor 的 `execution.Engine.Run`、CLI adapter。
-- `tests/e2e` 只保留真实二进制的 fullstack validate、非 TTY 零写入守卫和种子 history 三级查询；完整人工循环由 Engine 主接缝测试覆盖，不依赖 PTY。
+- `tests/e2e` 保留真实二进制的 fullstack validate、非 TTY 零写入守卫、种子 history 三级查询，以及 macOS PTY 下最短成功 Run→Stopped→history 的 Local Data Root 生命周期；完整人工循环仍由 Engine 主接缝测试覆盖。
 - 直接 SQL 断言仅用于 `internal/history` 的迁移、FK、幂等与一轮一行约束。
 - 合并前运行 `go vet ./...`、`go test ./...` 与 `go test -race ./...`。
 
@@ -167,7 +167,7 @@ Workflow: Running -> Stopped | Failed
 
 - 分支使用 `feat/<topic>`、`fix/<topic>`、`docs/<topic>`；Codex 创建分支时使用 `codex/` 前缀。
 - Commit message 使用 Conventional Commits；一次提交只表达一个连贯变更。
-- `.workflow/` 不入库；不得提交用户级 `llm.yaml` 或密钥。
+- 旧 `.workflow/` 不入库；不得提交用户级 `llm.yaml`、Local Data Root 内容或密钥。
 - `plans/Workflow Engine MVP：workflow-v1 设计与实现计划.md` 是只读历史。其他设计文档只允许在明确票据授权下记录显式修订，不静默改写。
 
 ## 8. 推进纪律

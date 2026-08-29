@@ -25,7 +25,7 @@ func main() {
 
 func run(args []string) error {
 	return runWithRuntimePaths(args, func() (runtimepath.Paths, error) {
-		return runtimepath.Legacy(), nil
+		return runtimepath.Resolve("")
 	})
 }
 
@@ -45,7 +45,7 @@ func runWithRuntimePaths(args []string, resolve func() (runtimepath.Paths, error
 	}
 	switch args[0] {
 	case "validate":
-		return validateCmd(args[1])
+		return validateCmd(args[1], resolve)
 	case "run":
 		paths, err := resolveRuntimePaths(resolve)
 		if err != nil {
@@ -70,13 +70,17 @@ func resolveRuntimePaths(resolve func() (runtimepath.Paths, error)) (runtimepath
 
 // validateCmd 执行校验管线（设计计划 §21 两层校验），与 run 共用 loadAndValidate。
 // warning 不阻断校验（环降为提示，票 06），以 warning 前缀打印到 stderr。
-func validateCmd(path string) error {
+func validateCmd(path string, resolve func() (runtimepath.Paths, error)) error {
 	ctx := context.Background()
 	def, _, executors, _, _, warnings, err := loadAndValidate(ctx, path)
 	if err != nil {
 		return err
 	}
-	if err := validateExistingDatabaseExecutors(ctx, runtimepath.Legacy().Database(), def, executors); err != nil {
+	paths, err := resolveRuntimePaths(resolve)
+	if err != nil {
+		return fmt.Errorf("resolve runtime paths: %w", err)
+	}
+	if err := validateExistingDatabaseExecutors(ctx, paths.Database(), def, executors); err != nil {
 		return fmt.Errorf("validate database executor resolution: %w", err)
 	}
 

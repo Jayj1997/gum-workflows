@@ -23,6 +23,7 @@ func validFixtureEnv(t *testing.T) {
 
 	xdg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv(runtimepath.DataRootEnv, filepath.Join(t.TempDir(), "local-data"))
 	dir := filepath.Join(xdg, "gum-workflows")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir xdg config: %v", err)
@@ -47,6 +48,7 @@ providers:
 }
 
 func TestRunUsage(t *testing.T) {
+	t.Setenv(runtimepath.DataRootEnv, filepath.Join(t.TempDir(), "local-data"))
 	for _, args := range [][]string{{}, {"validate"}, {"run", "x.yaml"}, {"validate", "a", "b"}} {
 		if err := run(args); err == nil {
 			t.Fatalf("run(%v) = nil error, want usage error", args)
@@ -59,16 +61,17 @@ func TestRunUsage(t *testing.T) {
 
 func TestValidateCmd(t *testing.T) {
 	validFixtureEnv(t)
+	resolve := testRuntimePaths(t)
 
 	t.Run("valid workflow", func(t *testing.T) {
-		err := validateCmd(filepath.Join("..", "..", "internal", "workflow", "testdata", "valid.yaml"))
+		err := validateCmd(filepath.Join("..", "..", "internal", "workflow", "testdata", "valid.yaml"), resolve)
 		if err != nil {
 			t.Fatalf("validateCmd() unexpected error: %v", err)
 		}
 	})
 
 	t.Run("example workflow passes full pipeline", func(t *testing.T) {
-		if err := validateCmd(filepath.Join("..", "..", "examples", "fullstack", "workflow.yaml")); err != nil {
+		if err := validateCmd(filepath.Join("..", "..", "examples", "fullstack", "workflow.yaml"), resolve); err != nil {
 			t.Fatalf("validateCmd(example) unexpected error: %v", err)
 		}
 	})
@@ -76,7 +79,7 @@ func TestValidateCmd(t *testing.T) {
 	t.Run("semantic violation is rejected", func(t *testing.T) {
 		// unknown-type 结构合法（CUE 通过），语义层必须拦截。
 		path := filepath.Join("..", "..", "internal", "validation", "testdata", "invalid-node", "unknown-type.yaml")
-		err := validateCmd(path)
+		err := validateCmd(path, resolve)
 		if err == nil {
 			t.Fatal("validateCmd(unknown-type) = nil error, want semantic rejection")
 		}
@@ -86,13 +89,13 @@ func TestValidateCmd(t *testing.T) {
 	})
 
 	t.Run("missing file", func(t *testing.T) {
-		if err := validateCmd("nonexistent.yaml"); err == nil {
+		if err := validateCmd("nonexistent.yaml", resolve); err == nil {
 			t.Fatal("validateCmd(nonexistent) = nil error, want read failure")
 		}
 	})
 }
 
-func TestValidateDoesNotResolveOrCreateRuntimePaths(t *testing.T) {
+func TestValidateResolvesInjectedPathsWithoutCreatingOrMigrating(t *testing.T) {
 	validFixtureEnv(t)
 	root := filepath.Join(t.TempDir(), "runtime")
 	paths, err := runtimepath.New(filepath.Join(root, "product.db"), filepath.Join(root, "runs"))
@@ -109,16 +112,27 @@ func TestValidateDoesNotResolveOrCreateRuntimePaths(t *testing.T) {
 	if err := runWithRuntimePaths([]string{"validate", workflowFile}, resolve); err != nil {
 		t.Fatalf("validate unexpected error: %v", err)
 	}
-	if resolved != 0 {
-		t.Fatalf("validate resolved runtime paths %d times, want 0", resolved)
+	if resolved != 1 {
+		t.Fatalf("validate resolved runtime paths %d times, want 1", resolved)
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatalf("validate created runtime root or returned unexpected stat error: %v", err)
 	}
 }
 
+func testRuntimePaths(t *testing.T) func() (runtimepath.Paths, error) {
+	t.Helper()
+	paths, err := runtimepath.Resolve(filepath.Join(t.TempDir(), "local-data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return func() (runtimepath.Paths, error) { return paths, nil }
+}
+
 func TestRunWorkflowUsesInjectedRuntimePaths(t *testing.T) {
 	validFixtureEnv(t)
+	environmentRoot := filepath.Join(t.TempDir(), "must-not-be-used")
+	t.Setenv(runtimepath.DataRootEnv, environmentRoot)
 	root := filepath.Join(t.TempDir(), "runtime")
 	paths, err := runtimepath.New(filepath.Join(root, "product.db"), filepath.Join(root, "runs"))
 	if err != nil {
@@ -149,6 +163,13 @@ func TestRunWorkflowUsesInjectedRuntimePaths(t *testing.T) {
 		if _, err := os.Stat(want); err != nil {
 			t.Errorf("injected runtime path %q: %v", want, err)
 		}
+	}
+	if _, err := os.Stat(environmentRoot); !os.IsNotExist(err) {
+		t.Fatalf("injected paths did not take priority over environment override: %v", err)
+	}
+	projectDir := filepath.Join("..", "..", "examples", "fullstack", "project", ".workflow")
+	if _, err := os.Stat(projectDir); !os.IsNotExist(err) {
+		t.Fatalf("run wrote Gum state into the user project: %v", err)
 	}
 }
 

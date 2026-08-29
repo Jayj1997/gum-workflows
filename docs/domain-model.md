@@ -115,7 +115,7 @@ Agent Node 可声明 `llm` 与 `target_model`；都省略时使用默认 provide
 - `approval`：展示 Artifact 摘要与历史 advise，获取 approve/reject；
 - `advise-retry`：为 agent 的 interaction failure 获取即时修正意见。
 
-CLI 用 stdin/stdout 实现该接口。含 human Node 的 Workflow 在非 TTY stdin 下于任何 `.workflow` 写入前拒绝运行；测试通过 fake Gateway 覆盖完整循环。
+CLI 用 stdin/stdout 实现该接口。含 human Node 的 Workflow 在非 TTY stdin 下于任何 Local Data Root 写入前拒绝运行；测试通过 fake Gateway 覆盖完整循环。
 
 ### 7.2 Approval 门控
 
@@ -133,12 +133,12 @@ Workflow 没有自动 Succeeded 终态。全图静止时仍保持 Running，等�
 
 `NodeExecution` 保存 `Current NodeRun` 和已完成的 `History []NodeRun`。每轮记录 status、inputs、outputs、error/error_kind 和时间；`WorkflowExecution` 记录 Run UUID、filesystem execution ID、Workflow 身份、状态、停止原因和 Node 快照。
 
-文件系统保存运行主体：
+用户级 Local Data Root 保存全局产品库与运行主体；路径只使用稳定的 Execution / Node Run ID，不编码可变的 Project 或 Workflow 名称：
 
 ```text
-.workflow/
-├── gum-workflows.db
-└── executions/execution-000001/
+<Local Data Root>/
+├── product.db
+└── runs/execution-000001/
     ├── workflow.yaml
     ├── state.json
     ├── nodes/<node-id>/state.json
@@ -146,9 +146,11 @@ Workflow 没有自动 Succeeded 终态。全图静止时仍保持 Running，等�
     └── workspace/project/
 ```
 
+CLI 可用 `GUM_WORKFLOWS_DATA_ROOT` 覆盖位置；未覆盖时使用操作系统的用户级应用数据目录。路径解析本身不创建目录。`runtimepath` 已为后续执行器定义 `runs/<execution-id>/logs/` 与 `runs/<execution-id>/node-runs/<node-run-id>/{logs,tool-output}/`，当前尚无执行器创建这些目录。当前 Workspace 仍是每次 Run 的项目副本，改为 In-place Project Workspace 属于后续票据。
+
 SQLite 使用 WAL、busy_timeout、foreign keys 与 `PRAGMA user_version` 顺序迁移。定义侧保存 Node Type、Node Definition、Node Executor、Workflow 与 Node Instance；运行侧保存 Workflow Run 与逐 Node Run 历史，一行对应一个 round，inputs/outputs 只序列化 `ArtifactRef`。
 
-`history.Store` 实现 `execution.RunRecorder`。Engine 在与 state.json 相同的状态点提交完整快照；Record 使用 upsert 保持重放幂等。`validate` 不打开或创建数据库，`history` 用 read-only 打开且无库时返回空态。
+`history.Store` 实现 `execution.RunRecorder`。Engine 在与 state.json 相同的状态点提交完整快照；Record 使用 upsert 保持重放幂等。`validate` 只在数据库已经存在时 read-only 检查 Executor 解析，不建库、不迁移；`history` 同样 read-only 打开且无库时返回空态。新 Run 不在用户项目内创建或更新 `.workflow`，新旧位置不双写；旧项目数据的显式一次性迁移属于后续票据。
 
 ## 9. 校验管线
 

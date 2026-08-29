@@ -45,7 +45,7 @@ Gum-Workflows 面向代码开发、产品经理、测试、设计和运维等能
 |---|---|---|
 | workflow/v1 MVP | 已完成 | YAML Loader、CUE/语义校验、DAG、串行/并行 Engine、Artifact Store、Workspace、Mock Node、CLI 与 e2e |
 | 平台核心 01–14 | 已完成 | 定义体系、迭代引擎、人工在环、LLM 配置解析、SQLite 历史与 history CLI |
-| 14 后产品化 | 已完成设计、尚未实施 | 本地 GUI、Draft/Revision、独立 LLM Config、真实 `llm-chat`、Artifact 体验、运行恢复 |
+| 14 后产品化 | 实施中 | Local Data Root 已落地；本地 GUI、Draft/Revision、独立 LLM Config、真实 `llm-chat`、Artifact 体验与运行恢复尚未实施 |
 
 平台核心 01–14 已完成：
 
@@ -59,6 +59,8 @@ Gum-Workflows 面向代码开发、产品经理、测试、设计和运维等能
 - SQLite Node Run 历史、三级 history CLI 与 fullstack Demo。
 
 > 当前内置 Node 仍为 Mock 实现；`internal/llm` 当前只负责配置与解析，不包含真实网络调用。
+
+当前 `run`、Artifact 与全局 `history` 使用用户级 Local Data Root，不再向项目写入 `.workflow`。可用 `GUM_WORKFLOWS_DATA_ROOT` 指定该目录；未指定时使用操作系统默认的用户应用数据位置。旧项目内 `.workflow` 数据尚不会自动迁移。
 
 ## 核心概念
 

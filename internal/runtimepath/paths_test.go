@@ -1,11 +1,66 @@
 package runtimepath_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
 )
+
+func TestResolvePrefersEnvironmentOverrideToProductSetting(t *testing.T) {
+	environmentRoot := filepath.Join(t.TempDir(), "environment-root")
+	productRoot := filepath.Join(t.TempDir(), "product-setting-root")
+	t.Setenv(runtimepath.DataRootEnv, environmentRoot)
+
+	paths, err := runtimepath.Resolve(productRoot)
+	if err != nil {
+		t.Fatalf("Resolve() unexpected error: %v", err)
+	}
+
+	assertPath(t, paths.Database(), filepath.Join(environmentRoot, "product.db"))
+	assertPath(t, paths.ExecutionsDir(), filepath.Join(environmentRoot, "runs"))
+	if _, err := os.Stat(environmentRoot); !os.IsNotExist(err) {
+		t.Fatalf("Resolve() touched the filesystem: %v", err)
+	}
+}
+
+func TestResolveUsesProductSettingWithoutEnvironmentOverride(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "product-setting-root")
+	t.Setenv(runtimepath.DataRootEnv, "")
+
+	paths, err := runtimepath.Resolve(root)
+	if err != nil {
+		t.Fatalf("Resolve() unexpected error: %v", err)
+	}
+
+	assertPath(t, paths.Database(), filepath.Join(root, "product.db"))
+	assertPath(t, paths.ExecutionDir("stable-run-id"), filepath.Join(root, "runs", "stable-run-id"))
+}
+
+func TestResolveRejectsRelativeDataRoot(t *testing.T) {
+	t.Setenv(runtimepath.DataRootEnv, filepath.Join("project", ".gum-data"))
+
+	if _, err := runtimepath.Resolve(""); err == nil {
+		t.Fatal("Resolve() = nil error, want relative Local Data Root rejection")
+	}
+}
+
+func TestStableIDsOwnRunAndNodeRunProducts(t *testing.T) {
+	root := t.TempDir()
+	paths, err := runtimepath.Resolve(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runID := "11223344-1111-4111-8111-111111111111"
+	nodeRunID := "55667788-1111-4111-8111-111111111111"
+	assertPath(t, paths.ArtifactsDir(runID), filepath.Join(root, "runs", runID, "artifacts"))
+	assertPath(t, paths.LogsDir(runID), filepath.Join(root, "runs", runID, "logs"))
+	assertPath(t, paths.NodeRunDir(runID, nodeRunID), filepath.Join(root, "runs", runID, "node-runs", nodeRunID))
+	assertPath(t, paths.NodeRunLogsDir(runID, nodeRunID), filepath.Join(root, "runs", runID, "node-runs", nodeRunID, "logs"))
+	assertPath(t, paths.NodeRunToolOutputDir(runID, nodeRunID), filepath.Join(root, "runs", runID, "node-runs", nodeRunID, "tool-output"))
+}
 
 func TestLegacyPathsPreservePlatformCoreLayout(t *testing.T) {
 	paths := runtimepath.Legacy()

@@ -1,6 +1,6 @@
 // Package history 实现本地 SQLite 统一库（设计文档 §8）：
 //
-//   - .workflow/gum-workflows.db，modernc.org/sqlite 驱动（纯 Go 无 CGO）；
+//   - Local Data Root/product.db，modernc.org/sqlite 驱动（纯 Go 无 CGO）；
 //   - WAL / busy_timeout / foreign_keys，PRAGMA user_version 顺序迁移；
 //   - run 启动时隐式导入内嵌种子与本次 workflow（定义侧五表）；
 //   - validate 纯只读零副作用（不调用本包）。
