@@ -1,6 +1,6 @@
 # Gum-Workflows Domain Model
 
-本文档描述平台核心 01–14 以及随后已落地的 Local Data Root、In-place Project Workspace、Workflow Context Binding 和首个 Code Quality Check tracer bullet。术语以根目录 `CONTEXT.md` 为权威；GUI、Workflow Revision、真实 LLM Client、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
+本文档描述平台核心 01–14 以及随后已落地的 Local Data Root、In-place Project Workspace、Workflow Context Binding 和首批 Go Code Quality Check。术语以根目录 `CONTEXT.md` 为权威；GUI、Workflow Revision、真实 LLM Client、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
 
 ## 1. 定义、实例与运行
 
@@ -86,11 +86,14 @@ Run 前会交叉检查：
 | `coding-agent` | agent | optional `analysis-output` / `architecture` / `openapi` / `frontend-sdk` / `advise` | `code: SourceCode`、`openapi: OpenAPI` |
 | `openapi-generator` | automation | `openapi: OpenAPI` | `frontend-sdk: FrontendSDK` |
 | `go-static-analysis` | automation | `code: SourceCode` | `result: QualityCheckResult` |
+| `go-coverage-check` | automation | `code: SourceCode` | `result: QualityCheckResult` |
 | `human-approval` | human | —；以 dependsOn 挂接被审 Node | `approve: bool`、`advise: markdown` |
 
-Agent 与 OpenAPI 生成目前仍是 Mock 实现；真实网络模型调用和真实 generator 属后续设计。`go-static-analysis` 是第一个真实 automation：固定 v1 POSIX Script Bundle 在 Darwin/Linux 的 Host Execution Environment 中用用户 PATH 运行 full-scope `go vet -json ./...`，不接受实例级脚本、命令或 scope 覆盖。
+Agent 与 OpenAPI 生成目前仍是 Mock 实现；真实网络模型调用和真实 generator 属后续设计。`go-static-analysis` 与 `go-coverage-check` 是已落地的真实 automation：各自固定 v1 POSIX Script Bundle，在 Darwin/Linux 的 Host Execution Environment 中使用用户 PATH 原地运行，不接受实例级脚本、命令或 scope 覆盖。
 
 Static Script 的 stdout/stderr 只流式进入 Node Run 日志；正式工具产物进入该轮独立的 tool-output 目录。内置 Result Adapter 从退出状态、`vet.json`、package/toolchain 产物和日志生成严格的 `qualityCheckResult/v1`：无诊断为 `passed`，vet/package 诊断为 `failed`，无 Go package 为 `not-applicable`；工具、I/O、产物或 Schema 损坏是 Structural Error，不产生 Result Artifact。业务 `failed` 仍是成功 Node Run 的普通 `result: QualityCheckResult` 输出。
+
+Coverage Script 使用 `go test -count=1 -json -covermode=atomic -coverprofile=<Node Run tool-output> ./...` 禁用测试缓存并运行 full scope。实例只允许配置 0–100 的 statement coverage 最低阈值，默认 80；Adapter 验证并解析正式 profile，以 statement 数加权计算 `metrics.statementCoverage`。低于阈值为 `failed`，等于或高于为 `passed`，无可插桩 statement 为 `not-applicable`；测试或编译失败仍发布业务 `failed` Result，但 metric 以 unavailable + reason 表达，不伪造 0%。成功进程缺失或损坏 profile 是 Structural Error。Coverprofile 与其他临时工具产物只存在于 Node Run 的 tool-output，项目目录不写入 Gum 报告。
 
 ScriptNode 在启动前诊断当前平台、POSIX Shell、Manifest required executables，并对 Go Bundle 执行有界的 `go version` / `go env` 能力探测；运行前后重新核对 Executor 身份、Result Adapter、Bundle 摘要、物化脚本和声明产物路径。Shell 运行于独立进程组，Context 取消或 stdout/stderr 合计超过固定 32 MiB 上限时终止 Shell 及其子进程；取消、日志超限、I/O、摘要、产物或 Adapter 失败均不发布 Result。Adapter 完成并校验后删除临时 tool-output，再保存 Result；Bundle、日志、Result 与其 ArtifactRef 保留用于历史查询。诊断只记录主机/Go 平台、工具路径与版本、GOROOT、CGO、cwd、固定位置参数、摘要、Adapter 和日志引用，不保存完整环境。
 

@@ -19,3 +19,4 @@
 ## Comments
 
 - 2026-08-30：实现完成。新增 `go-coverage-check` v1 定义、不可变 POSIX Bundle、完整阈值 Validation、严格 Coverage Result/Adapter、真实 Go profile 与 Engine/Node Run 验收。focused、全量、build、vet 与 race 验证通过，等待人工验收。
+- 2026-08-30：双轴 review 的 Spec 侧无发现；Standards 侧发现实现状态文档未同步，已补齐 `AGENTS.md`、`CLAUDE.md`、开发规范目录说明与 domain model。重复 Bundle/Result plumbing 仅记为判断性 smell；当前两个 Adapter 的业务合同不同，本票不为后续 Race/Complexity 提前引入通用抽象。
