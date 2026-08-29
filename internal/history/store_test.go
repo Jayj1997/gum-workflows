@@ -71,6 +71,22 @@ func TestOpenCreatesAndMigrates(t *testing.T) {
 	}
 }
 
+func TestOpenRequiresInjectedPath(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		open func(context.Context, string) (*Store, error)
+	}{
+		{name: "read-write", open: Open},
+		{name: "read-only", open: OpenReadOnly},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := tt.open(context.Background(), ""); err == nil {
+				t.Fatal("open with empty path = nil error, want rejection")
+			}
+		})
+	}
+}
+
 func TestOpenIsIdempotent(t *testing.T) {
 	_, dbPath := openTest(t)
 

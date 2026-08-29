@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sort"
 	"syscall"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/execution"
 	"github.com/Jayj1997/gum-workflows/internal/history"
 	"github.com/Jayj1997/gum-workflows/internal/project"
+	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
 	"github.com/Jayj1997/gum-workflows/internal/workflow"
 	"github.com/mattn/go-isatty"
 )
@@ -25,13 +25,13 @@ import (
 //
 //	Load YAML -> CUE Validate -> Parse -> Semantic Validate ->
 //	Create Execution -> Initialize Project/Workspace -> Execute -> Persist
-func runCmd(path string) error {
+func runCmd(path string, paths runtimepath.Paths) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return runWorkflow(ctx, path, commandStdinIsInteractive(), newStdinHumanGateway(os.Stdin, os.Stdout))
+	return runWorkflow(ctx, path, commandStdinIsInteractive(), newStdinHumanGateway(os.Stdin, os.Stdout), paths)
 }
 
-func runWorkflow(ctx context.Context, path string, interactive bool, gateway execution.HumanGateway) error {
+func runWorkflow(ctx context.Context, path string, interactive bool, gateway execution.HumanGateway, paths runtimepath.Paths) error {
 	def, data, executors, defsRegistry, llmConfig, warnings, err := loadAndValidate(ctx, path)
 	if err != nil {
 		return err
@@ -41,12 +41,12 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 		return fmt.Errorf("workflow contains human nodes and requires an interactive terminal on stdin")
 	}
 
-	def, err = pinAndImportDefinitions(ctx, def, executors, defsRegistry, llmConfig)
+	def, err = pinAndImportDefinitions(ctx, paths.Database(), def, executors, defsRegistry, llmConfig)
 	if err != nil {
 		return err
 	}
 	var runRecorder execution.RunRecorder
-	historyStore, historyErr := history.Open(ctx, history.DefaultDBPath)
+	historyStore, historyErr := history.Open(ctx, paths.Database())
 	if historyErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: run history disabled: %v\n", historyErr)
 	} else {
@@ -58,7 +58,7 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 	// Execution ID 由 execution.NextExecutionID 分配（唯一来源），
 	// workspace / artifacts / 状态目录与 Engine 使用同一 ID。
 	// projects 的「恰好 1 个」校验属票 06；此处取第一个条目。
-	runtime := project.NewRuntime(filepath.Join(".workflow", "executions"))
+	runtime := project.NewRuntime(paths.ExecutionsDir())
 	projSpec := project.Spec{}
 	if len(def.Projects) > 0 {
 		projSpec = project.Spec{Name: def.Projects[0].Name, Repository: def.Projects[0].Repository}
@@ -72,13 +72,13 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 	if err != nil {
 		return fmt.Errorf("allocate execution id: %w", err)
 	}
-	executionDir := filepath.Join(runtime.BaseDir, executionID)
+	executionDir := paths.ExecutionDir(executionID)
 	if err := os.MkdirAll(executionDir, 0o755); err != nil {
 		return fmt.Errorf("create execution dir: %w", err)
 	}
 
 	// 定义快照（计划 §28：execution 目录含 workflow.yaml）。
-	if err := os.WriteFile(filepath.Join(executionDir, "workflow.yaml"), data, 0o644); err != nil {
+	if err := os.WriteFile(paths.WorkflowSnapshot(executionID), data, 0o644); err != nil {
 		return fmt.Errorf("snapshot workflow.yaml: %w", err)
 	}
 
@@ -88,7 +88,7 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 	}
 
 	// ④ 执行：FS Artifact Store + 状态持久化 + Workspace 注入。
-	store, err := artifact.NewFilesystemStore(filepath.Join(executionDir, "artifacts"))
+	store, err := artifact.NewFilesystemStore(paths.ArtifactsDir(executionID))
 	if err != nil {
 		return fmt.Errorf("create artifact store: %w", err)
 	}

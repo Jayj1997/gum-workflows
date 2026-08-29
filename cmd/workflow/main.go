@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Jayj1997/gum-workflows/internal/history"
+	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
 	"github.com/Jayj1997/gum-workflows/internal/validation"
 )
 
@@ -24,11 +24,21 @@ func main() {
 }
 
 func run(args []string) error {
+	return runWithRuntimePaths(args, func() (runtimepath.Paths, error) {
+		return runtimepath.Legacy(), nil
+	})
+}
+
+func runWithRuntimePaths(args []string, resolve func() (runtimepath.Paths, error)) error {
 	if len(args) > 0 && args[0] == "history" {
 		if len(args) > 3 {
 			return fmt.Errorf("usage: workflow history [<run-id> [<node-id>]]")
 		}
-		return historyCmd(context.Background(), args[1:], history.DefaultDBPath, os.Stdout)
+		paths, err := resolveRuntimePaths(resolve)
+		if err != nil {
+			return err
+		}
+		return historyCmd(context.Background(), args[1:], paths, os.Stdout)
 	}
 	if len(args) != 2 {
 		return fmt.Errorf("usage: workflow <validate|run> <workflow-file> | workflow history [<run-id> [<node-id>]]")
@@ -37,10 +47,25 @@ func run(args []string) error {
 	case "validate":
 		return validateCmd(args[1])
 	case "run":
-		return runCmd(args[1])
+		paths, err := resolveRuntimePaths(resolve)
+		if err != nil {
+			return err
+		}
+		return runCmd(args[1], paths)
 	default:
 		return fmt.Errorf("unknown command %q (available: validate, run, history)", args[0])
 	}
+}
+
+func resolveRuntimePaths(resolve func() (runtimepath.Paths, error)) (runtimepath.Paths, error) {
+	if resolve == nil {
+		return runtimepath.Paths{}, fmt.Errorf("resolve runtime paths: resolver must not be nil")
+	}
+	paths, err := resolve()
+	if err != nil {
+		return runtimepath.Paths{}, fmt.Errorf("resolve runtime paths: %w", err)
+	}
+	return paths, nil
 }
 
 // validateCmd 执行校验管线（设计计划 §21 两层校验），与 run 共用 loadAndValidate。
@@ -51,7 +76,7 @@ func validateCmd(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateExistingDatabaseExecutors(ctx, history.DefaultDBPath, def, executors); err != nil {
+	if err := validateExistingDatabaseExecutors(ctx, runtimepath.Legacy().Database(), def, executors); err != nil {
 		return fmt.Errorf("validate database executor resolution: %w", err)
 	}
 

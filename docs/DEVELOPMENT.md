@@ -39,6 +39,7 @@ gum-workflows/
 │   ├── history/                  # SQLite 迁移、定义导入、Run Record 与 Query
 │   ├── artifact/                 # ArtifactRef、Registry、Memory/Filesystem Store
 │   ├── project/                  # Project Context 与每次 Run 独享 Workspace
+│   ├── runtimepath/              # 可注入的数据库与运行产物路径布局
 │   └── agent/                    # CodingAgent 接口与 Mock 实现
 ├── schema/workflow/              # workflow/v1 CUE 与 go:embed
 ├── examples/fullstack/           # human 入口、审批/advise 回环、多轮需求 Demo
@@ -56,12 +57,13 @@ cmd/workflow
   ├─ validation ──> definition / llm / workflow / node / artifact
   ├─ execution  ──> definition / workflow / node / artifact / project
   ├─ history    ──> execution / artifact
+  ├─ runtimepath
   └─ node/builtins ──> definition / node / agent / artifact
 
 definition ──> artifact          node ──> definition / artifact / project
 workflow ──(引用校验经 validation)──> definition / llm
 agent ──> artifact / project
-artifact、project ──> 标准库
+artifact、project、runtimepath ──> 标准库
 ```
 
 具体规则：
@@ -71,6 +73,7 @@ artifact、project ──> 标准库
 - `execution` 是唯一驱动 Node Run 的包；它通过消费方接口 `HumanGateway` 与 `RunRecorder` 隔离终端和持久化适配器，不 import `cmd` 或 `history`。
 - `history` 实现 `execution.RunRecorder`，以 DTO 接收定义导入数据，不反向 import `definition`、`workflow` 或 `llm`。
 - `artifact` 与 `project` 是基础包，不 import 其他 `internal/` 包。Node 之间只传 `ArtifactRef`。
+- `runtimepath` 只计算数据库、Execution、Artifact、日志与临时产物路径，不创建文件；具体命令是否允许写入由 `cmd/workflow` 决定。
 - Registry 禁止在 `init()` 隐式注册；内嵌定义与 Go Executor 必须由 CLI 组装层显式加载、校验并注册。
 
 类型与运行语义详见 `docs/domain-model.md`。

@@ -7,13 +7,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite" // 纯 Go 驱动，注册 "sqlite" 到 database/sql
 )
-
-// DefaultDBPath 是 .workflow 下的统一库路径（设计文档 §8.1），
-// 相对进程 CWD（与 executions 目录同根）。
-const DefaultDBPath = ".workflow/gum-workflows.db"
 
 // Store 是打开的 SQLite 统一库句柄（设计文档 §8）。
 // Open 建库并顺序迁移至最新；重复 Open 同一文件幂等不重放。
@@ -24,8 +21,8 @@ type Store struct {
 // Open 打开（必要时创建）dbPath 处的 SQLite 库，设 PRAGMA 并迁移到最新。
 // 父目录不存在则创建。迁移幂等可重入（运行历史设计 §9.3）。
 func Open(ctx context.Context, dbPath string) (*Store, error) {
-	if dbPath == "" {
-		dbPath = DefaultDBPath
+	if strings.TrimSpace(dbPath) == "" {
+		return nil, fmt.Errorf("open history database: path must not be empty")
 	}
 	if dir := filepath.Dir(dbPath); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -72,8 +69,8 @@ func Open(ctx context.Context, dbPath string) (*Store, error) {
 
 // OpenReadOnly 打开已存在的 SQLite 库，不创建目录、不迁移也不设置持久化 PRAGMA。
 func OpenReadOnly(ctx context.Context, dbPath string) (*Store, error) {
-	if dbPath == "" {
-		dbPath = DefaultDBPath
+	if strings.TrimSpace(dbPath) == "" {
+		return nil, fmt.Errorf("open history database read-only: path must not be empty")
 	}
 	dsn, err := sqliteDSN(dbPath, url.Values{
 		"mode":    {"ro"},

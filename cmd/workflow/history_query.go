@@ -12,20 +12,21 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
 	"github.com/Jayj1997/gum-workflows/internal/execution"
 	"github.com/Jayj1997/gum-workflows/internal/history"
+	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
 )
 
-func historyCmd(ctx context.Context, args []string, dbPath string, out io.Writer) error {
+func historyCmd(ctx context.Context, args []string, paths runtimepath.Paths, out io.Writer) error {
 	if len(args) > 2 {
 		return fmt.Errorf("usage: workflow history [<run-id> [<node-id>]]")
 	}
-	if _, err := os.Stat(dbPath); err != nil {
+	if _, err := os.Stat(paths.Database()); err != nil {
 		if os.IsNotExist(err) {
 			fmt.Fprintln(out, "no runs recorded")
 			return nil
 		}
 		return fmt.Errorf("stat history database: %w", err)
 	}
-	store, err := history.OpenReadOnly(ctx, dbPath)
+	store, err := history.OpenReadOnly(ctx, paths.Database())
 	if err != nil {
 		return fmt.Errorf("open history database: %w", err)
 	}
@@ -60,7 +61,7 @@ func historyCmd(ctx context.Context, args []string, dbPath string, out io.Writer
 			fmt.Fprintf(out, "run %s not found\n", args[0])
 			return nil
 		}
-		printRunDetail(out, run)
+		printRunDetail(out, paths, run)
 		return nil
 	}
 	nodeRun, err := store.GetNodeRun(ctx, args[0], args[1])
@@ -86,7 +87,7 @@ func printHistoryList(out io.Writer, runs []history.RunSummary) {
 	_ = w.Flush()
 }
 
-func printRunDetail(out io.Writer, run *history.RunDetail) {
+func printRunDetail(out io.Writer, paths runtimepath.Paths, run *history.RunDetail) {
 	fmt.Fprintf(out, "Run %s\n", run.ID)
 	workflowName := run.Workflow
 	if run.WorkflowVersion != "" {
@@ -98,7 +99,7 @@ func printRunDetail(out io.Writer, run *history.RunDetail) {
 	fmt.Fprintf(out, "  Finished:       %s\n", formatHistoryTime(run.FinishedAt))
 	fmt.Fprintf(out, "  Duration:       %s\n", formatHistoryDuration(run.StartedAt, run.FinishedAt))
 	fmt.Fprintf(out, "  File:           %s\n", emptyHistoryValue(run.WorkflowFile))
-	fmt.Fprintf(out, "  State dir:      %s\n", executionStateDir(run.ExecutionID))
+	fmt.Fprintf(out, "  State dir:      %s\n", executionStateDir(paths, run.ExecutionID))
 	if run.StoppedReason != "" {
 		fmt.Fprintf(out, "  Stopped reason: %s\n", run.StoppedReason)
 	}
@@ -201,11 +202,11 @@ func sortedHistoryKeys[T any](items map[string]T) []string {
 	return keys
 }
 
-func executionStateDir(executionID string) string {
+func executionStateDir(paths runtimepath.Paths, executionID string) string {
 	if executionID == "" {
 		return "-"
 	}
-	return ".workflow/executions/" + executionID
+	return paths.ExecutionDir(executionID)
 }
 
 func emptyHistoryValue(value string) string {

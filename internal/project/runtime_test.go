@@ -44,7 +44,7 @@ func TestResolveRelativeRepository(t *testing.T) {
 		}
 	}
 
-	r := NewRuntime("")
+	r := NewRuntime(t.TempDir())
 	ctx, err := r.Resolve(filepath.Join(wfdir, "workflow.yaml"), Spec{Name: "demo", Repository: "./project"})
 	if err != nil {
 		t.Fatalf("Resolve() unexpected error: %v", err)
@@ -56,7 +56,7 @@ func TestResolveRelativeRepository(t *testing.T) {
 
 func TestResolveAbsoluteRepository(t *testing.T) {
 	repo := writeProject(t)
-	r := NewRuntime("")
+	r := NewRuntime(t.TempDir())
 	ctx, err := r.Resolve("", Spec{Repository: repo})
 	if err != nil {
 		t.Fatalf("Resolve() unexpected error: %v", err)
@@ -67,7 +67,7 @@ func TestResolveAbsoluteRepository(t *testing.T) {
 }
 
 func TestResolveRejectsEmptyRepository(t *testing.T) {
-	r := NewRuntime("")
+	r := NewRuntime(t.TempDir())
 	if _, err := r.Resolve("wf.yaml", Spec{}); err == nil {
 		t.Fatal("Resolve(empty) = nil error, want rejection")
 	}

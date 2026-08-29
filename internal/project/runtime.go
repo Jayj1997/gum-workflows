@@ -17,16 +17,13 @@ import (
 
 // Runtime 解析 Project 声明并创建 Workspace。
 type Runtime struct {
-	// BaseDir 是 executions 根目录（默认 .workflow/executions），
-	// 各 Execution 的 Workspace 创建在其下。
+	// BaseDir 是调用方注入的 executions 根目录，各 Execution 的
+	// Workspace 创建在其下。
 	BaseDir string
 }
 
-// NewRuntime 创建 Project Runtime。baseDir 为空时使用 ".workflow/executions"。
+// NewRuntime 使用调用方选择的 executions 根目录创建 Project Runtime。
 func NewRuntime(baseDir string) *Runtime {
-	if baseDir == "" {
-		baseDir = filepath.Join(".workflow", "executions")
-	}
 	return &Runtime{BaseDir: baseDir}
 }
 

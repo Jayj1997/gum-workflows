@@ -15,12 +15,13 @@ import (
 
 func pinAndImportDefinitions(
 	ctx context.Context,
+	dbPath string,
 	def workflow.Definition,
 	executors *node.ExecutorRegistry,
 	definitions *definition.Registry,
 	llmConfig *llm.Config,
 ) (workflow.Definition, error) {
-	store, err := history.Open(ctx, history.DefaultDBPath)
+	store, err := history.Open(ctx, dbPath)
 	if err != nil {
 		return workflow.Definition{}, fmt.Errorf("open history database: %w", err)
 	}
