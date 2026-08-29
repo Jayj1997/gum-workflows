@@ -58,12 +58,11 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 	// Execution ID 由 execution.NextExecutionID 分配（唯一来源），
 	// artifacts / 状态目录与 Engine 使用同一 ID。
 	// projects 的「恰好 1 个」校验属票 06；此处取第一个条目。
-	runtime := project.NewRuntime()
 	projSpec := project.Spec{}
 	if len(def.Projects) > 0 {
 		projSpec = project.Spec{Name: def.Projects[0].Name, Repository: def.Projects[0].Repository}
 	}
-	projCtx, err := runtime.Resolve(path, projSpec)
+	projCtx, err := project.Resolve(path, projSpec)
 	if err != nil {
 		return fmt.Errorf("resolve project: %w", err)
 	}

@@ -9,17 +9,9 @@ import (
 	"strings"
 )
 
-// Runtime 解析 Project 声明为原地 Workspace。
-type Runtime struct{}
-
-// NewRuntime 创建 Project Runtime。
-func NewRuntime() *Runtime {
-	return &Runtime{}
-}
-
 // Resolve 解析 Workflow 的 projects[0] 声明（计划 §15，设计文档 §3.5）：
 // repository 相对于 workflowFile 所在目录解析为绝对路径。
-func (r *Runtime) Resolve(workflowFile string, spec Spec) (Context, error) {
+func Resolve(workflowFile string, spec Spec) (Context, error) {
 	if strings.TrimSpace(spec.Repository) == "" {
 		return Context{}, fmt.Errorf("resolve project: repository must not be empty")
 	}

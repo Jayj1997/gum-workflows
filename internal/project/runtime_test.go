@@ -44,8 +44,7 @@ func TestResolveRelativeRepository(t *testing.T) {
 		}
 	}
 
-	r := NewRuntime()
-	ctx, err := r.Resolve(filepath.Join(wfdir, "workflow.yaml"), Spec{Name: "demo", Repository: "./project"})
+	ctx, err := Resolve(filepath.Join(wfdir, "workflow.yaml"), Spec{Name: "demo", Repository: "./project"})
 	if err != nil {
 		t.Fatalf("Resolve() unexpected error: %v", err)
 	}
@@ -59,8 +58,7 @@ func TestResolveRelativeRepository(t *testing.T) {
 
 func TestResolveAbsoluteRepository(t *testing.T) {
 	repo := writeProject(t)
-	r := NewRuntime()
-	ctx, err := r.Resolve("", Spec{Repository: repo})
+	ctx, err := Resolve("", Spec{Repository: repo})
 	if err != nil {
 		t.Fatalf("Resolve() unexpected error: %v", err)
 	}
@@ -73,17 +71,14 @@ func TestResolveAbsoluteRepository(t *testing.T) {
 }
 
 func TestResolveRejectsEmptyRepository(t *testing.T) {
-	r := NewRuntime()
-	if _, err := r.Resolve("wf.yaml", Spec{}); err == nil {
+	if _, err := Resolve("wf.yaml", Spec{}); err == nil {
 		t.Fatal("Resolve(empty) = nil error, want rejection")
 	}
 }
 
 func TestResolveNormalizesInPlaceWorkspace(t *testing.T) {
 	repo := writeProject(t)
-	r := NewRuntime()
-
-	ctx, err := r.Resolve("", Spec{Repository: filepath.Join(repo, "src", "..")})
+	ctx, err := Resolve("", Spec{Repository: filepath.Join(repo, "src", "..")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,19 +87,33 @@ func TestResolveNormalizesInPlaceWorkspace(t *testing.T) {
 	}
 }
 
-func TestResolveRejectsMissingRepository(t *testing.T) {
-	r := NewRuntime()
-
-	if _, err := r.Resolve("", Spec{Repository: filepath.Join(t.TempDir(), "missing")}); err == nil {
-		t.Error("Resolve(missing repo) = nil error, want rejection")
+func TestResolveRejectsInvalidRepository(t *testing.T) {
+	tests := []struct {
+		name       string
+		repository func(*testing.T) string
+	}{
+		{
+			name: "missing path",
+			repository: func(t *testing.T) string {
+				return filepath.Join(t.TempDir(), "missing")
+			},
+		},
+		{
+			name: "file instead of directory",
+			repository: func(t *testing.T) string {
+				path := filepath.Join(t.TempDir(), "file-repo")
+				if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return path
+			},
+		},
 	}
-
-	// repository 指向文件而非目录。
-	notADir := filepath.Join(t.TempDir(), "file-repo")
-	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.Resolve("", Spec{Repository: notADir}); err == nil {
-		t.Error("Resolve(file repo) = nil error, want rejection")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Resolve("", Spec{Repository: tt.repository(t)}); err == nil {
+				t.Error("Resolve() = nil error, want rejection")
+			}
+		})
 	}
 }
