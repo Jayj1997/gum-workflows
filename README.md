@@ -40,18 +40,19 @@ Gum-Workflows 面向代码开发、产品经理、测试、设计和运维等能
 | 阶段 | 状态 | 内容 |
 |---|---|---|
 | workflow/v1 MVP | 已完成 | YAML Loader、CUE/语义校验、DAG、串行/并行 Engine、Artifact Store、Workspace、Mock Node、CLI 与 e2e |
-| 平台核心 01–14 | 推进中 | 定义体系、迭代引擎、人工在环、LLM 配置解析、SQLite 历史与 history CLI |
+| 平台核心 01–14 | 已完成 | 定义体系、迭代引擎、人工在环、LLM 配置解析、SQLite 历史与 history CLI |
 | 14 后产品化 | 已完成设计、尚未实施 | 本地 GUI、Draft/Revision、独立 LLM Config、真实 `llm-chat`、Artifact 体验、运行恢复 |
 
-平台核心 01–14 当前已完成 01–05：
+平台核心 01–14 已完成：
 
 - TypeExpr 端口类型语言；
 - Node Type / Node Definition / Node Executor 定义与内嵌种子；
 - ExecutorRegistry 与 Node 接口瘦身；
 - 用户级 LLM 配置加载与默认解析链；
-- 新 workflow/v1 Node Instance Schema 与最小示例迁移。
-
-06–14 按既定依赖顺序继续推进，完成前不会实施 14 后产品化能力。
+- 新 workflow/v1 Node Instance Schema；
+- 环降为 warning 的语义校验与版本驱动迭代引擎；
+- human-input、human-approval、advise retry 与错误二分；
+- SQLite Node Run 历史、三级 history CLI 与 fullstack Demo。
 
 > 当前内置 Node 仍为 Mock 实现；`internal/llm` 当前只负责配置与解析，不包含真实网络调用。
 
@@ -101,7 +102,7 @@ nodes:
 - **Ready**：`InputsReady AND ControlDependenciesCompleted`。
 - **Artifact 不变式**：Node 间只传 `ArtifactRef`，数据本体由 Artifact Store 管理。
 
-01–14 完成后，Node 在上游出现新 Artifact 版本时可以再次 Ready；每轮执行拥有独立 Node Run ID 和 round，历史 Artifact 版本不会被覆盖。
+Node 在上游出现新 Artifact 版本时可以再次 Ready；每轮执行拥有独立 Node Run ID 和 round，历史 Artifact 版本不会被覆盖。
 
 ## 快速开始
 
@@ -116,16 +117,16 @@ go test ./...
 go vet ./...
 ```
 
-校验当前最小示例：
+校验当前 fullstack 示例：
 
 ```bash
-go run ./cmd/workflow validate examples/minimal/workflow.yaml
+go run ./cmd/workflow validate examples/fullstack/workflow.yaml
 ```
 
 运行当前 Mock Workflow：
 
 ```bash
-go run ./cmd/workflow run examples/minimal/workflow.yaml
+go run ./cmd/workflow run examples/fullstack/workflow.yaml
 ```
 
 当前 CLI 只提供：
@@ -133,20 +134,23 @@ go run ./cmd/workflow run examples/minimal/workflow.yaml
 ```text
 workflow validate <workflow-file>
 workflow run <workflow-file>
+workflow history
+workflow history <run-id>
+workflow history <run-id> <node-id>
 ```
 
-`workflow history` 将在平台核心 13 中实现。CLI 不接受 Workflow 业务参数；当前配置全部来自 Workflow YAML 和用户级 LLM 配置。
+CLI 不接受 Workflow 业务 flags；当前配置全部来自 Workflow YAML 和用户级 LLM 配置。含 human Node 的 `run` 要求 stdin 是交互式终端。
 
 ## 当前 Workflow 示例
 
-[`examples/minimal/workflow.yaml`](examples/minimal/workflow.yaml) 是 01–14 开发期间的临时 human-free 示例：
+[`examples/fullstack/workflow.yaml`](examples/fullstack/workflow.yaml) 是当前人工在环 Demo：
 
 ```yaml
 apiVersion: workflow/v1
 kind: workflow
 
 metadata:
-  name: minimal-development
+  name: fullstack-development
   version: "1.0"
 
 projects:
@@ -154,30 +158,36 @@ projects:
     repository: ./project
 
 nodes:
-  coder:
-    node: coding-agent
-    config:
-      task: 实现 order-system：产出源码与 OpenAPI 文档
-
-  sdk:
-    node: openapi-generator
+  requirement:
+    node: human-input
+  analysis:
+    node: requirement-analysis
     inputs:
-      openapi:
-        from: coder.openapi
+      requirement: {from: requirement.requirement}
+  backend:
+    node: coding-agent
+    inputs:
+      analysis-output: {from: analysis.analysis-output}
+      advise: {from: review.advise}
+  review:
+    node: human-approval
+    dependsOn: [backend]
 ```
 
-该示例用于验证当前 Loader、Validator、ExecutorRegistry、Engine、Artifact Store 和 Workspace，不代表未来 GUI 的创作方式。完整 human-input + approval 循环示例将在平台核心 14 重写。
+完整文件还包含 architecture、OpenAPI/SDK 与 frontend 分支。运行时可输入多轮需求；审批 reject 产出 advise 驱动返工，approve 后图静止但 Run 继续等待，直至 Ctrl-C 记为 Stopped。YAML 仍是 Runtime/CLI 入口，不代表未来 GUI 的创作方式。
 
 ## 当前内置 Node Definition
 
 | Node Definition | 类别 | Input | Output | 当前执行器 |
 |---|---|---|---|---|
+| `human-input` | human | — | `requirement: markdown` | stdin |
 | `requirement-analysis` | agent | `requirement: markdown` | `rationality: int`、`analysis-output: markdown` | Mock |
 | `architecture-design` | agent | `analysis-output: markdown` | `architecture: ArchitectureSpec` | Mock |
 | `coding-agent` | agent | 多个可选开发 Artifact | `source-code: SourceCode`、`openapi: OpenAPI` | Mock |
 | `openapi-generator` | automation | `openapi: OpenAPI` | `frontend-sdk: FrontendSDK` | Mock |
+| `human-approval` | human | —；dependsOn 被审 Node | `approve: bool`、`advise: markdown` | stdin |
 
-平台核心完成后还会包含 `human-input` 与 `human-approval`。14 后产品化阶段首先实现简单但真实的 `llm-chat` Agent Node，以验证真实模型调用、文本/图片输入、多轮对话、流式输出、模型能力和 Artifact 预览。
+14 后产品化阶段首先实现简单但真实的 `llm-chat` Agent Node，以验证真实模型调用、文本/图片输入、多轮对话、流式输出、模型能力和 Artifact 预览。
 
 ## LLM Config 方向
 
@@ -266,26 +276,27 @@ Agent Node
 | 03 | ExecutorRegistry 与 Node 接口瘦身 | 已完成 |
 | 04 | LLM 配置与默认解析链 | 已完成 |
 | 05 | 新 workflow/v1 Schema | 已完成 |
-| 06 | 扩展语义校验与环降提示 | 按序推进 |
-| 07 | SQLite 定义侧导入 | 待完成 |
-| 08 | 迭代引擎核心 | 待完成 |
-| 09 | human-input 与多轮输入 | 待完成 |
-| 10 | human-approval 与 approve 门控 | 待完成 |
-| 11 | Structural/Interaction Error 与 advise retry | 待完成 |
-| 12 | Node Run 粒度历史落库 | 待完成 |
-| 13 | history CLI | 待完成 |
-| 14 | examples、e2e 与文档收尾 | 待完成 |
+| 06 | 扩展语义校验与环降提示 | 已完成 |
+| 07 | SQLite 定义侧导入 | 已完成 |
+| 08 | 迭代引擎核心 | 已完成 |
+| 09 | human-input 与多轮输入 | 已完成 |
+| 10 | human-approval 与 approve 门控 | 已完成 |
+| 11 | Structural/Interaction Error 与 advise retry | 已完成 |
+| 12 | Node Run 粒度历史落库 | 已完成 |
+| 13 | history CLI | 已完成 |
+| 14 | examples、e2e 与文档收尾 | 已完成 |
 
 ## 包结构
 
 ```text
-cmd/workflow          当前 CLI：validate / run
+cmd/workflow          当前 CLI：validate / run / history
 internal/definition   Node Type / Definition / Executor、TypeExpr 与种子
 internal/llm          用户级 LLM 配置加载和模型选择解析（当前无网络 Client）
 internal/workflow     Workflow 定义、Loader 与 Graph
 internal/validation   CUE + Semantic Validation
 internal/node         ExecutorRegistry 与内置 Executor
 internal/execution    Engine、Scheduler、状态与持久化
+internal/history      SQLite 定义导入、Node Run 历史与查询
 internal/artifact     Artifact / ArtifactRef / Store
 internal/project      Project Runtime 与 Workspace
 internal/agent        Agent Adapter（当前为 Mock）
@@ -299,10 +310,10 @@ schema/workflow       内嵌 workflow/v1 CUE Schema
 1. Data Edge 来自 Input Binding；`dependsOn` 只表达 Control Edge。
 2. Workflow 与 Node Definition / Executor 解耦。
 3. Artifact 是 Node 间唯一数据通道，Runtime 传递 ArtifactRef。
-4. Node 的调度依据是输入与 Control Dependency 是否满足。
+4. Node 的调度依据是输入与 Control Dependency 是否满足；新版本可令成功或交互失败的 Node 再次 Ready。
 5. Workflow 不管理 Coding Agent 的 Skills；Agent 在 Workspace 中按项目约定自行发现。
 6. CUE 结构校验与 Go 语义校验分层，错误必须定位到 Node 和字段。
-7. 01–14 未完成前，不把 14 后 GUI、真实 LLM、恢复和产品模型倒灌进当前票。
+7. 不把 14 后 GUI、真实 LLM、恢复和产品模型倒灌进当前 Runtime。
 8. 设计发生变化时先更新对应的新设计文档，再修改实现。
 
 ## 文档导航
@@ -323,4 +334,4 @@ go test -race ./...
 go vet ./...
 ```
 
-参与开发请先阅读 [`AGENTS.md`](AGENTS.md) 与 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。当前按 `.scratch/platform-core/issues/` 中 01–14 严格顺序推进；一个阶段未验收，不开始依赖其语义的下一阶段。
+参与开发请先阅读 [`AGENTS.md`](AGENTS.md) 与 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。平台核心 01–14 已完成；14 后能力须先完成对应新设计和开发票。

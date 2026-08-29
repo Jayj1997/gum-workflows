@@ -1,0 +1,46 @@
+apiVersion: workflow/v1
+kind: workflow
+metadata:
+  name: fullstack-development
+  version: "1.0"
+  description: 全栈开发流水线：人工需求入口 → 分析/架构/编码 → 人工审批循环
+projects:
+  - name: order-system
+    repository: ./project
+nodes:
+  requirement:
+    node: human-input
+  analysis:
+    node: requirement-analysis
+    inputs:
+      requirement: {from: requirement.requirement}
+  architecture:
+    node: architecture-design
+    inputs:
+      analysis-output: {from: analysis.analysis-output}
+  backend:
+    node: coding-agent
+    llm: openai
+    target_model: gpt-4o
+    config:
+      task: 实现 order-system 后端：依据需求与架构产出源码与 OpenAPI 文档
+    inputs:
+      analysis-output: {from: analysis.analysis-output}
+      architecture: {from: architecture.architecture}
+      advise: {from: review.advise}
+  review:
+    node: human-approval
+    dependsOn: [backend]
+  openapi:
+    node: openapi-generator
+    inputs:
+      openapi: {from: backend.openapi}
+  frontend:
+    node: coding-agent
+    config:
+      task: 实现 order-system 前端：消费 OpenAPI 与 Frontend SDK
+    inputs:
+      analysis-output: {from: analysis.analysis-output}
+      openapi: {from: backend.openapi}
+      frontend-sdk: {from: openapi.frontend-sdk}
+      advise: {from: review.advise}

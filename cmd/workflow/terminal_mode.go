@@ -1,5 +1,3 @@
-//go:build !gumworkflowe2e
-
 package main
 
 import "os"

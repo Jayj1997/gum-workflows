@@ -1,6 +1,6 @@
 # gum-workflows 开发规范
 
-本文档是本仓库的唯一开发规范。设计计划见 `plans/Workflow Engine MVP：workflow-v1 设计与实现计划.md`（设计文档，只读）；本文档是落地到日常编码的执行标准。两者冲突时，先更新设计文档，再更新本文档。
+本文档是本仓库的唯一开发规范。MVP 历史设计见 `plans/Workflow Engine MVP：workflow-v1 设计与实现计划.md`；当前平台核心语义见 `plans/平台核心设计：组件定义体系与迭代执行引擎.md`。设计与实现冲突时，先显式修订设计，再修改本文档和代码。
 
 ---
 
@@ -9,250 +9,172 @@
 | 项 | 决定 |
 |---|---|
 | 语言 | Go 1.25+（`go.mod` 基线为 1.25.0） |
-| Module 路径 | `github.com/Jayj1997/gum-workflows` |
-| 配置格式 | YAML（gopkg.in/yaml.v3） |
-| Schema 校验 | CUE（cuelang.org/go，Go API 内嵌；Schema 文件为 `schema/workflow/v1.cue`） |
-| 并发 | 标准库：goroutine / channel / sync.WaitGroup |
-| 日志 | 标准库 log/slog（结构化） |
-| 持久化 | 文件系统（`.workflow/` 目录），不引入数据库 |
+| Module | `github.com/Jayj1997/gum-workflows` |
+| 配置 | YAML（`gopkg.in/yaml.v3`，严格解析） |
+| Schema | CUE（`cuelang.org/go`，`schema/workflow/v1.cue` 内嵌） |
+| 身份 | UUID v4（`github.com/google/uuid`） |
+| 终端检测 | `github.com/mattn/go-isatty` |
+| 并发 | 标准库 goroutine / channel；调度状态由 Engine 主循环串行推进 |
+| 日志 | 标准库 `log/slog` |
+| Artifact 与快照 | 文件系统 `.workflow/executions/<execution-id>/` |
+| 定义与运行历史 | SQLite `.workflow/gum-workflows.db`（`modernc.org/sqlite`） |
 
-**依赖最小化原则**：新增第三方依赖前必须说明标准库无法满足的理由。运行时核心路径（loader / graph / engine）禁止引入 CLI 框架之外的重量级依赖。
+`modernc.org/sqlite` 是平台核心唯一获批的数据库依赖：标准库不提供 SQLite 驱动，而本项目需要本地、单文件、零服务、可迁移且无 CGO 的统一定义与运行历史索引。数据库只保存定义、状态和 `ArtifactRef`；Artifact 本体与 Workspace 仍在文件系统。
 
-## 2. 目录结构（目标态）
+新增第三方依赖前必须说明标准库无法满足的理由。loader / validation / engine 等核心路径不得引入 CLI 框架或服务端基础设施依赖。
+
+## 2. 目录结构（当前态）
 
 ```text
 gum-workflows/
-├── CLAUDE.md
-├── docs/
-│   └── DEVELOPMENT.md          # 本文档
-├── plans/                      # 设计文档，只读
-│
-├── cmd/
-│   └── workflow/
-│       └── main.go             # CLI 入口：run / validate
-│
+├── cmd/workflow/                 # validate / run / history 与 stdin HumanGateway
 ├── internal/
-│   ├── workflow/               # Workflow 定义、加载、图结构
-│   │   ├── definition.go
-│   │   ├── loader.go
-│   │   ├── validator.go
-│   │   └── graph.go            # DAG：Data Edge + Control Edge
-│   │
-│   ├── node/                   # Node 抽象与 Registry
-│   │   ├── node.go
-│   │   ├── registry.go
-│   │   └── builtins/           # 内置 Node：requirement-analysis、architecture-design、coding-agent、openapi-generator
-│   │
-│   ├── artifact/               # Artifact、ArtifactRef、Store
-│   │   ├── artifact.go
-│   │   ├── registry.go         # Artifact Kind 注册（类型匹配校验依据）
-│   │   └── store.go            # FilesystemArtifactStore
-│   │
-│   ├── execution/              # Runtime
-│   │   ├── engine.go
-│   │   ├── state.go            # Node/Execution 状态机 + state.json 读写
-│   │   └── scheduler.go        # Ready Queue + Dependency Counter
-│   │
-│   ├── project/                # ProjectContext、Workspace
-│   │   ├── project.go
-│   │   └── workspace.go
-│   │
-│   ├── agent/                  # CodingAgent Adapter
-│   │   ├── agent.go            # CodingAgent 接口
-│   │   ├── mock.go             # MockCodingAgent
-│   │   └── adapter.go          # 真实 Agent Adapter（后期）
-│   │
-│   └── validation/
-│       ├── cue.go              # CUE Schema 校验
-│       └── semantic.go         # 语义校验
-│
-├── schema/
-│   └── workflow/
-│       ├── v1.cue              # workflow/v1 Schema
-│       └── embed.go            # go:embed 将 Schema 内嵌进 Go Runtime
-│
-├── examples/
-│   └── minimal/                 # 临时最小 human-free 示例（完整 demo 待人工在环能力落地重写）
-│       ├── workflow.yaml
-│       └── project/
-│
-└── tests/                      # 跨包集成测试（同包单测跟随源码）
-    ├── workflow/
-    ├── dag/
-    ├── artifact/
-    └── execution/
+│   ├── definition/               # Node Type / Definition / Executor、TypeExpr、Registry
+│   ├── llm/                      # 用户级 llm.yaml、严格加载与默认链解析
+│   ├── workflow/                 # workflow/v1、严格加载、Data/Control Graph
+│   ├── validation/               # CUE + 聚合语义校验与 warning
+│   ├── node/                     # Node、ExecutorFactory、ExecutorRegistry
+│   │   └── builtins/             # 6 个内置 Mock/Human Executor 与内嵌定义种子
+│   ├── execution/                # 迭代引擎、HumanGateway、Node Run 状态与快照
+│   ├── history/                  # SQLite 迁移、定义导入、Run Record 与 Query
+│   ├── artifact/                 # ArtifactRef、Registry、Memory/Filesystem Store
+│   ├── project/                  # Project Context 与每次 Run 独享 Workspace
+│   └── agent/                    # CodingAgent 接口与 Mock 实现
+├── schema/workflow/              # workflow/v1 CUE 与 go:embed
+├── examples/fullstack/           # human 入口、审批/advise 回环、多轮需求 Demo
+└── tests/
+    ├── e2e/                      # 真实 CLI：validate、非 TTY、history 查询骨架
+    ├── workflow/                 # 跨包 validation 接缝
+    └── dag/                      # 跨包 Graph 接缝
 ```
 
-目录按里程碑逐步创建，不提前建空目录。
+不提前创建没有实现的目录或空 adapter。
 
 ## 3. 架构分层与依赖方向
 
-包依赖只允许自上而下，禁止反向和横向穿透：
-
 ```text
 cmd/workflow
-    ↓
-internal/execution        （顶层编排：engine + scheduler）
-    ↓
-internal/workflow         （定义、加载、DAG）
-    ↓
-internal/node             （Node 接口 + Registry）
-internal/validation       （CUE + Semantic）
-    ↓
-internal/artifact         （基础包：不依赖其他 internal 包）
-internal/project          （基础包：不依赖其他 internal 包）
-internal/agent            （依赖 artifact + project；被 node/builtins 消费）
-```
+  ├─ validation ──> definition / llm / workflow / node / artifact
+  ├─ execution  ──> definition / workflow / node / artifact / project
+  ├─ history    ──> execution / artifact
+  └─ node/builtins ──> definition / node / agent / artifact
 
-类型层面的详细设计见 `docs/domain-model.md`。
+definition ──> artifact          node ──> definition / artifact / project
+workflow   ──> 标准库             agent ──> artifact / project
+artifact、project ──> 标准库
+```
 
 具体规则：
 
-- `internal/artifact` 与 `internal/project` 是基础包，不 import 任何其他 `internal/` 包。
-- `internal/node` 定义接口，依赖基础包；`node/builtins` 可以 import `agent`、`project`、`artifact`。
-- `internal/execution` 是唯一驱动 Node 执行的地方；`internal/workflow` 不感知执行。
-- 接口定义在**消费方**（Go 惯例）：例如 `execution` 需要 `NodeRunner`，接口就定义在 `execution` 包中，`node` 包提供实现。
-- 禁止 `init()` 中隐式注册。Registry 一律通过显式的 `RegisterXxx(registry)` 函数，在 `cmd/workflow/main.go` 中集中完成注册（Registry 模式保持可测试、可发现）。
+- `workflow` 只描述组合与 Graph，不感知 Executor、执行或 SQLite。
+- Node 契约唯一来源是 `definition.NodeDefinition` YAML；Go `node.Node` 只实现 `Execute`。`ExecutorRegistry` 按 `(definition, version)` 显式注册并在 Run 启动时固定版本。
+- `execution` 是唯一驱动 Node Run 的包；它通过消费方接口 `HumanGateway` 与 `RunRecorder` 隔离终端和持久化适配器，不 import `cmd` 或 `history`。
+- `history` 实现 `execution.RunRecorder`，以 DTO 接收定义导入数据，不反向 import `definition`、`workflow` 或 `llm`。
+- `artifact` 与 `project` 是基础包，不 import 其他 `internal/` 包。Node 之间只传 `ArtifactRef`。
+- Registry 禁止在 `init()` 隐式注册；内嵌定义与 Go Executor 必须由 CLI 组装层显式加载、校验并注册。
+
+类型与运行语义详见 `docs/domain-model.md`。
 
 ## 4. Go 编码规范
 
 ### 4.1 基本风格
 
-- 遵循 `gofmt` / `go vet`，注释只写「为什么」，不写「是什么」。
-- 导出标识符必须有 doc comment，以标识符名开头。
-- 包名：单数、全小写、无下划线。
-- 文件命名：小写 + 下划线，如 `artifact_store.go`。
+- 遵循 `gofmt` / `go vet`；注释说明原因、不重复代码表面含义。
+- 导出标识符必须有以标识符名开头的 doc comment。
+- 包名使用单数、全小写、无下划线；文件名使用小写加下划线。
+- 不在库代码中 `panic`；不可恢复错误只在 `cmd/` 转为进程退出码。
 
 ### 4.2 错误处理
 
-- 错误信息**小写开头**、不以标点结尾，并用 `%w` 包装保留错误链：
+- 错误信息小写开头、不以标点结尾，并用 `%w` 保留错误链。
+- 可编程判断使用哨兵错误配合 `errors.Is`。
+- 校验错误必须包含 Node ID、字段和原因，并聚合返回全部语义问题；warning 不阻断 validate。
+- 结构性错误使 Workflow Failed；agent 交互性错误仅在节点声明 optional `advise` 时允许人类意见重试。
 
-```go
-if err != nil {
-    return fmt.Errorf("load workflow %q: %w", path, err)
-}
-```
-
-- 校验类错误必须包含**定位信息**：哪个 Node（Node ID）、哪个字段、什么错误。设计计划 M3 的验收标准就是「错误 Workflow 能明确指出哪个字段、哪个 Node、什么错误」：
-
-```go
-return fmt.Errorf("node %q input %q: output %q not found in node %q", nodeID, inputName, outputName, fromNodeID)
-```
-
-- 语义校验错误聚合返回（`[]error` 或自定义 `ValidationErrors`），一次报出全部问题，不在第一个错误处短路。
-- 库代码（internal/ 下）禁止 `panic`；只有 `cmd/` 顶层允许将不可恢复错误转为退出码。
-- 使用哨兵错误（`var ErrXxx = errors.New(...)`）配合 `errors.Is` 表达可编程判断的类型，如 `ErrCycleDetected`、`ErrArtifactNotFound`。
-
-### 4.3 接口与类型
-
-- 核心接口以设计计划为准，命名与签名不得偏离：
+### 4.3 核心接口与状态
 
 ```go
 type Node interface {
-    Type() string
-    InputSchema() Schema
-    OutputSchema() Schema
-    Execute(ctx ExecutionContext, inputs map[string]ArtifactRef) ([]ArtifactRef, error)
+    Execute(ctx ExecutionContext, inputs map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error)
 }
 
-type NodeFactory interface {
-    Type() string
-    Create(config NodeConfig) (Node, error)
+type ExecutorFactory interface {
+    Definition() string
+    Version() string
+    Create(config Config) (Node, error)
 }
 
-type ArtifactStore interface {
-    Put(artifact Artifact) (ArtifactRef, error)
-    Get(ref ArtifactRef) (Artifact, error)
-    Exists(ref ArtifactRef) bool
+type HumanGateway interface {
+    RequestRound(ctx context.Context, req RoundRequest) (RoundResponse, error)
 }
 
-type CodingAgent interface {
-    Execute(ctx context.Context, task Task, project ProjectContext, inputs []ArtifactRef) ([]ArtifactRef, error)
+type RunRecorder interface {
+    Record(ctx context.Context, exec *WorkflowExecution) error
 }
 ```
 
-- Artifact 在运行时一律传 `ArtifactRef`；只有 Node 内部实际消费时才 `Get`。
-- 枚举用类型化字符串常量：
+契约不在 `Node` 上重复声明；inputs/outputs 来自 `definition.Registry`。Node Run 的状态流转集中在 `execution/state.go`：
 
-```go
-type EdgeType string
-
-const (
-    DataEdge    EdgeType = "data"
-    ControlEdge EdgeType = "control"
-)
+```text
+Pending -> Ready -> Running -> Succeeded -> Ready ...
+                    \-> Failed --(interaction + advise/new input)--> Ready
+Ready -> WaitingHuman -> Running
+Workflow: Running -> Stopped | Failed
 ```
 
-- Node 状态机：`Pending -> Ready -> Running -> (Succeeded | Failed | Skipped)`。状态流转必须集中在一个文件（`execution/state.go`）中判断合法性，非法流转返回错误而不是静默接受。
+`Skipped` 为预留状态，本期不实现传播。非法流转必须返回错误。
 
 ### 4.4 并发
 
-- M7 之前保持单进程串行；M7 引入并行时只用 goroutine + channel + WaitGroup。
-- 所有执行路径第一个参数是 `context.Context`，Node 执行必须响应 ctx 取消。
-- 状态写入集中在单一 goroutine（scheduler 事件循环）或用 mutex 保护并写明锁保护的字段。
+- 所有可取消路径携带 `context.Context`，Node 必须响应取消。
+- 同一 Node 同时最多一个 Node Run；新输入到达时标记 dirty，当前轮完成后合并触发下一轮。
+- 不同 Node 可按 `WithParallelism` 并发；调度、状态迁移与持久化触发由 Engine 主循环串行管理。
+- 人类事件重置收敛计数；无新人类事件时同一机器节点连续运行超过默认 10 轮触发 `convergence-guard`。
 
 ## 5. YAML / CUE 规范
 
-- `workflow/v1` 的字段集合是**封闭**的（设计文档 §3.5–§3.7）：`apiVersion`、`kind`、`metadata`、`projects`（列表：`name`/`repository`）、`nodes.<id>.{node, executor, llm, target_model, metadata, inputs, dependsOn, config}`。新增字段 = 新版本（workflow/v2 或明确的 v1 扩展提案），需要先改设计文档。
-- CUE Schema（`schema/workflow/v1.cue`）与 Go Struct（`internal/workflow/definition.go`）必须同步修改：改了其中一个而不改另一个的 PR 不予合并。
-- Loader 解析时必须严格模式（yaml.v3 `KnownFields(true)`），未知字段报错——避免 Schema 漂移。
-- examples/ 下的 YAML 是文档的一部分，必须始终可被 `workflow validate` 通过。
+`workflow/v1` 是封闭字段集合：
+
+- 顶层：`apiVersion`、`kind`、`metadata`、`projects`、`nodes`。
+- `metadata`：`name`，可选 `version` / `description`。
+- `projects[]`：`name`、`repository`；当前语义要求恰好一个项目。
+- `nodes.<id>`：`node`，可选 `executor`、`llm`、`target_model`、`metadata`、`inputs`、`dependsOn`、`config`。
+- `inputs.<name>.from` 采用 `<node-id>.<output>`，产生 Data Edge；`dependsOn` 只产生 Control Edge。
+
+新增 workflow 字段等于 Schema 变更，必须先修订设计并决定是否进入 workflow/v2。`retry/timeout/parallelism/environment/hooks` 当前禁止加入 workflow/v1。
+
+三类定义侧信封由 `internal/node/builtins/defs/` 内嵌：
+
+- `nodeTypeDefinition/v1`：`metadata`、`requires`。
+- `nodeDefinition/v1`：`metadata`、`type`、`requires`、`inputs`、`outputs`；端口类型使用 TypeExpr。
+- `nodeExecutor/v1`：`metadata`、`node`、`version`、`updates`。
+
+用户级 `llm.yaml` 使用 `llm/v1`，只做 provider/model 解析，不落库密钥。所有 Loader 使用 `yaml.v3` `KnownFields(true)`；`schema/workflow/v1.cue` 与 `internal/workflow/definition.go` 必须同步修改。`examples/` 下 YAML 属于公开文档，必须始终通过完整 `workflow validate` 管线。
 
 ## 6. 测试规范
 
-- 单元测试与源码同目录（`xxx_test.go`），跨包端到端测试放 `tests/`。
-- 表驱动测试为默认风格；fixture 放 `testdata/`。
-- 语义校验 fixture 按场景分目录（沿用 valid/invalid 模式；平台核心设计 §10 起环降为 warning，warning 场景独立成目录）：
-
-```text
-testdata/
-├── valid/
-├── invalid-node/
-├── invalid-output/
-├── invalid-type/
-├── invalid-executor/
-├── invalid-llm/
-├── invalid-projects/
-└── warning-cycle/
-```
-
-- 单元测试禁止网络访问、禁止依赖 `$HOME`；涉及文件系统一律用 `t.TempDir()`。
-- Mock 优先于真实依赖：`MockCodingAgent`、`MockRequirementNode`、`MockArchitectureNode` 是 M1-M10 的默认实现（设计计划 §33：先跑通 DAG，再接真实 Agent）。
-- 验收标准即测试用例：设计计划 §46 的 Case 1-8 每条都必须对应一个可重复执行的测试。
+- 单元测试跟随源码；跨包测试放 `tests/`；fixture 使用 `testdata/`，文件系统使用 `t.TempDir()`。
+- 单元与 e2e 禁止网络、禁止依赖真实 `$HOME`；LLM 配置通过临时 `XDG_CONFIG_HOME` 注入。
+- 默认表驱动。测试公共接缝，不测试私有调度细节：`validation.Validate`、注入 fake Gateway/Recorder/Executor 的 `execution.Engine.Run`、CLI adapter。
+- `tests/e2e` 只保留真实二进制的 fullstack validate、非 TTY 零写入守卫和种子 history 三级查询；完整人工循环由 Engine 主接缝测试覆盖，不依赖 PTY。
+- 直接 SQL 断言仅用于 `internal/history` 的迁移、FK、幂等与一轮一行约束。
+- 合并前运行 `go vet ./...`、`go test ./...` 与 `go test -race ./...`。
 
 ## 7. Git 规范
 
-- 分支：`feat/<milestone>-<topic>`（如 `feat/m2-yaml-loader`）、`fix/<topic>`、`docs/<topic>`。
-- Commit message 采用 Conventional Commits：`feat(execution): add ready-queue scheduler`、`docs: add development guidelines`。scope 用包名或里程碑。
-- 一个 PR 只做一件事；里程碑内按计划 §44 的 ①-⑱ 顺序小步提交，不跳跃。
-- `plans/` 目录只读：设计变更通过新文档或显式修订，不静默改写。
-- `.workflow/`（运行时状态）不入库。
+- 分支使用 `feat/<topic>`、`fix/<topic>`、`docs/<topic>`；Codex 创建分支时使用 `codex/` 前缀。
+- Commit message 使用 Conventional Commits；一次提交只表达一个连贯变更。
+- `.workflow/` 不入库；不得提交用户级 `llm.yaml` 或密钥。
+- `plans/Workflow Engine MVP：workflow-v1 设计与实现计划.md` 是只读历史。其他设计文档只允许在明确票据授权下记录显式修订，不静默改写。
 
-## 8. 里程碑与推进纪律
+## 8. 推进纪律
 
-| 里程碑 | 内容 | 验收 |
-|---|---|---|
-| M1 | Core Model（Workflow/Node/Artifact/ArtifactRef/ProjectContext/Execution） | 单测通过 |
-| M2 | YAML Loader | `workflow validate` 可解析 |
-| M3 | CUE Validation | 错误能定位字段与 Node |
-| M4 | DAG Builder（Data + Control Edge） | 单测通过 |
-| M5 | DAG Validator | valid/invalid fixture 全覆盖 |
-| M6 | Execution Engine（串行） | 状态机 + state.json 正确 |
-| M7 | 并行 DAG | B/C 并行、D 等待 |
-| M8 | Project Runtime | Workspace 正确创建 |
-| M9 | OpenAPI Automation | 真实生成 FrontendSDK 文件 |
-| M10 | Coding Agent Adapter | Mock 先行，真实 Agent 后接 |
-| M11 | Fullstack Demo | 设计计划 §42 全流程跑通 |
+MVP 与平台核心 P1–P8 已完成。14 后产品方向不得倒灌到 workflow/v1 或当前 Runtime；GUI、Revision、真实 LLM、恢复与同步等工作必须先有新设计和开发票。
 
-推进纪律：
-
-1. **严格顺序**：M(n) 验收未通过，不开 M(n+1)。
-2. 每个里程碑完成时，其验收测试必须进入 `go test ./...` 且常绿。
-3. 未列入计划的特性（见 CLAUDE.md「MVP 明确不做」）一律拒收，先改设计文档再动代码。
+每张票的验收必须进入常绿测试；实现状态、设计目标与未来计划在文档中必须分开表述。
 
 ## 9. 文档规范
 
-- `plans/`：设计文档，只读历史。
-- `docs/DEVELOPMENT.md`：本文档，随架构决定演进。
-- 重大设计决定（如引入新依赖、修改接口签名、Schema 变更）在 PR 描述中说明背景与替代方案，必要时沉淀到 `docs/decisions/`（按需创建，格式：背景 / 决定 / 后果）。
-- 代码中的示例（examples/）与文档中的 YAML 必须始终与 `schema/workflow/v1.cue` 一致。
+- `CONTEXT.md` 是当前单上下文术语权威；重大模型决定写入 `docs/adr/`。
+- `docs/domain-model.md` 描述已实现模型，不描述尚未落地的产品方向。
+- 代码、Schema、examples、CLAUDE.md 与本规范必须在同一票内同步。

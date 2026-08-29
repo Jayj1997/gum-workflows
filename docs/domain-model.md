@@ -1,309 +1,184 @@
-# Domain Model 设计（Model 层 + Runtime 完整版）
+# Gum-Workflows Domain Model
 
-> 覆盖设计计划 §44 开发顺序 ①-⑱（全部 MVP 里程碑）。本文档描述类型职责、包分层、命名映射与关键设计决策。**未实现（后续版本，需先升级设计文档）**：真实 Coding Agent Adapter、真实 OpenAPI Generator CLI、Skipped 传播、重试/超时。
+本文档描述平台核心 01–14 已实现的模型与运行语义。术语以根目录 `CONTEXT.md` 为权威；GUI、Workflow Revision、真实 LLM Client、Resume/Rerun/Fork 等 14 后产品能力不在本文范围。
 
-## 0. 定义侧与运行侧（最重要的概念区分）
+## 1. 定义、实例与运行
 
 ```text
-定义（可以运行很多次）            运行（每次 run 独立）
-─────────────────────           ─────────────────────
-Workflow                        WorkflowExecution #001
-  │                               ├── NodeExecution A
-  ├── Node A  (id: backend,        ├── NodeExecution B
-  │            type: agent)        └── NodeExecution C
-  ├── Node B
-  └── Node C                     WorkflowExecution #002
-                                  ...（与 #001 完全独立）
+Node Type Definition: agent | automation | human
+          ↑ type
+Node Definition: 契约与 requires
+          ↑ node                         ↑ (node, version)
+Node Instance: workflow.yaml 中的一次使用   Node Executor: Go 实现版本
+          └────────────── Workflow ──────────────┘
+                              │ workflow run
+                              ▼
+WorkflowExecution ── NodeExecution ── Node Run(round 1..n)
+                                            │
+                                            └─ inputs/outputs: ArtifactRef
 ```
 
-| 概念 | 侧 | 实现 | 含义 |
+- `definition.NodeTypeDefinition` 是执行主体类别，内置且固定为 agent、automation、human。
+- `definition.NodeDefinition` 是平台认识的节点本体，唯一声明 inputs/outputs TypeExpr 契约和资源需求。
+- `definition.NodeExecutorDefinition` 描述某 Node Definition 的可执行版本；`node.ExecutorFactory` 提供对应 Go 实现。
+- `workflow.NodeSpec` 是 Workflow 内的 Node Instance：Node ID、Executor/LLM 选择、连接、展示元数据与 config。
+- `execution.WorkflowExecution` 是一次独立 Run；`NodeExecution` 保存一个 Node Instance 的当前轮与历史轮；每个 `NodeRun` 有独立 UUID 和递增 round。
+
+定义不携带运行状态，运行也不回写 YAML。Run 启动时解析并固定每个 Node Executor 与 LLM provider/model 名称；运行中注册的新 Executor 不改变该 Run。
+
+## 2. Workflow 与连接
+
+`workflow.Definition` 对应封闭的 `workflow/v1` YAML：一个 metadata、恰好一个 project 和 `nodes` map。
+
+连接只有两种：
+
+| 连接 | 声明 | 语义 |
+|---|---|---|
+| Data Edge | `inputs.<port>.from: <node-id>.<output>` | 传递生产者最新已完成版本的 `ArtifactRef` |
+| Control Edge | `dependsOn: [<node-id>]` | 只表达执行顺序，不传数据 |
+
+`workflow.BuildGraph` 保留 Data/Control 类型并用于调度分析。环不再是校验错误：含 human 的环是正常审批/意见迭代；纯机器环产生 warning，并由运行时收敛保护兜底。
+
+全 Workflow 必须恰好一个无 inputs、无 dependsOn 的源 Node，且其 Node Type 必须是 human。当前内置入口是 `human-input`。
+
+## 3. Artifact 与版本
+
+`artifact.Artifact` 是数据本体，`artifact.ArtifactRef` 是运行时唯一传输形态：
+
+```text
+ArtifactRef = ID + Kind + Version + URI
+```
+
+Node 只接收与返回 `map[端口名]ArtifactRef`。需要内容时由 Node 自己调用 `artifact.Store.Get`；大型源码 Artifact 只保存 Workspace/repository 等引用信息，不在 Node 间复制本体。
+
+同一 Node output 每次成功轮产生新版本。旧 Artifact 不删除；下游新一轮的 `InputSnapshot` 同时记录 YAML `from` 与实际消费的版本，运行历史因此可以回答某一轮消费、产出了什么。
+
+## 4. Node、契约与 Executor
+
+Go `node.Node` 刻意保持窄接口：
+
+```go
+type Node interface {
+    Execute(ctx ExecutionContext, inputs map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error)
+}
+```
+
+Node 不再实现 `Type()`、`InputSchema()` 或 `OutputSchema()`；契约只从 `definition.Registry` 读取。`node.ExecutorRegistry` 按 `(definition, version)` 注册 `ExecutorFactory`，缺省选择数值意义上的最新 `vN`。
+
+Run 前会交叉检查：
+
+- Node Definition 引用的 Type 与 Artifact Kind 合法；
+- 内嵌 Node Executor YAML 与已编译的 Go Factory 一一对应；
+- Node Instance 引用的 Definition / Executor 存在；
+- required input 已绑定，optional input 若绑定也必须类型兼容；
+- agent 的 LLM 选择可以解析，human/automation 不得声明 LLM；
+- `human-approval` 无 data inputs 且必须有非空 dependsOn。
+
+## 5. 内置 Node
+
+| Node Definition | Type | Inputs | Outputs |
 |---|---|---|---|
-| Workflow | 定义 | `workflow.Definition` | Node 的组合声明（YAML） |
-| Node | 定义 | `workflow.NodeSpec` | 「有一个叫 backend 的节点」（id + type + inputs + dependsOn） |
-| WorkflowExecution | 运行 | `execution.WorkflowExecution` | 一次 `workflow run`，如 execution-000001 |
-| NodeExecution | 运行 | `execution.NodeExecution` | 一个 Node 定义在某次运行中的实例（状态、产出、错误的快照） |
+| `human-input` | human | — | `requirement: markdown` |
+| `requirement-analysis` | agent | `requirement: markdown` | `rationality: int`、`analysis-output: markdown` |
+| `architecture-design` | agent | `analysis-output: markdown` | `architecture: ArchitectureSpec` |
+| `coding-agent` | agent | optional `analysis-output` / `architecture` / `openapi` / `frontend-sdk` / `advise` | `source-code: SourceCode`、`openapi: OpenAPI` |
+| `openapi-generator` | automation | `openapi: OpenAPI` | `frontend-sdk: FrontendSDK` |
+| `human-approval` | human | —；以 dependsOn 挂接被审 Node | `approve: bool`、`advise: markdown` |
 
-规则：
+Agent 与 OpenAPI 生成目前仍是 Mock 实现；真实网络模型调用和真实 generator 属后续设计。Human Executor 负责把 Gateway 响应写成 Artifact，避免 Engine 硬编码输出格式。
 
-1. **Node 与 NodeExecution 不得混用**。`node.Node` / `workflow.NodeSpec` 是能力与组合声明；`NodeExecution` 才有 Status/Outputs/Error。
-2. 每次 `Engine.Run` 产生全新的 `WorkflowExecution`；同一 Workflow 可运行任意多次，运行对象之间零共享（含 Artifact）。
-3. `NodeExecution` 快照 `NodeID` 与 `NodeType`：定义可能在两次运行之间变化，运行记录以实际实例化的类型为准。
-4. 运行不回写定义：`Engine.Run` 之后 `workflow.Definition` 保持不变。
-5. 这一区分是 `state.json`（`executions/<id>/nodes/<node>/state.json`，计划 §28）结构的直接依据。
+## 6. LLM 配置
 
-## 1. 模型总览
+`internal/llm` 只实现用户级 `llm.yaml` 的严格加载、校验与 provider/model 默认链解析，不实现网络 Client。查找顺序为：
 
-五个核心概念（设计计划 §48）与本实现的对应：
+1. `$XDG_CONFIG_HOME/gum-workflows/llm.yaml`
+2. `~/.config/gum-workflows/llm.yaml`
 
-```text
-Workflow  = workflow.Definition   （YAML 静态声明：Node 的组合）
-Node      = node.Node             （Input -> Execute -> Output 的执行单位）
-Artifact  = artifact.Artifact     （Node 之间的数据本体）
-            artifact.ArtifactRef  （运行时传递的引用）
-Project   = project.Context       （Execution 的运行环境）
-Execution = execution.WorkflowExecution（Workflow 的一次实际运行）
-```
+Agent Node 可声明 `llm` 与 `target_model`；都省略时使用默认 provider/default model。API Key 可引用环境变量，解析后的密钥不写入 SQLite、state.json 或 Workflow 快照；运行记录只保存 provider/model 名。
 
-依赖与数据流：
+## 7. 迭代执行语义
 
-```text
-workflow.Definition
-        │ 按 type 实例化（Registry，后续里程碑）
-        ▼
-     node.Node ──Execute(ExecutionContext, inputs)──> outputs
-        │                                    │
-        │       inputs / outputs 均为        ▼
-        │       artifact.ArtifactRef   artifact.Store
-        ▼
-execution.WorkflowExecution（记录每个 NodeExecution 的 Status 与 Outputs）
-```
+节点的 Ready 条件是：所有 required inputs 已有完成版本，且所有 Control 前驱至少完成一轮。首次运行之后，下列事件会再次触发：
 
-## 2. 包分层
+- 任一 data input 出现未消费的新 Artifact 版本；
+- Control 前驱出现未消费的新完成轮；
+- interaction failure 收到即时 advise；
+- 新一轮 human-input 级联出新版本。
 
-```text
-internal/execution ──> internal/workflow ──> internal/node
-                                              │
-                                    ┌─────────┴─────────┐
-                                    ▼                     ▼
-                           internal/artifact        internal/project
-```
+同一 Node 单并发；运行中到达的多个新输入先标 dirty，当前轮完成后合并为下一轮。不同 Node 可并行。
 
-- `artifact` 与 `project` 是基础包，零 internal 依赖。
-- `node` 定义核心接口，依赖基础包。`node/builtins`（后续）额外依赖 `agent`。
-- `workflow` 是静态声明，不感知执行；`execution` 是运行状态，不感知 YAML。
-- 接口在消费处引用：`artifact.Store` 是 artifact 域的一部分故定义在 artifact 包；`node.Node` / `node.Factory` 定义在 node 包。
+### 7.1 HumanGateway
 
-## 3. 类型职责
+`execution.HumanGateway` 是 Engine 的消费方接口，支持三类请求：
 
-### 3.1 internal/artifact
+- `input`：human-input 获取一轮多行需求，并选择 Continue 或 Finish；
+- `approval`：展示 Artifact 摘要与历史 advise，获取 approve/reject；
+- `advise-retry`：为 agent 的 interaction failure 获取即时修正意见。
 
-| 类型 | 职责 |
-|---|---|
-| `Kind` | Artifact 类型标识（7 个 MVP 常量），Input/Output Contract 匹配的依据 |
-| `Artifact` | 数据本体；`Data any`；大型数据（源码）只存引用信息 |
-| `ArtifactRef` | 运行时引用（ID/Kind/Version/URI），`Validate()` 保证基本不变式 |
-| `Store` | Put/Get/Exists 接口；FS 实现在 M6 后，未来可换 S3/OSS |
-| `MemStore` | 纯内存实现（最小 Runtime 用）；同一 ID 多次 Put 产生不同 URI 的引用 |
+CLI 用 stdin/stdout 实现该接口。含 human Node 的 Workflow 在非 TTY stdin 下于任何 `.workflow` 写入前拒绝运行；测试通过 fake Gateway 覆盖完整循环。
 
-**不变式**：Node 之间只传 `ArtifactRef`；`Artifact.Data` 只在 Node 内部消费时通过 `Store.Get` 加载。
+### 7.2 Approval 门控
 
-### 3.2 internal/project
+`human-approval` 的 reject 轮产出 `approve=false` 与 advise 新版本，驱动声明 `advise` input 的 agent 返工，并允许审批节点在被审 Node 新一轮完成后再次运行。approve 轮不催更已经消费过旧版结果的下游，从而让图收敛而不产生空转。
 
-| 类型 | 职责 |
-|---|---|
-| `Repository` | 项目仓库（本地路径或远端地址） |
-| `Context` | 一次 Execution 的项目环境：Repository / Branch / Workspace |
+### 7.3 错误与收敛
 
-`Context` 由 YAML `project` 段经 Project Resolver（M8）解析生成，通过 `node.ExecutionContext` 传递给 Node。
+- Structural Error：运行无法由当前人工意见修复，Workflow 置 Failed；已在途 Node 等待结束，不再派发新轮。
+- Interaction Error：agent 输出质量问题。若 Definition 声明 optional `advise`，该 Node Failed 而 Workflow 保持 Running，等待 advise 或新需求复活；否则按结构性错误处理。
+- Convergence Guard：自上次人类事件后，同一机器 Node 连续开始超过默认 10 轮，第 11 轮以 `convergence-guard` 失败。input、approval 与 advise retry 都会重置机器计数。
 
-### 3.3 internal/node
+Workflow 没有自动 Succeeded 终态。全图静止时仍保持 Running，等待新需求或人类交互；Ctrl-C / SIGTERM 使其 Stopped，并记录 `stopped_reason=user_interrupt`。结构性错误是唯一自动终止路径。
 
-| 类型 | 职责 |
-|---|---|
-| `Node` | 核心接口：`Type()` + `InputSchema()`/`OutputSchema()` + `Execute()` |
-| `Schema` | Contract：`map[名称]artifact.Kind`，输入与输出各一份 |
-| `ExecutionContext` | 执行上下文：嵌入 `context.Context`，携带 Project / Store / Logger |
-| `Config` | `map[string]any`，YAML `nodes.<id>.config` 的原始形态，由 Node 自行解码 |
-| `Factory` | 按 type 创建 Node 实例，供 Registry（后续里程碑）调用 |
+## 8. 运行状态与持久化
 
-**关键决策：Execute 返回 `map[string]ArtifactRef`（对计划 §30 的修正）**。计划原定返回 `[]ArtifactRef`，但 Runtime 解析 `from: "<node-id>.<output-name>"` 需要「输出名 -> 引用」映射，裸列表无法建立。选定 map 方案：Node 自己调 `Store.Put`，返回值直接携带输出名，显式且类型安全。Engine 对返回值做输出契约检查（名称已声明 + Kind 一致）。
+`NodeExecution` 保存 `Current NodeRun` 和已完成的 `History []NodeRun`。每轮记录 status、inputs、outputs、error/error_kind 和时间；`WorkflowExecution` 记录 Run UUID、filesystem execution ID、Workflow 身份、状态、停止原因和 Node 快照。
 
-**关键决策：ExecutionContext 嵌入 context.Context**。Node 接口签名与设计计划 §30 形态一致（`Execute(ctx ExecutionContext, ...)`），同时通过嵌入获得取消/超时能力；未来扩展（retry 等字段）不需要改动接口签名。
-
-**关键决策：Schema 用简单的 Kind 映射而非 CUE**。CUE 只负责 workflow.yaml 的结构校验（M3）；Node 层的 Contract 只需要「名称 -> Kind」级别的匹配，引入 CUE 属于过度设计。
-
-### 3.4 internal/workflow
-
-| 类型 | 职责 |
-|---|---|
-| `Definition` | workflow/v1 静态声明（apiVersion/kind/metadata/project/nodes） |
-| `NodeSpec` | 一个 Node 实例的声明：Type / Inputs / DependsOn / Config |
-| `InputBinding` | 数据连接，`From` 格式 `"<node-id>.<output-name>"` |
-| `Metadata` / `ProjectSpec` | 元信息与项目声明 |
-
-`Definition.Validate()` 只做结构检查（字段非空）；语义校验（Node Type 存在、Output 存在、Kind 匹配、成环）在 M3/M5 的 Validation 层。错误信息一律定位到 Node ID 与字段名。
-
-### 3.5 internal/execution
-
-| 类型 | 职责 |
-|---|---|
-| `Status` | 六状态枚举 + 集中管理的合法流转表 |
-| `NodeExecution` | 一个 Node 定义在某次 WorkflowExecution 中的运行实例（见 §0） |
-| `WorkflowExecution` | 一次 Workflow 运行的完整状态，state.json 的内存形态（见 §0） |
-
-状态机（流转规则集中定义，非法流转返回错误而非静默接受）：
+文件系统保存运行主体：
 
 ```text
-Pending ──> Ready ──> Running ──> Succeeded
-   │          │           └────> Failed
-   └──> ──────┴──> Skipped
-Succeeded / Failed / Skipped 为终态
+.workflow/
+├── gum-workflows.db
+└── executions/execution-000001/
+    ├── workflow.yaml
+    ├── state.json
+    ├── nodes/<node-id>/state.json
+    ├── artifacts/<n>.json
+    └── workspace/project/
 ```
 
-### 3.6 Execution Engine 与 Scheduler（M6 串行 + M7 并行）
+SQLite 使用 WAL、busy_timeout、foreign keys 与 `PRAGMA user_version` 顺序迁移。定义侧保存 Node Type、Node Definition、Node Executor、Workflow 与 Node Instance；运行侧保存 Workflow Run 与逐 Node Run 历史，一行对应一个 round，inputs/outputs 只序列化 `ArtifactRef`。
 
-| 类型 | 职责 |
-|---|---|
-| `execution.Engine` | 执行：Registry 实例化 -> Ready 推进 -> 输入解析 -> Execute -> 输出契约检查 -> 依赖计数推进 |
-| `execution.scheduler` | Ready Queue + Dependency Counter（计划 §26 算法形态，避免全量扫描）；非导出，仅被 Engine 驱动 |
-| `execution.Option` | `WithStateDir`（持久化）、`WithParallelism`（M7 并行度）、`WithProjectContext`（注入 Project Runtime 产物） |
+`history.Store` 实现 `execution.RunRecorder`。Engine 在与 state.json 相同的状态点提交完整快照；Record 使用 upsert 保持重放幂等。`validate` 不打开或创建数据库，`history` 用 read-only 打开且无库时返回空态。
 
-Engine 语义要点：
-
-- **契约**：入参 def 已通过两层 Validator 且全部 Node Type 已注册（与 `BuildGraph` 同一契约）。
-- **定义/运行**：Run 返回 `*WorkflowExecution`；内部方法命名 `runNodeExecution` 强调操作的是运行对象而非定义。
-- **调度模型**：`parallelism<=1`（默认）严格串行；`WithParallelism(n>1)` 时 worker goroutine 并发消费 Ready Queue（计划 §38）。调度决策（状态迁移、依赖计数、失败即停）全部在主循环；每个 NodeExecution 只被自己的 worker 触碰，结果串行回主循环消费（race detector 验证）。
-- **Ready**：源节点启动即 Ready；此后每当某 Node 完成，依赖计数归零的后继 Ready 并入队。
-- **输入解析**：按 `exec.Nodes[fromNode].Outputs[fromOutput]`（生产者 NodeExecution）取引用；未产出即执行期错误。
-- **输出契约**：Node 返回的输出名必须已在 `OutputSchema` 声明，且 Kind 一致（防 Mock/实现漂移）。
-- **失败语义**：首个失败的 NodeExecution 记录 Error 置 Failed，停止派发新任务并等待在途 Node 结束（不强杀），WorkflowExecution 置 Failed；未执行的保持 Pending（Skipped 传播与重试属后续版本）。
-- **取消**：`ctx` 取消时 WorkflowExecution 置 Failed 返回；启动前取消则全部保持 Pending。
-- **ProjectContext**：`WithProjectContext` 注入 Project Runtime 产物（含 Workspace）；未注入时依据 YAML project 段构造最小 Context。
-
-Artifact 生命周期：Node 内部 `Store.Put(数据本体)` 得到 `ArtifactRef`，经 `NodeExecution.Outputs`（输出名 -> Ref）传递给消费者，消费者按需 `Store.Get`。
-
-### 3.7 持久化（internal/execution/persist.go + id.go + internal/artifact/fsstore.go）
-
-- **Execution ID 单一来源**：`execution.NextExecutionID(baseDir)` 扫描磁盘目录分配 ID；CLI 侧先取 ID 建目录（workspace/artifacts/workflow.yaml 快照），再经 `WithExecutionID` 注入 Engine。Engine 未注入时退回进程内自增（库内多次 Run 场景）。**禁止在别处另行分配 ID**--曾因 CLI 磁盘扫描与 Engine 进程内自增双轨编号，导致第二次运行覆盖第一次的 state.json。
-- `FilesystemStore`：`<root>/<n>.json` 自增文件，URI 为相对文件名（正则白名单防路径穿越）；重启后接续自增不覆盖。**与计划 §28 的偏差**：计划图为 `artifacts/<node>/` 按 Node 分目录；实现为扁平文件，因 Store 接口（§29）的 `Put(artifact)` 不携带产出者 Node ID，为目录图改接口得不偿失。按 Node 发现 Artifact 的需求已由 `nodes/<id>/state.json` 的 Outputs 引用满足。
-- `PersistState(dir, exec)`：`state.json`（WorkflowExecution 级）+ `nodes/<id>/state.json`（NodeExecution 快照，含 NodeID/NodeType 定义身份）；`LoadNodeState` 可读回。CLI 另将 workflow 文件复制为 `<executionDir>/workflow.yaml`（§28 的定义快照）。
-- Engine 经 `WithStateDir` 在每个 Node 状态变化后刷新快照；持久化失败记日志不中断运行。
-
-### 3.8 Project Runtime（internal/project/runtime.go）
-
-| 类型 | 职责 |
-|---|---|
-| `project.Runtime` | `Resolve`（project 声明 -> Context；repository 相对 workflow 文件解析）+ `CreateWorkspace`（复制项目到 `executions/<id>/workspace/project`，跳过 .git/.workflow） |
-
-每个 Execution 拥有独立 Workspace 副本：Agent 在副本上修改代码，源仓库与其他 Execution 互不污染（计划 §17）。Agent 自行发现副本中的 `.agents/skills/`、`.claude/skills/`（§18，Workflow 不管理 Skills）。
-
-### 3.9 Coding Agent 适配层（internal/agent）
-
-| 类型 | 职责 |
-|---|---|
-| `agent.CodingAgent` | 接口（计划 §20）：在 ProjectContext 中执行 Task，产出 Artifact 引用 |
-| `agent.MockCodingAgent` | MVP 实现：在 Workspace 写 `.mock-agent/task.md` 模拟改码，产出 SourceCode/OpenAPI 引用（输入含 ArchitectureSpec 时补产 OpenAPI） |
-
-真实 Agent Adapter 属后续版本；替换时 Node/Workflow/Engine 均不变。
-
-### 3.10 内置 Node（internal/node/builtins）
-
-| Node Type | 类别 | Input | Output |
-|---|---|---|---|
-| `requirement-analysis` | Mock | 无 | requirement: RequirementSpec |
-| `architecture-design` | Mock | requirement: RequirementSpec | architecture: ArchitectureSpec |
-| `coding-agent` | Agent（Mock） | 可选：requirement/architecture/openapi/frontend-sdk | source-code: SourceCode, openapi: OpenAPI |
-| `openapi-generator` | Automation（Mock） | openapi: OpenAPI | frontend-sdk: FrontendSDK |
-
-coding-agent 的输出路由：Agent 返回 `[]ArtifactRef`（按 Kind），Node 按 Kind 映射到输出名；OpenAPI 从 Workspace 文件重新写入 Store（Artifact 是唯一数据通道，§13）。`RegisterAll(registry)` 显式注册，由 `cmd/workflow` 启动时调用。
-
-### 3.11 CLI（cmd/workflow）
-
-- `workflow validate <file>`：CUE -> Load -> 语义校验（内置 Registry）。
-- `workflow run <file>`（计划 §25）：校验 -> Project Resolve -> Workspace -> FS Artifact Store + 状态持久化 + Workspace 注入 -> Engine 执行 -> 摘要输出（计划 §42 验收形态）。
-
-## 5. YAML Loader（internal/workflow/loader.go）
-
-- `Load(data)` / `LoadFile(path)` 以 **yaml.v3 严格模式**（`KnownFields(true)`）解析：未知字段直接报错，防止 Schema 漂移。
-- Go Struct 与 `schema/workflow/v1.cue` 必须同步修改（见 docs/DEVELOPMENT.md §5）。
-- `Definition.Validate()` 只做结构层检查（不依赖 Registry）：必填字段、Node ID 约束（非空、不含 `.`，保证 `<node-id>.<output>` 引用无歧义）、`From` 格式、dependsOn 局部一致性（非空、不引用自身、不重复）。
-
-## 6. Graph 模型（internal/workflow/graph.go）
-
-对应设计计划 §7、§35：
-
-| 类型 | 职责 |
-|---|---|
-| `EdgeType` | `DataEdge`（来自 `inputs.from`）/ `ControlEdge`（来自 `dependsOn`） |
-| `Edge` | `From`/`To`（Node ID）+ `Type` |
-| `Graph` | `NodeIDs` + `Edges` + 去重邻接表 |
-| `ParseRef` | 解析 `"<node-id>.<output-name>"`（Node ID 不含 `.`，按第一个 `.` 切分） |
-
-- `BuildGraph(def)`：遍历每个 Node 的 `inputs`（Data Edge）与可选的 `dependsOn`（Control Edge）构建 Execution DAG。**契约：入参是已通过两层 Validator 的 Definition**，此前提下所有引用必然存在，构建不会失败（畸形 From 仍返回错误作为防御）。
-- `Roots()`：无入边的源节点。无输入也无 dependsOn 的 Node 是合法源节点；有 Control Edge 入边的 Node 不是源节点（如 approval -> deploy 中的 deploy）。
-- `Cycle()`：DFS（三色标记 + 路径回溯）返回环路径（首尾相同），Data Edge 与 Control Edge 合并检测。
-
-## 7. 两层校验（internal/validation）
-
-对应设计计划 §21-§24：
+## 9. 校验管线
 
 ```text
 workflow.yaml
-    │
-    ▼
-ValidateSchema(data)          CUE 结构校验（embed schema/workflow/v1.cue）
-    │
-    ▼
-workflow.Load(data)           YAML 语法 + 严格解析
-    │
-    ▼
-Definition.Validate()         结构检查
-    │
-    ▼
-SemanticValidator.Validate()  语义检查（需 Node Registry + Artifact Registry）
+  -> CUE schema
+  -> yaml.v3 KnownFields(true)
+  -> workflow.Definition.Validate
+  -> Semantic Validator(definition / executor / artifact / llm / project)
+  -> errors + non-blocking warnings
 ```
 
-`SemanticValidator` 检查（错误聚合返回，不短路）：
+结构错误与语义错误必须定位到 Node 和字段；语义问题聚合返回。纯机器环以及 agent 未声明 advise 端口等可操作风险以 warning 展示。
 
-- Node Type 已注册（Registry）
-- 每个 required Input 已绑定
-- `From` 引用的 Node 与 Output 存在
-- 绑定的 Input 名称在消费方 InputSchema 中声明（required 或 optional）
-- Artifact Kind 匹配（`producer.Outputs[name] == consumer.Inputs[name]`）
-- Node Contract 引用的 Artifact Kind 已登记（artifact.Registry）
-- dependsOn 引用的 Node 存在
-- Data + Control Edge 合并无环
-
-## 8. Registries
-
-| 类型 | 职责 |
-|---|---|
-| `node.Registry` | Node Type -> `Factory` 映射；显式 `Register`，重复注册报错；禁止 `init()` 隐式注册 |
-| `artifact.Registry` | 已登记的 Artifact Kind（构造时登记 §14 的 7 种 MVP 内置 Kind）；`Register` 供后续扩展 |
-
-Mock 内置 Node（requirement-analysis 等）按开发顺序 ⑭ 在 Execution Engine 之后实现，届时在 `cmd/workflow` 集中注册。
-
-## 9. validate CLI（cmd/workflow）
+## 10. CLI 与公开验收接缝
 
 ```bash
 workflow validate <workflow-file>
+workflow run <workflow-file>
+workflow history
+workflow history <run-id>
+workflow history <run-id> <node-id>
 ```
 
-当前执行 `YAML 语法 -> CUE Schema -> Go 解析 -> 结构校验`；语义校验已实现在 `internal/validation`（测试用假 Factory 覆盖），待内置 Node 落地后在 CLI 接入 Registry。`run` 命令属于 Runtime，后续里程碑提供。
+CLI 不接受业务 flags。Run ID 可用不少于 8 位的唯一 UUID 前缀。
 
-## 10. 命名映射（计划术语 -> Go 惯例）
+回归测试的公共接缝是：
 
-避免 `workflow.Workflow`、`project.ProjectContext` 一类包名口吃：
+- `validation.Validate`：完整 schema + semantic 行为；
+- `execution.Engine.Run`：注入 fake Executor、HumanGateway、RunRecorder 与 Store；
+- CLI adapter：真实二进制的 fullstack validate、非 TTY 零写入守卫和种子 history 三级查询。
 
-| 设计计划 | 实现 | 引用形态 |
-|---|---|---|
-| Workflow | `workflow.Definition` | `workflow.Definition` |
-| ProjectContext | `project.Context` | `project.Context` |
-| NodeFactory | `node.Factory` | `node.Factory` |
-| NodeConfig | `node.Config` | `node.Config` |
-| Execution | `execution.WorkflowExecution` | `execution.WorkflowExecution` |
-| Node / Artifact / ArtifactRef / Edge | 同名 | `node.Node` / `artifact.Artifact` / `workflow.Edge` |
-
-## 11. dependsOn 可选原则
-
-**`dependsOn` 不是 Node 层的必须要求，在任何层都是可选的：**
-
-1. `node.Node` 接口对 dependsOn **零感知**--它属于 Workflow 的组合声明（`workflow.NodeSpec.DependsOn`），不属于 Node 的能力声明。
-2. `NodeSpec.DependsOn` 为 nil/空是常态：数据连接（`inputs.from`）本身就表达执行关系。
-3. `BuildGraph` 仅在 dependsOn 存在时生成 Control Edge；数据依赖型 Workflow 中 Control Edge 数量为零。
-4. 语义校验对 dependsOn 只做「声明了才检查」（引用存在、无环），绝不要求它存在。
-5. 无输入也无 dependsOn 的 Node 是合法的源节点（Trigger/Source Node，如 requirement-analysis）。
-
-`dependsOn` 留给「没有数据传递、但存在明确执行顺序」的场景（如 Human Approval -> CD）。
-
-## 12. 验收
-
-`go vet ./...` 与 `go test ./...` 全绿（含 `-race`）。测试覆盖：
-
-- `artifact`：Validate 表驱动、Registry、MemStore、FilesystemStore（往返/并发唯一 URI/跨实例/路径穿越防护）。
-- `workflow`：Loader（合法/未知字段/畸形 YAML/空文件）、`Definition.Validate()` 表驱动、Graph（Data/Control Edge、Roots、五种环场景）。
-- `node`：Registry（注册/查询/重复/空 Type）；`builtins`：四个内置 Node 的 Contract 与 Execute 行为（含 Workspace 写入、OpenAPI 路由回 Store）。
-- `validation`：CUE 结构校验（合法 + 9 种结构错误）、语义校验 fixture（对应设计计划 §36）+ 程序化用例。
-- `execution`：最小链顺序/输入数/独立性（多次 Run 零共享）、Control Edge、失败传播、未知定义、缺输出、未声明输出、取消、状态机；并行（菱形并发峰值、串行回退、失败停止派发）与持久化布局。
-- `project`：相对/绝对路径解析、Workspace 复制（.git/.workflow 排除）、Execution 间隔离、错误输入拒绝。
-- `cmd/workflow`、`tests/workflow`、`tests/e2e`：CLI validate/run 集成；e2e 编译真实二进制跑 examples/minimal（临时 human-free 最小链：3 类 Artifact、§28 目录布局、多次运行独立 Execution）。
+`examples/fullstack/workflow.yaml` 是当前公开 Demo：人工需求入口、分析/架构、backend、approval/advise 回环、OpenAPI/SDK 和 frontend。完整交互行为由 Engine 接缝测试验证，不要求 CI 提供 PTY。

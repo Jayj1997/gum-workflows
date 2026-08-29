@@ -7,7 +7,7 @@
 
 ## 当前状态
 
-**MVP 已全部完成**（设计计划 §44 开发顺序 ①-⑱）：Core Model、YAML Loader、CUE + 语义两层校验、Node/Artifact Registry、DAG Builder/Validator、串行与并行 Execution Engine、FilesystemArtifactStore + state.json 持久化、Project Runtime/Workspace、内置 Mock Node（requirement-analysis / architecture-design / coding-agent / openapi-generator）、`workflow validate` 与 `workflow run` CLI、临时示例（`examples/minimal`，human-free 最小链）与 e2e 测试；旧 fullstack Demo 已随 Node Instance 新 Schema 退役（新契约下 requirement-analysis 有必填输入，human-input 入口节点属后续里程碑，完整 demo 待 P8 重写）。设计说明见 `docs/domain-model.md`。
+**MVP 与平台核心 01–14 已全部完成**：四层定义体系（Node Type / Node Definition / Node Executor / Node Instance）、用户级 LLM 配置解析、允许有环的迭代 Execution Engine、human-input / human-approval、advise 重试、结构性/交互性错误二分、本地 SQLite 定义与 Node Run 历史、`workflow validate|run|history` CLI，以及 `examples/fullstack` 人工在环 Demo。运行在全图静止后继续保持 Running，直至用户 Ctrl-C / SIGTERM 记为 Stopped。设计说明见 `docs/domain-model.md`。
 
 后续版本方向（需先升级设计文档）：真实 Coding Agent Adapter（替换 MockCodingAgent）、真实 OpenAPI Generator、Skipped 传播、重试/超时等 workflow/v2 字段。
 
@@ -18,11 +18,11 @@
 1. **数据依赖优先**：`inputs.<name>.from: <node-id>.<output>` 隐式产生 Data Edge。`dependsOn` 仅表示 Control Edge（显式执行顺序约束），永远不是表达数据依赖的方式。
 2. **Workflow 与 Node 解耦**：Workflow YAML 只声明组合；Node 通过 Registry 注册。同一个 Node Type 可被多次实例化（Node ID 与 Node Type 分离）。
 3. **Artifact 是 Node 间唯一数据通道**：运行时传递 `ArtifactRef`（引用），不传递大型数据本体（如源码内容，`SourceCode` 只存 repo path / commit / workspace 引用）。
-4. **Node 运行条件**：`Ready(Node) = InputsReady AND ControlDependenciesCompleted`。无输入无依赖的 Node 是合法的 Trigger/Source Node。
-5. **CLI 不接受业务参数**：只有 `workflow run <workflow-file>` 和 `workflow validate <workflow-file>`。所有配置必须来自 YAML。
+4. **Node 运行条件与迭代**：`Ready(Node) = InputsReady AND ControlDependenciesCompleted`；上游出现新 Artifact 版本或 Control 前驱出现新完成轮时可重新 Ready。环是合法迭代路径，校验只提示纯机器环，由收敛保护阻止无人工事件的死循环。全 Workflow 恰好一个无输入无依赖的 human-input 入口。
+5. **CLI 不接受业务参数**：只有 `workflow run <workflow-file>`、`workflow validate <workflow-file>` 与 `workflow history [<run-id> [<node-id>]]`，不提供业务 flags。所有运行配置来自 YAML 与用户级 `llm.yaml`。
 6. **Workflow 不管理 Skills**：Coding Agent 自行进入 Project Workspace 并发现 `.agents/skills/`、`.claude/skills/` 等项目约定。
-7. **两层 Validation**：CUE Schema（结构）→ Go Semantic Validator（语义：Node Type 存在、Output 存在、Artifact 类型匹配、环仅提示）。错误信息必须指明具体 Node 与字段。
-8. **MVP 明确不做**（加入前必须先升级设计文档）：UI、Temporal、Redis/Kafka/Database、分布式调度、多租户、Skill/Agent Marketplace、复杂 Retry、Condition、Secret Management、workflow/v1 之外的 Schema 字段（retry/timeout/parallelism/environment/hooks 等）。
+7. **两层 Validation**：CUE Schema（结构）→ Go Semantic Validator（语义：Node Definition / Executor / LLM / Project 存在，端口与 Artifact 类型匹配，唯一 human 入口，环提示）。错误信息必须指明具体 Node 与字段。
+8. **平台核心批准范围与排除项**：有环迭代、human 在环和本地 SQLite 统一库已经由平台核心设计批准并实现。仍不做 UI、Temporal、Redis/Kafka/服务端数据库、分布式调度、多租户、Skill/Agent Marketplace、resume、复杂 Retry/Condition/Secret Management，以及 workflow/v1 之外的 `retry/timeout/parallelism/environment/hooks` 等字段；加入前必须先升级设计文档。
 
 ## 常用命令
 
@@ -31,7 +31,10 @@ go build ./...
 go test ./...
 go vet ./...
 go run ./cmd/workflow validate <workflow-file>   # 已实现
-go run ./cmd/workflow run <workflow-file>         # 已实现（Mock Node）
+go run ./cmd/workflow run <workflow-file>         # 已实现（human 前台交互 + Mock Agent）
+go run ./cmd/workflow history                     # 最近 20 次运行
+go run ./cmd/workflow history <run-id>            # 运行与各 Node 轮次摘要
+go run ./cmd/workflow history <run-id> <node-id>  # 单 Node 全部轮次明细
 ```
 
 ## Agent skills

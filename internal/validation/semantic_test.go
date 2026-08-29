@@ -204,7 +204,7 @@ func validateFixture(t *testing.T, path string) ([]Warning, error) {
 	return testValidator(t, WithLLMConfig(&c), WithWorkflowFile(path)).Validate(def)
 }
 
-func TestSemanticValidFullstack(t *testing.T) {
+func TestSemanticValidEntryChain(t *testing.T) {
 	warnings, err := validateFixture(t, filepath.Join("testdata", "valid", "minimal.yaml"))
 	if err != nil {
 		t.Fatalf("Validate() unexpected error:\n%v", err)

@@ -4,10 +4,15 @@
 
 **Blocked by:** 11（错误二分法就位，demo 演示交互性错误可选）, 12（run 摘要形态定稿）, 13（history 查询与 demo 演示联动）
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] examples/fullstack 重写为附录 A 形态；`workflow validate` 通过
-- [ ] e2e 骨架绿：validate / 非 TTY 守卫 / history 种子查询
-- [ ] CLAUDE.md / DEVELOPMENT.md / domain-model.md / run-history 稿四处修订完成（内容对照设计文档 §15 清单）
-- [ ] 设计文档 §13 补记里程碑偏离修订行（T12 推迟 + e2e 接缝决策）
-- [ ] `go vet ./...`、`go test ./...`（含 -race）全绿；新架构下全部测试无对旧词汇的引用残留
+- [x] examples/fullstack 重写为附录 A 形态；`workflow validate` 通过
+- [x] e2e 骨架绿：validate / 非 TTY 守卫 / history 种子查询
+- [x] CLAUDE.md / DEVELOPMENT.md / domain-model.md / run-history 稿四处修订完成（内容对照设计文档 §15 清单）
+- [x] 设计文档 §13 补记里程碑偏离修订行（T12 推迟 + e2e 接缝决策）
+- [x] `go vet ./...`、`go test ./...`（含 -race）全绿；新架构下全部测试无对旧词汇的引用残留
+
+## Comments
+
+- 2026-08-29：附录 A fullstack Demo、真实 CLI e2e 骨架与文档同步完成。移除测试专用 `gumworkflowe2e` 终端绕过；完整人工循环继续由 `Engine.Run` 的 fake HumanGateway / RunRecorder 接缝测试覆盖。
+- 验证：`go vet ./...`、`GOCACHE=/private/tmp/gum-workflows-go-cache go test ./... -count=1`、`GOCACHE=/private/tmp/gum-workflows-go-cache-race go test -race ./... -count=1`、`git diff --check` 均通过。

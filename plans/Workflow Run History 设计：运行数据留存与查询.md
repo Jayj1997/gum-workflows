@@ -1,5 +1,7 @@
 # Workflow Run History 设计：运行数据留存与查询（run-history/v1）
 
+> **已被《平台核心设计：组件定义体系与迭代执行引擎》吸收并取代。** 本文仅保留为历史设计记录；统一库文件名、表结构、Node Run 粒度和写入时机均以平台核心设计为准。
+>
 > 状态：设计文档（post-MVP 演进，实现前须按 §10 同步修订 CLAUDE.md 与 docs/DEVELOPMENT.md）。
 > 范围：workflow 运行历史的**数据留存**（写入）与**查询**（查看）；不改变 workflow/v1 YAML Schema，不改变执行语义。
 > 定位：MVP 计划（`plans/Workflow Engine MVP：workflow-v1 设计与实现计划.md`）是只读历史，本文档是其后的独立演进设计。
