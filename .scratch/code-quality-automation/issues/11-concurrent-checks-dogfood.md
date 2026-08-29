@@ -19,3 +19,4 @@
 
 - 2026-08-30：实现 `examples/dogfood`，CLI 组装层使用最多四路并发；跨包验收通过 `Engine.Run`、四个真实内置 Executor、Filesystem Store 与真实 History Store 的公共 seam，用 channel 闸门证明四个检查可同时 Running，并验证共享 Workspace、独立 Node Run 路径、严格 Result Schema 和项目零 Gum 产物。
 - 2026-08-30：Host PATH dogfood Run `d8ed6412-9a31-4a00-94d8-7c2ca5cde39a` 的四个检查在同一秒启动并全部形成成功 Node Run：go vet passed；Race passed 且本次观察到 0 race；Coverage 79.584% 低于默认 80，业务 verdict=failed；Complexity 最大 61、20 个函数超阈值，业务 verdict=failed。Smoke 同时修复了测试对 `GUM_WORKFLOWS_DATA_ROOT` 的环境泄漏，以及 Coverage Adapter 对非零工具链诊断和合法零 statement block 的误判。
+- 2026-08-30：双轴 review 首轮发现并修复跨包验收位置/无 human 入口、synthetic Executor、Coverage 非零证据过宽和全局环调度策略等问题；验收改为加载公开 YAML 并包装四个真实 Executor，Coverage 仅窄化接受正式 `covdata` build-output。第二轮 Standards/Spec 复核均无剩余发现。
