@@ -9,22 +9,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
 	"github.com/Jayj1997/gum-workflows/internal/node"
 )
-
-// StaticExecutionRecord is the complete evidence consumed by the static Result Adapter.
-type StaticExecutionRecord struct {
-	ExitCode      int
-	ToolOutputDir string
-	StdoutPath    string
-	StderrPath    string
-	Code          artifact.ArtifactRef
-	StartedAt     time.Time
-	FinishedAt    time.Time
-}
 
 type vetDiagnostic struct {
 	Posn    string `json:"posn"`
@@ -32,7 +20,7 @@ type vetDiagnostic struct {
 }
 
 // AdaptStaticResult interprets go vet evidence as a strict Quality Check Result.
-func AdaptStaticResult(record StaticExecutionRecord) (StaticResult, error) {
+func AdaptStaticResult(record ExecutionRecord) (StaticResult, error) {
 	packages, err := readRequired(filepath.Join(record.ToolOutputDir, "packages.txt"))
 	if err != nil {
 		return StaticResult{}, node.Structural(fmt.Errorf("static result adapter: %w", err))
@@ -46,16 +34,27 @@ func AdaptStaticResult(record StaticExecutionRecord) (StaticResult, error) {
 		return StaticResult{}, node.Structural(fmt.Errorf("static result adapter: %w", err))
 	}
 
+	if record.ExitCode > 1 {
+		return StaticResult{}, node.Structural(fmt.Errorf("static result adapter: go vet exited %d", record.ExitCode))
+	}
+	vetJSON := bytes.TrimSpace(stripGoDriverHeaders(vetOutput))
+	if record.ExitCode == 0 && len(vetJSON) > 0 && vetJSON[0] != '{' {
+		return StaticResult{}, node.Structural(fmt.Errorf("static result adapter: vet.json does not contain JSON diagnostics"))
+	}
 	findings, err := decodeVetFindings(vetOutput)
 	if err != nil {
 		return StaticResult{}, node.Structural(fmt.Errorf("static result adapter: %w", err))
 	}
-	if record.ExitCode != 0 {
+	if record.ExitCode != 0 && len(findings) == 0 {
 		stderr, readErr := os.ReadFile(record.StderrPath)
 		if readErr != nil {
 			return StaticResult{}, node.Structural(fmt.Errorf("static result adapter: read stderr log: %w", readErr))
 		}
-		findings = append(findings, packageFindings(string(stderr))...)
+		diagnostics := string(vetOutput)
+		if strings.TrimSpace(diagnostics) == "" {
+			diagnostics = string(stderr)
+		}
+		findings = append(findings, packageFindings(diagnostics)...)
 	}
 
 	verdict := VerdictPassed
@@ -118,7 +117,8 @@ func readToolchain(dir string) (Toolchain, error) {
 }
 
 func decodeVetFindings(data []byte) ([]StaticFinding, error) {
-	if len(bytes.TrimSpace(data)) == 0 {
+	data = stripGoDriverHeaders(data)
+	if len(bytes.TrimSpace(data)) == 0 || bytes.TrimSpace(data)[0] != '{' {
 		return nil, nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -156,6 +156,18 @@ func decodeVetFindings(data []byte) ([]StaticFinding, error) {
 		}
 	}
 	return findings, nil
+}
+
+func stripGoDriverHeaders(data []byte) []byte {
+	lines := bytes.Split(data, []byte("\n"))
+	filtered := make([][]byte, 0, len(lines))
+	for _, line := range lines {
+		if bytes.HasPrefix(line, []byte("# ")) || bytes.HasPrefix(line, []byte("# [")) {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	return bytes.Join(filtered, []byte("\n"))
 }
 
 func packageFindings(stderr string) []StaticFinding {

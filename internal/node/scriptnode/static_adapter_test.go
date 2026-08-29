@@ -55,6 +55,7 @@ func TestStaticAdapterRejectsDamagedOrIncompleteToolOutput(t *testing.T) {
 		exitCode                    int
 	}{
 		{name: "invalid vet JSON", packages: "example.com/app\n", vet: `{not-json}`, exitCode: 1},
+		{name: "non-JSON successful artifact", packages: "example.com/app\n", vet: `truncated`, exitCode: 0},
 		{name: "unexplained tool failure", packages: "example.com/app\n", vet: "", exitCode: 2},
 	}
 	for _, tt := range tests {
@@ -67,7 +68,7 @@ func TestStaticAdapterRejectsDamagedOrIncompleteToolOutput(t *testing.T) {
 	}
 }
 
-func staticExecutionFixture(t *testing.T, packages, vet, stderr string, exitCode int) StaticExecutionRecord {
+func staticExecutionFixture(t *testing.T, packages, vet, stderr string, exitCode int) ExecutionRecord {
 	t.Helper()
 	dir := t.TempDir()
 	writeFixture(t, filepath.Join(dir, "packages.txt"), packages)
@@ -79,7 +80,7 @@ func staticExecutionFixture(t *testing.T, packages, vet, stderr string, exitCode
 	writeFixture(t, stdoutPath, "script note\n")
 	writeFixture(t, stderrPath, stderr)
 	started := time.Date(2026, 8, 29, 10, 0, 0, 0, time.UTC)
-	return StaticExecutionRecord{
+	return ExecutionRecord{
 		ExitCode: exitCode, ToolOutputDir: dir, StdoutPath: stdoutPath, StderrPath: stderrPath,
 		Code:      artifact.ArtifactRef{ID: "code", Kind: artifact.KindSourceCode, Version: "1", URI: "/workspace"},
 		StartedAt: started, FinishedAt: started.Add(time.Second),

@@ -41,6 +41,7 @@ type RunDiagnostics struct {
 	Arguments     []string                        `json:"arguments,omitempty"`
 	Launcher      string                          `json:"launcher,omitempty"`
 	Executables   map[string]string               `json:"executables,omitempty"`
+	Toolchain     map[string]string               `json:"toolchain,omitempty"`
 	ResultAdapter string                          `json:"resultAdapter,omitempty"`
 	Logs          map[string]artifact.ArtifactRef `json:"logs,omitempty"`
 }

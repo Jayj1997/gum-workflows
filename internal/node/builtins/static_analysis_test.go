@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -61,6 +62,9 @@ func TestStaticAnalysisBundleRunsPOSIXContract(t *testing.T) {
 			if !ok || result.Verdict != tt.verdict || result.FindingsCount != tt.findings {
 				t.Fatalf("result = %#v, want %s with %d findings", body.Data, tt.verdict, tt.findings)
 			}
+			if tt.mode == "finding" && (result.Findings[0].Analyzer != "printf" || result.Findings[0].Position != "app.go:9:2") {
+				t.Errorf("structured vet finding = %+v", result.Findings[0])
+			}
 			stdout, _ := os.ReadFile(filepath.Join(nodeRunDir, "logs", "stdout.log"))
 			if !strings.Contains(string(stdout), "running go static analysis") {
 				t.Errorf("stdout log = %q", stdout)
@@ -73,6 +77,43 @@ func TestStaticAnalysisBundleRunsPOSIXContract(t *testing.T) {
 				t.Errorf("workspace contains Gum output: %v", entries)
 			}
 		})
+	}
+}
+
+func TestStaticAnalysisBundleParsesRealGoVetJSONStream(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("static analysis v1 supports Darwin and Linux")
+	}
+	t.Setenv("GOCACHE", t.TempDir())
+	t.Setenv("GOMODCACHE", t.TempDir())
+	t.Setenv("GOTOOLCHAIN", "local")
+	workspace := t.TempDir()
+	writeBuiltinFixture(t, filepath.Join(workspace, "go.mod"), "module example.com/vetfixture\n\ngo 1.25.0\n")
+	writeBuiltinFixture(t, filepath.Join(workspace, "main.go"), "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Printf(\"%d\", \"wrong\") }\n")
+	nodeRunDir := t.TempDir()
+	store := artifact.NewMemStore()
+	check, err := (staticAnalysisExecutor{}).Create(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputs, err := check.Execute(node.ExecutionContext{
+		Context: context.Background(), Project: project.Context{Workspace: workspace}, Store: store,
+		Run: node.RunContext{
+			LogsDir: filepath.Join(nodeRunDir, "logs"), ToolOutputDir: filepath.Join(nodeRunDir, "tool-output"),
+		},
+	}, map[string]artifact.ArtifactRef{
+		"code": {ID: "code", Kind: artifact.KindSourceCode, Version: "1", URI: workspace},
+	})
+	if err != nil {
+		t.Fatalf("Execute() unexpected error: %v", err)
+	}
+	body, err := store.Get(outputs["result"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := body.Data.(scriptnode.StaticResult)
+	if result.Verdict != scriptnode.VerdictFailed || result.FindingsCount != 1 || result.Findings[0].Analyzer != "printf" {
+		t.Fatalf("real go vet result = %+v", result)
 	}
 }
 
@@ -112,7 +153,7 @@ func TestEngineRunPublishesStaticResultAndNodeRunDiagnostics(t *testing.T) {
 	if run.Status != execution.StatusSucceeded || run.Outputs["result"].Kind != artifact.KindQualityCheckResult {
 		t.Fatalf("check run = %+v", run)
 	}
-	if run.Diagnostics.BundleDigest == "" || run.Diagnostics.ResultAdapter != staticAnalysisAdapterID {
+	if run.Diagnostics.BundleDigest == "" || run.Diagnostics.ResultAdapter != staticAnalysisAdapterID || run.Diagnostics.Toolchain["finalVersion"] != "go1.25.0" {
 		t.Errorf("run diagnostics = %+v", run.Diagnostics)
 	}
 	body, err := store.Get(run.Outputs["result"])
@@ -163,12 +204,13 @@ case "$1" in
   list)
     if [ "$FAKE_GO_MODE" != empty ]; then printf 'example.com/app\n'; fi
     ;;
-  vet)
-    if [ "$FAKE_GO_MODE" = finding ]; then
-      printf '%s\n' '{"example.com/app":{"printf":[{"posn":"app.go:9:2","message":"wrong printf format"}]}}'
-      exit 1
-    fi
-    printf '{}\n'
+	  vet)
+	    if [ "$FAKE_GO_MODE" = finding ]; then
+	      printf '%s\n' '# example.com/app' '# [example.com/app]' >&2
+	      printf '%s\n' '{"example.com/app":{"printf":[{"posn":"app.go:9:2","message":"wrong printf format"}]}}' >&2
+	      exit 1
+	    fi
+	    printf '%s\n' '# example.com/app' '{}' >&2
     ;;
   *)
     printf 'unexpected fake go arguments: %s\n' "$*" >&2
@@ -181,4 +223,11 @@ esac
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", fmt.Sprintf("%s%c%s", bin, os.PathListSeparator, os.Getenv("PATH")))
+}
+
+func writeBuiltinFixture(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -560,6 +560,7 @@ func (e *Engine) injectAdviseRetry(exec *WorkflowExecution, id, advice string) e
 
 func (e *Engine) finishCanceledNode(exec *WorkflowExecution, result nodeResult) {
 	ne := exec.Nodes[result.id]
+	ne.Current.Diagnostics = result.diagnostics
 	ne.Current.FinishedAt = time.Now().UTC()
 	ne.Current.Error = result.err.Error()
 	ne.Current.ErrorKind = node.ErrorKindStructural

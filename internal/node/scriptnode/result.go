@@ -134,6 +134,15 @@ func (r StaticResult) Validate() error {
 	return nil
 }
 
+// ToolchainDiagnostics exposes the result's non-sensitive toolchain facts to Node Run history.
+func (r StaticResult) ToolchainDiagnostics() map[string]string {
+	return map[string]string{
+		"tool": r.Toolchain.Tool, "launcherVersion": r.Toolchain.LauncherVersion,
+		"finalVersion": r.Toolchain.FinalVersion, "goroot": r.Toolchain.GOROOT,
+		"goos": r.Toolchain.GOOS, "goarch": r.Toolchain.GOARCH, "cgoEnabled": r.Toolchain.CGOEnabled,
+	}
+}
+
 // DecodeStaticResult strictly decodes and validates a qualityCheckResult/v1 payload.
 func DecodeStaticResult(data []byte) (StaticResult, error) {
 	var result StaticResult

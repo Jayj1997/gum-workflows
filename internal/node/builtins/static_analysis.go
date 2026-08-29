@@ -13,7 +13,7 @@ const (
 	staticAnalysisDefinition   = "go-static-analysis"
 	staticAnalysisVersion      = "v1"
 	staticAnalysisAdapterID    = "go-static-analysis/v1"
-	staticAnalysisBundleDigest = "sha256:3d2d4d9f49c333d884a5b8e7da90b46f608d8ae4c7b222f04e85e58a8625afea"
+	staticAnalysisBundleDigest = "sha256:722692dec1571a3f9fc2aa547ac82b13f42cf13db72a884722628f401418ac38"
 )
 
 //go:embed scripts/go-static-analysis/v1/manifest.yaml
@@ -76,11 +76,7 @@ func loadStaticAnalysisBundle() (scriptnode.Bundle, error) {
 }
 
 func adaptStaticAnalysis(record scriptnode.ExecutionRecord) (artifact.Artifact, error) {
-	result, err := scriptnode.AdaptStaticResult(scriptnode.StaticExecutionRecord{
-		ExitCode: record.ExitCode, ToolOutputDir: record.ToolOutputDir,
-		StdoutPath: record.StdoutPath, StderrPath: record.StderrPath,
-		Code: record.Code, StartedAt: record.StartedAt, FinishedAt: record.FinishedAt,
-	})
+	result, err := scriptnode.AdaptStaticResult(record)
 	if err != nil {
 		return artifact.Artifact{}, err
 	}

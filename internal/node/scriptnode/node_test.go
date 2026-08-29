@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ kind: automationScript
 node: test-check
 executor: v1
 entry: check.sh
-platforms: [` + runtimePlatform() + `]
+platforms: [` + runtime.GOOS + `]
 requirements: {executables: [sh]}
 toolOutputs: [{path: result.txt, required: true}]
 resultAdapter: test/v1
@@ -87,7 +88,7 @@ kind: automationScript
 node: test-check
 executor: v1
 entry: check.sh
-platforms: [` + runtimePlatform() + `]
+platforms: [` + runtime.GOOS + `]
 requirements: {executables: [sh]}
 toolOutputs: [{path: result.txt, required: true}]
 resultAdapter: test/v1
@@ -112,6 +113,34 @@ resultAdapter: test/v1
 	}
 }
 
+func TestNodeExecuteRejectsCodeReferenceForAnotherWorkspace(t *testing.T) {
+	manifestBytes := []byte(`apiVersion: automationScript/v1
+kind: automationScript
+node: test-check
+executor: v1
+entry: check.sh
+platforms: [` + runtime.GOOS + `]
+requirements: {executables: [sh]}
+toolOutputs: []
+resultAdapter: test/v1
+`)
+	manifest, _ := LoadManifest(manifestBytes)
+	bundle := Bundle{Manifest: manifest, ManifestBytes: manifestBytes, Files: map[string][]byte{"check.sh": []byte("#!/bin/sh\nexit 0\n")}}
+	bundle.ExpectedDigest = bundle.Digest()
+	check, _ := New(bundle, "test-check", "v1", "test/v1", func(ExecutionRecord) (artifact.Artifact, error) {
+		return artifact.Artifact{ID: "result", Kind: artifact.KindQualityCheckResult}, nil
+	})
+	runDir := t.TempDir()
+	workspace := t.TempDir()
+	_, err := check.Execute(node.ExecutionContext{
+		Context: context.Background(), Project: project.Context{Workspace: workspace}, Store: artifact.NewMemStore(),
+		Run: node.RunContext{LogsDir: filepath.Join(runDir, "logs"), ToolOutputDir: filepath.Join(runDir, "tool-output")},
+	}, map[string]artifact.ArtifactRef{"code": {ID: "code", Kind: artifact.KindSourceCode, Version: "1", URI: t.TempDir()}})
+	if err == nil || node.ErrorKindOf(err) != node.ErrorKindStructural {
+		t.Fatalf("Execute(mismatched code ref) error = %v, want Structural Error", err)
+	}
+}
+
 func TestNodeExecuteHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -120,7 +149,7 @@ kind: automationScript
 node: test-check
 executor: v1
 entry: check.sh
-platforms: [` + runtimePlatform() + `]
+platforms: [` + runtime.GOOS + `]
 requirements: {executables: [sh]}
 toolOutputs: []
 resultAdapter: test/v1
@@ -132,11 +161,12 @@ resultAdapter: test/v1
 		return artifact.Artifact{ID: "result", Kind: artifact.KindQualityCheckResult}, nil
 	})
 	runDir := t.TempDir()
+	workspace := t.TempDir()
 	started := time.Now()
 	_, err := check.Execute(node.ExecutionContext{
-		Context: ctx, Project: project.Context{Workspace: t.TempDir()}, Store: artifact.NewMemStore(),
+		Context: ctx, Project: project.Context{Workspace: workspace}, Store: artifact.NewMemStore(),
 		Run: node.RunContext{LogsDir: filepath.Join(runDir, "logs"), ToolOutputDir: filepath.Join(runDir, "tool-output")},
-	}, map[string]artifact.ArtifactRef{"code": {ID: "code", Kind: artifact.KindSourceCode, Version: "1", URI: "/workspace"}})
+	}, map[string]artifact.ArtifactRef{"code": {ID: "code", Kind: artifact.KindSourceCode, Version: "1", URI: workspace}})
 	if err == nil || time.Since(started) > time.Second {
 		t.Fatalf("Execute(canceled) = %v after %s", err, time.Since(started))
 	}

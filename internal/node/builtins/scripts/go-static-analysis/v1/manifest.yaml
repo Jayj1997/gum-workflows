@@ -5,11 +5,13 @@ executor: v1
 entry: check.sh
 platforms: [darwin, linux]
 requirements:
-  executables: [sh, go]
+  executables: [sh, go, tee]
 toolOutputs:
   - path: packages.txt
     required: true
   - path: vet.json
+    required: true
+  - path: vet-exit.txt
     required: true
   - path: go-version.txt
     required: true

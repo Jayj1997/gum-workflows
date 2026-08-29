@@ -60,6 +60,9 @@ func (n *Node) Execute(ctx node.ExecutionContext, inputs map[string]artifact.Art
 	if ctx.Project.Workspace == "" || ctx.Run.LogsDir == "" || ctx.Run.ToolOutputDir == "" {
 		return nil, node.Structural(fmt.Errorf("script node: workspace, logs directory, and tool-output directory must not be empty"))
 	}
+	if filepath.Clean(code.URI) != filepath.Clean(ctx.Project.Workspace) {
+		return nil, node.Structural(fmt.Errorf("script node: code reference %q does not identify Project Workspace %q", code.URI, ctx.Project.Workspace))
+	}
 	if !slices.Contains(n.bundle.Manifest.Platforms, runtime.GOOS) {
 		return nil, node.Structural(fmt.Errorf("script node: platform %q is not supported", runtime.GOOS))
 	}
@@ -167,6 +170,9 @@ func (n *Node) Execute(ctx node.ExecutionContext, inputs map[string]artifact.Art
 	if result.Kind != artifact.KindQualityCheckResult {
 		return nil, node.Structural(fmt.Errorf("script node: result adapter returned kind %q, want %q", result.Kind, artifact.KindQualityCheckResult))
 	}
+	if provider, ok := result.Data.(interface{ ToolchainDiagnostics() map[string]string }); ok && ctx.Diagnostics != nil {
+		ctx.Diagnostics.Toolchain = provider.ToolchainDiagnostics()
+	}
 	ref, err := ctx.Store.Put(result)
 	if err != nil {
 		return nil, node.Structural(fmt.Errorf("script node: store result: %w", err))
@@ -193,5 +199,3 @@ func (n *Node) materialize(dir string) (string, error) {
 	}
 	return filepath.Join(dir, filepath.FromSlash(n.bundle.Manifest.Entry)), nil
 }
-
-func runtimePlatform() string { return runtime.GOOS }

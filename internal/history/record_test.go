@@ -189,14 +189,24 @@ func TestRecordPreservesConsumedCodeArtifactRef(t *testing.T) {
 
 func TestRecordPreservesStaticResultAndExecutionDiagnostics(t *testing.T) {
 	store, _ := openTest(t)
-	resultRef := artifact.ArtifactRef{
-		ID: "go-static-analysis-result", Kind: artifact.KindQualityCheckResult, Version: "1", URI: "7.json",
+	artifactStore := artifact.NewMemStore()
+	resultRef, err := artifactStore.Put(artifact.Artifact{
+		ID: "go-static-analysis-result", Kind: artifact.KindQualityCheckResult, Version: "1",
+		Data: map[string]any{
+			"effectiveConfig": map[string]any{"packageScope": "./..."},
+			"toolchain":       map[string]any{"finalVersion": "go1.25.0"},
+			"logs":            map[string]any{"stdout": "/data/stdout.log", "stderr": "/data/stderr.log"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 	diagnostics := node.RunDiagnostics{
 		BundleDigest: "sha256:abc", CWD: "/workspace/project",
 		Arguments: []string{"/workspace/project", "/data/tool-output"},
 		Launcher:  "/bin/sh", ResultAdapter: "go-static-analysis/v1",
 		Executables: map[string]string{"go": "/usr/local/bin/go"},
+		Toolchain:   map[string]string{"finalVersion": "go1.25.0", "goos": "darwin", "goarch": "arm64"},
 		Logs: map[string]artifact.ArtifactRef{
 			"stdout": {ID: "stdout", Kind: artifact.KindLog, URI: "/data/stdout.log"},
 		},
@@ -226,7 +236,15 @@ func TestRecordPreservesStaticResultAndExecutionDiagnostics(t *testing.T) {
 	if round.Outputs["result"] != resultRef {
 		t.Errorf("result ref = %+v", round.Outputs["result"])
 	}
-	if round.Diagnostics.BundleDigest != diagnostics.BundleDigest || round.Diagnostics.ResultAdapter != diagnostics.ResultAdapter {
+	body, err := artifactStore.Get(round.Outputs["result"])
+	if err != nil {
+		t.Fatalf("Get(result from history ref): %v", err)
+	}
+	result := body.Data.(map[string]any)
+	if result["effectiveConfig"] == nil || result["toolchain"] == nil || result["logs"] == nil {
+		t.Errorf("result evidence = %+v", result)
+	}
+	if round.Diagnostics.BundleDigest != diagnostics.BundleDigest || round.Diagnostics.ResultAdapter != diagnostics.ResultAdapter || round.Diagnostics.Toolchain["finalVersion"] != "go1.25.0" {
 		t.Errorf("diagnostics = %+v, want %+v", round.Diagnostics, diagnostics)
 	}
 }
