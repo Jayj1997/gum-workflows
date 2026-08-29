@@ -140,7 +140,7 @@ func TestRunWorkflowUsesInjectedRuntimePaths(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	workflowFile := filepath.Join("..", "..", "examples", "fullstack", "workflow.yaml")
+	workflowFile := copyFullstackWorkflow(t)
 
 	if err := runWorkflow(ctx, workflowFile, true, cancelHumanGateway{cancel: cancel}, paths); err != nil {
 		t.Fatalf("runWorkflow() unexpected error: %v", err)
@@ -167,10 +167,28 @@ func TestRunWorkflowUsesInjectedRuntimePaths(t *testing.T) {
 	if _, err := os.Stat(environmentRoot); !os.IsNotExist(err) {
 		t.Fatalf("injected paths did not take priority over environment override: %v", err)
 	}
-	projectDir := filepath.Join("..", "..", "examples", "fullstack", "project", ".workflow")
-	if _, err := os.Stat(projectDir); !os.IsNotExist(err) {
+	projectStateDir := filepath.Join(filepath.Dir(workflowFile), "project", ".workflow")
+	if _, err := os.Stat(projectStateDir); !os.IsNotExist(err) {
 		t.Fatalf("run wrote Gum state into the user project: %v", err)
 	}
+}
+
+func copyFullstackWorkflow(t *testing.T) string {
+	t.Helper()
+	source := filepath.Join("..", "..", "examples", "fullstack", "workflow.yaml")
+	data, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "project"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	workflowFile := filepath.Join(dir, "workflow.yaml")
+	if err := os.WriteFile(workflowFile, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return workflowFile
 }
 
 func TestHistoryUsesInjectedRuntimePaths(t *testing.T) {

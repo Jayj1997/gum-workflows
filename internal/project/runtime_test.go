@@ -44,7 +44,7 @@ func TestResolveRelativeRepository(t *testing.T) {
 		}
 	}
 
-	r := NewRuntime(t.TempDir())
+	r := NewRuntime()
 	ctx, err := r.Resolve(filepath.Join(wfdir, "workflow.yaml"), Spec{Name: "demo", Repository: "./project"})
 	if err != nil {
 		t.Fatalf("Resolve() unexpected error: %v", err)
@@ -52,11 +52,14 @@ func TestResolveRelativeRepository(t *testing.T) {
 	if ctx.Repository.Path != projdir {
 		t.Errorf("Repository.Path = %q, want %q", ctx.Repository.Path, projdir)
 	}
+	if ctx.Workspace != projdir {
+		t.Errorf("Workspace = %q, want in-place project %q", ctx.Workspace, projdir)
+	}
 }
 
 func TestResolveAbsoluteRepository(t *testing.T) {
 	repo := writeProject(t)
-	r := NewRuntime(t.TempDir())
+	r := NewRuntime()
 	ctx, err := r.Resolve("", Spec{Repository: repo})
 	if err != nil {
 		t.Fatalf("Resolve() unexpected error: %v", err)
@@ -64,89 +67,36 @@ func TestResolveAbsoluteRepository(t *testing.T) {
 	if ctx.Repository.Path != repo {
 		t.Errorf("Repository.Path = %q, want %q", ctx.Repository.Path, repo)
 	}
+	if ctx.Workspace != repo {
+		t.Errorf("Workspace = %q, want in-place project %q", ctx.Workspace, repo)
+	}
 }
 
 func TestResolveRejectsEmptyRepository(t *testing.T) {
-	r := NewRuntime(t.TempDir())
+	r := NewRuntime()
 	if _, err := r.Resolve("wf.yaml", Spec{}); err == nil {
 		t.Fatal("Resolve(empty) = nil error, want rejection")
 	}
 }
 
-func TestCreateWorkspace(t *testing.T) {
+func TestResolveNormalizesInPlaceWorkspace(t *testing.T) {
 	repo := writeProject(t)
-	execRoot := filepath.Join(t.TempDir(), "executions")
+	r := NewRuntime()
 
-	r := NewRuntime(execRoot)
-	ctx, err := r.Resolve("", Spec{Repository: repo})
+	ctx, err := r.Resolve("", Spec{Repository: filepath.Join(repo, "src", "..")})
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	wsCtx, err := r.CreateWorkspace(ctx, "execution-000001")
-	if err != nil {
-		t.Fatalf("CreateWorkspace() unexpected error: %v", err)
-	}
-
-	want := filepath.Join(execRoot, "execution-000001", "workspace", "project")
-	if wsCtx.Workspace != want {
-		t.Fatalf("Workspace = %q, want %q", wsCtx.Workspace, want)
-	}
-
-	// 项目文件被复制。
-	for _, rel := range []string{"README.md", "package.json", "src/app.ts", ".claude/skills/x.md", ".agents/skills/y.md"} {
-		if _, err := os.Stat(filepath.Join(want, rel)); err != nil {
-			t.Errorf("missing %s in workspace: %v", rel, err)
-		}
-	}
-	// .git 与 .workflow 不复制。
-	for _, rel := range []string{".git/config", ".workflow/state.json"} {
-		if _, err := os.Stat(filepath.Join(want, rel)); !os.IsNotExist(err) {
-			t.Errorf("%s should not be copied into workspace", rel)
-		}
-	}
-	// 源仓库不受影响（在原位）。
-	if _, err := os.Stat(filepath.Join(repo, ".git", "config")); err != nil {
-		t.Errorf("source .git damaged: %v", err)
+	if ctx.Repository.Path != repo || ctx.Workspace != repo {
+		t.Fatalf("resolved context = %#v, want repository and workspace %q", ctx, repo)
 	}
 }
 
-func TestCreateWorkspaceIndependentPerExecution(t *testing.T) {
-	repo := writeProject(t)
-	execRoot := filepath.Join(t.TempDir(), "executions")
-	r := NewRuntime(execRoot)
+func TestResolveRejectsMissingRepository(t *testing.T) {
+	r := NewRuntime()
 
-	ctx, _ := r.Resolve("", Spec{Repository: repo})
-	ws1, err := r.CreateWorkspace(ctx, "execution-000001")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 在第一个 Workspace 里写入变更。
-	if err := os.WriteFile(filepath.Join(ws1.Workspace, "NEW.md"), []byte("change"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	ws2, err := r.CreateWorkspace(ctx, "execution-000002")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 第二个 Workspace 不含第一个的变更；源仓库也不含。
-	if _, err := os.Stat(filepath.Join(ws2.Workspace, "NEW.md")); !os.IsNotExist(err) {
-		t.Error("workspace #2 contains changes from execution #001")
-	}
-	if _, err := os.Stat(filepath.Join(repo, "NEW.md")); !os.IsNotExist(err) {
-		t.Error("source repository polluted by execution #001")
-	}
-}
-
-func TestCreateWorkspaceRejectsMissingRepo(t *testing.T) {
-	r := NewRuntime(filepath.Join(t.TempDir(), "executions"))
-
-	if _, err := r.CreateWorkspace(Context{}, "e1"); err == nil {
-		t.Error("CreateWorkspace(empty ctx) = nil error, want rejection")
-	}
-	if _, err := r.CreateWorkspace(Context{Repository: Repository{Path: "/nonexistent/repo"}}, "e1"); err == nil {
-		t.Error("CreateWorkspace(missing repo) = nil error, want rejection")
+	if _, err := r.Resolve("", Spec{Repository: filepath.Join(t.TempDir(), "missing")}); err == nil {
+		t.Error("Resolve(missing repo) = nil error, want rejection")
 	}
 
 	// repository 指向文件而非目录。
@@ -154,7 +104,7 @@ func TestCreateWorkspaceRejectsMissingRepo(t *testing.T) {
 	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.CreateWorkspace(Context{Repository: Repository{Path: notADir}}, "e1"); err == nil {
-		t.Error("CreateWorkspace(file repo) = nil error, want rejection")
+	if _, err := r.Resolve("", Spec{Repository: notADir}); err == nil {
+		t.Error("Resolve(file repo) = nil error, want rejection")
 	}
 }

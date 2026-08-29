@@ -12,7 +12,7 @@ var executionIDPattern = regexp.MustCompile(`^execution-([0-9]{6})$`)
 // NextExecutionID 扫描 baseDir 下已有的 execution-* 目录，
 // 返回下一个可用 ID（最大序号 + 1）。目录分配是 Execution ID 的
 // 唯一来源：CLI 与 Engine 必须共用本函数，避免双轨编号相互覆盖
-// （state 目录、workspace、artifacts 都以此 ID 定位，计划 §28）。
+// （state 目录与 artifacts 都以此 ID 定位，计划 §28）。
 func NextExecutionID(baseDir string) (string, error) {
 	entries, err := os.ReadDir(baseDir)
 	if err != nil {

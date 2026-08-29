@@ -24,7 +24,7 @@ import (
 // 管线（计划 §25）：
 //
 //	Load YAML -> CUE Validate -> Parse -> Semantic Validate ->
-//	Create Execution -> Initialize Project/Workspace -> Execute -> Persist
+//	Create Execution -> Resolve In-place Project Workspace -> Execute -> Persist
 func runCmd(path string, paths runtimepath.Paths) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -54,11 +54,11 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 		runRecorder = historyStore
 	}
 
-	// ③ Project Runtime：解析 projects[0] 声明并创建本次 Execution 的 Workspace。
+	// ③ Project Runtime：解析 projects[0] 声明为原地 Workspace。
 	// Execution ID 由 execution.NextExecutionID 分配（唯一来源），
-	// workspace / artifacts / 状态目录与 Engine 使用同一 ID。
+	// artifacts / 状态目录与 Engine 使用同一 ID。
 	// projects 的「恰好 1 个」校验属票 06；此处取第一个条目。
-	runtime := project.NewRuntime(paths.ExecutionsDir())
+	runtime := project.NewRuntime()
 	projSpec := project.Spec{}
 	if len(def.Projects) > 0 {
 		projSpec = project.Spec{Name: def.Projects[0].Name, Repository: def.Projects[0].Repository}
@@ -68,7 +68,7 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 		return fmt.Errorf("resolve project: %w", err)
 	}
 
-	executionID, err := execution.NextExecutionID(runtime.BaseDir)
+	executionID, err := execution.NextExecutionID(paths.ExecutionsDir())
 	if err != nil {
 		return fmt.Errorf("allocate execution id: %w", err)
 	}
@@ -82,11 +82,6 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 		return fmt.Errorf("snapshot workflow.yaml: %w", err)
 	}
 
-	wsCtx, err := runtime.CreateWorkspace(projCtx, executionID)
-	if err != nil {
-		return fmt.Errorf("create workspace: %w", err)
-	}
-
 	// ④ 执行：FS Artifact Store + 状态持久化 + Workspace 注入。
 	store, err := artifact.NewFilesystemStore(paths.ArtifactsDir(executionID))
 	if err != nil {
@@ -98,8 +93,8 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 		defsRegistry,
 		store,
 		nil,
-		execution.WithStateDir(runtime.BaseDir),
-		execution.WithProjectContext(wsCtx),
+		execution.WithStateDir(paths.ExecutionsDir()),
+		execution.WithProjectContext(projCtx),
 		execution.WithExecutionID(executionID),
 		execution.WithWorkflowFile(path),
 		execution.WithHumanGateway(gateway),

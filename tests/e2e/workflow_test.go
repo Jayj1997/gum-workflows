@@ -213,6 +213,16 @@ func TestRunWritesOnlyLocalDataRootAndIsVisibleToHistory(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dataRoot, "product.db")); err != nil {
 		t.Fatalf("CLI run did not create the global product database: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(dir, "project", ".mock-agent", "task.md")); err != nil {
+		t.Fatalf("Agent change is not visible in the in-place project: %v", err)
+	}
+	workspaceCopies, err := filepath.Glob(filepath.Join(dataRoot, "runs", "*", "workspace", "project"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(workspaceCopies) != 0 {
+		t.Fatalf("CLI run copied the project into Local Data Root: %v", workspaceCopies)
+	}
 
 	historyOutput, err := runInDirWithDataRoot(t, t.TempDir(), dataRoot, "history")
 	if err != nil {

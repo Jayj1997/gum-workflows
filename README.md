@@ -26,7 +26,7 @@ Gum-Workflows 面向代码开发、产品经理、测试、设计和运维等能
 
 核心方向：
 
-- **本地优先**：Workflow、运行历史、Artifact 和 Workspace 默认保存在本地；云同步属于后续演进。
+- **本地优先**：Workflow、运行历史与 Artifact 保存在用户级 Local Data Root，Workspace 直接使用本地项目目录；云同步属于后续演进。
 - **Node 优先**：先打磨 Node Definition、Node Executor、真实 Agent Node、Artifact 和调试能力，再建设成熟 Workflow。
 - **数据依赖优先**：Node 通过 Artifact 交换数据；Data Edge 由 Input Binding 自动产生，`dependsOn` 只表示 Control Edge。
 - **迭代与人工在环**：Workflow 可以表达“产出 → 审批 → 带意见重做”的多轮过程，而不只是运行一次就结束的无环 DAG。
@@ -45,7 +45,7 @@ Gum-Workflows 面向代码开发、产品经理、测试、设计和运维等能
 |---|---|---|
 | workflow/v1 MVP | 已完成 | YAML Loader、CUE/语义校验、DAG、串行/并行 Engine、Artifact Store、Workspace、Mock Node、CLI 与 e2e |
 | 平台核心 01–14 | 已完成 | 定义体系、迭代引擎、人工在环、LLM 配置解析、SQLite 历史与 history CLI |
-| 14 后产品化 | 实施中 | Local Data Root 已落地；本地 GUI、Draft/Revision、独立 LLM Config、真实 `llm-chat`、Artifact 体验与运行恢复尚未实施 |
+| 14 后产品化 | 实施中 | Local Data Root 与 In-place Project Workspace 已落地；本地 GUI、Draft/Revision、独立 LLM Config、真实 `llm-chat`、Artifact 体验与运行恢复尚未实施 |
 
 平台核心 01–14 已完成：
 
@@ -83,12 +83,12 @@ Gum-Workflows 面向代码开发、产品经理、测试、设计和运维等能
 | **NodeExecution** | 一个 Node Instance 在本次 WorkflowExecution 中的当前状态与历史摘要 |
 | **Node Run** | Node Instance 的一次具体执行；迭代 Workflow 中同一节点可以产生多个 round |
 | **Artifact / ArtifactRef** | Node 之间唯一的数据通道；Runtime 传引用，不传大型数据本体 |
-| **Workspace** | 一次 Run 独享的项目副本，Agent 在副本内工作 |
+| **Workspace** | Project Definition 指向的用户项目目录，Agent 与 Automation 在原地共享使用 |
 | **Human Approval / Advise** | 人工审批及拒绝意见；拒绝不是运行失败，而是驱动 Agent 新一轮执行 |
 
 术语权威见 [`CONTEXT.md`](CONTEXT.md)。
 
-> 上表 Workspace 是平台核心 01–14 的已实现语义。14 后产品态已确认改为 In-place Project Workspace：不复制用户项目，Gum 产物进入 Local Data Root。
+Gum 不为 Run 或 Node 创建代码副本、Snapshot 或 Revision；代码版本与恢复由用户现有工具负责。
 
 ## 数据依赖与运行条件
 

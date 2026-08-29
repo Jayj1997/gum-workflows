@@ -30,7 +30,7 @@ _Avoid_: 与 NodeExecution（运行侧快照）混淆。
 Node Instance 的组合声明，附项目声明。一个 Workflow 可运行任意多次，运行之间零共享。
 
 **Project Definition（项目定义）**:
-被加工的本地代码仓库声明：名称 + 仓库地址。每次运行把仓库复制为该运行独享的 Workspace。
+被加工的本地代码仓库声明：名称 + 仓库地址。仓库的规范化绝对路径直接成为 In-place Project Workspace，不为 Run 或 Node 复制项目。
 
 **LLM Provider（模型提供方）**:
 一个大模型服务接入点（url + 协议类型 + apikey 引用 + 名称），下挂一组 Model。Provider 声明在用户级 llm.yaml 中，跨 Workflow 复用，是纯运行时配置：不落项目库，run 启动时把解析结果（provider/model 名）记入运行记录。

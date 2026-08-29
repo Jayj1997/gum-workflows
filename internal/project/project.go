@@ -10,9 +10,9 @@ type Repository struct {
 	Path string
 }
 
-// Context 是计划中的 ProjectContext：一次 Execution 的项目运行环境。
-// Workflow YAML 的 projects 列表（name/repository）经 Resolver 解析后得到本结构。
-// 本期无 branch（设计文档 §3.5：本地项目无意义）。
+// Context 是一次 Execution 的项目运行环境。
+// Workflow YAML 的 projects 列表（name/repository）经 Resolver 解析后得到本结构；
+// Workspace 是 Repository 的规范化绝对路径，Agent 与 Automation 在原地共享使用。
 type Context struct {
 	Repository Repository
 	Workspace  string

@@ -16,10 +16,11 @@
 | 终端检测 | `github.com/mattn/go-isatty` |
 | 并发 | 标准库 goroutine / channel；调度状态由 Engine 主循环串行推进 |
 | 日志 | 标准库 `log/slog` |
-| Artifact、快照与 Workspace | 用户级 Local Data Root 的 `runs/<execution-id>/` |
+| Artifact 与运行快照 | 用户级 Local Data Root 的 `runs/<execution-id>/` |
+| Project Workspace | Project Definition 指向的用户项目规范化绝对路径（原地运行） |
 | 定义与运行历史 | 用户级 Local Data Root 的 SQLite `product.db`（`modernc.org/sqlite`） |
 
-`modernc.org/sqlite` 是平台核心唯一获批的数据库依赖：标准库不提供 SQLite 驱动，而本项目需要本地、单文件、零服务、可迁移且无 CGO 的统一定义与运行历史索引。数据库只保存定义、状态和 `ArtifactRef`；Artifact 本体与 Workspace 仍在文件系统。
+`modernc.org/sqlite` 是平台核心唯一获批的数据库依赖：标准库不提供 SQLite 驱动，而本项目需要本地、单文件、零服务、可迁移且无 CGO 的统一定义与运行历史索引。数据库只保存定义、状态和 `ArtifactRef`；Artifact 本体位于 Local Data Root，Project Workspace 则是用户项目目录。
 
 新增第三方依赖前必须说明标准库无法满足的理由。loader / validation / engine 等核心路径不得引入 CLI 框架或服务端基础设施依赖。
 
@@ -38,7 +39,7 @@ gum-workflows/
 │   ├── execution/                # 迭代引擎、HumanGateway、Node Run 状态与快照
 │   ├── history/                  # SQLite 迁移、定义导入、Run Record 与 Query
 │   ├── artifact/                 # ArtifactRef、Registry、Memory/Filesystem Store
-│   ├── project/                  # Project Context 与每次 Run 独享 Workspace
+│   ├── project/                  # Project Context 与 In-place Project Workspace 解析
 │   ├── runtimepath/              # 可注入的数据库与运行产物路径布局
 │   └── agent/                    # CodingAgent 接口与 Mock 实现
 ├── schema/workflow/              # workflow/v1 CUE 与 go:embed

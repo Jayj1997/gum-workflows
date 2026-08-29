@@ -142,11 +142,10 @@ Workflow 没有自动 Succeeded 终态。全图静止时仍保持 Running，等�
     ├── workflow.yaml
     ├── state.json
     ├── nodes/<node-id>/state.json
-    ├── artifacts/<n>.json
-    └── workspace/project/
+    └── artifacts/<n>.json
 ```
 
-CLI 可用 `GUM_WORKFLOWS_DATA_ROOT` 覆盖位置；未覆盖时使用操作系统的用户级应用数据目录。路径解析本身不创建目录。`runtimepath` 已为后续执行器定义 `runs/<execution-id>/logs/` 与 `runs/<execution-id>/node-runs/<node-run-id>/{logs,tool-output}/`，当前尚无执行器创建这些目录。当前 Workspace 仍是每次 Run 的项目副本，改为 In-place Project Workspace 属于后续票据。
+CLI 可用 `GUM_WORKFLOWS_DATA_ROOT` 覆盖位置；未覆盖时使用操作系统的用户级应用数据目录。路径解析本身不创建目录。`runtimepath` 已为后续执行器定义 `runs/<execution-id>/logs/` 与 `runs/<execution-id>/node-runs/<node-run-id>/{logs,tool-output}/`，当前尚无执行器创建这些目录。Project Definition 中的 repository 相对 Workflow 文件解析为规范化绝对路径，该目录直接作为 Agent 与 Automation 共享的 In-place Project Workspace；Runtime 不把项目复制到 Local Data Root。
 
 SQLite 使用 WAL、busy_timeout、foreign keys 与 `PRAGMA user_version` 顺序迁移。定义侧保存 Node Type、Node Definition、Node Executor、Workflow 与 Node Instance；运行侧保存 Workflow Run 与逐 Node Run 历史，一行对应一个 round，inputs/outputs 只序列化 `ArtifactRef`。
 
