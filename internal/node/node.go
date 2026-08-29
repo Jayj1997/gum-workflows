@@ -37,6 +37,7 @@ type RunContext struct {
 // RunDiagnostics records non-sensitive facts needed to explain host script execution.
 type RunDiagnostics struct {
 	BundleDigest  string                          `json:"bundleDigest,omitempty"`
+	Host          map[string]string               `json:"host,omitempty"`
 	CWD           string                          `json:"cwd,omitempty"`
 	Arguments     []string                        `json:"arguments,omitempty"`
 	Launcher      string                          `json:"launcher,omitempty"`

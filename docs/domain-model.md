@@ -92,6 +92,8 @@ Agent 与 OpenAPI 生成目前仍是 Mock 实现；真实网络模型调用和�
 
 Static Script 的 stdout/stderr 只流式进入 Node Run 日志；正式工具产物进入该轮独立的 tool-output 目录。内置 Result Adapter 从退出状态、`vet.json`、package/toolchain 产物和日志生成严格的 `qualityCheckResult/v1`：无诊断为 `passed`，vet/package 诊断为 `failed`，无 Go package 为 `not-applicable`；工具、I/O、产物或 Schema 损坏是 Structural Error，不产生 Result Artifact。业务 `failed` 仍是成功 Node Run 的普通 `result: QualityCheckResult` 输出。
 
+ScriptNode 在启动前诊断当前平台、POSIX Shell、Manifest required executables，并对 Go Bundle 执行有界的 `go version` / `go env` 能力探测；运行前后重新核对 Executor 身份、Result Adapter、Bundle 摘要、物化脚本和声明产物路径。Shell 运行于独立进程组，Context 取消或 stdout/stderr 合计超过固定 32 MiB 上限时终止 Shell 及其子进程；取消、日志超限、I/O、摘要、产物或 Adapter 失败均不发布 Result。Adapter 完成并校验后删除临时 tool-output，再保存 Result；Bundle、日志、Result 与其 ArtifactRef 保留用于历史查询。诊断只记录主机/Go 平台、工具路径与版本、GOROOT、CGO、cwd、固定位置参数、摘要、Adapter 和日志引用，不保存完整环境。
+
 ## 6. LLM 配置
 
 `internal/llm` 只实现用户级 `llm.yaml` 的严格加载、校验与 provider/model 默认链解析，不实现网络 Client。查找顺序为：
@@ -136,7 +138,7 @@ Workflow 没有自动 Succeeded 终态。全图静止时仍保持 Running，等�
 
 ## 8. 运行状态与持久化
 
-`NodeExecution` 保存 `Current NodeRun` 和已完成的 `History []NodeRun`。每轮记录 status、inputs、outputs、diagnostics、error/error_kind 和时间；ScriptNode diagnostics 包括 Bundle 摘要、cwd、固定位置参数、launcher/工具路径、Result Adapter 和日志引用。`WorkflowExecution` 记录唯一 Run UUID、Workflow 身份、状态、停止原因和 Node 快照。Run UUID 同时是 SQLite 主键与 Local Data Root 目录名，不再维护第二套 filesystem execution ID。
+`NodeExecution` 保存 `Current NodeRun` 和已完成的 `History []NodeRun`。每轮记录 status、inputs、outputs、diagnostics、error/error_kind 和时间；ScriptNode diagnostics 包括 Bundle 摘要、主机与 Go 工具链事实、cwd、固定位置参数、launcher/工具路径、Result Adapter 和日志引用。`WorkflowExecution` 记录唯一 Run UUID、Workflow 身份、状态、停止原因和 Node 快照。Run UUID 同时是 SQLite 主键与 Local Data Root 目录名，不再维护第二套 filesystem execution ID。
 
 用户级 Local Data Root 保存全局产品库与运行主体；路径只使用稳定的 Run / Node Run ID，不编码可变的 Project 或 Workflow 名称：
 
@@ -151,10 +153,10 @@ Workflow 没有自动 Succeeded 终态。全图静止时仍保持 Running，等�
     └── node-runs/<node-run-id>/
         ├── bundle/
         ├── logs/{stdout,stderr}.log
-        └── tool-output/
+        └── tool-output/  # 仅脚本与 Adapter 执行期间存在
 ```
 
-CLI 可用 `GUM_WORKFLOWS_DATA_ROOT` 覆盖位置；未覆盖时使用操作系统的用户级应用数据目录。路径解析本身不创建目录；ScriptNode 执行时才创建该 Node Run 私有的 bundle、logs 与 tool-output。Project Definition 中的 repository 相对 Workflow 文件解析为规范化绝对路径，该目录直接作为 Agent 与 Automation 共享的 In-place Project Workspace；Runtime 不把项目复制到 Local Data Root，也不在项目内写 Gum 日志或结果。
+CLI 可用 `GUM_WORKFLOWS_DATA_ROOT` 覆盖位置；未覆盖时使用操作系统的用户级应用数据目录。路径解析本身不创建目录；ScriptNode 执行时才创建该 Node Run 私有的 bundle、logs 与临时 tool-output，Adapter 消费正式产物后清理 tool-output。Project Definition 中的 repository 相对 Workflow 文件解析为规范化绝对路径，该目录直接作为 Agent 与 Automation 共享的 In-place Project Workspace；Runtime 不把项目复制到 Local Data Root，也不在项目内写 Gum 日志或结果。
 
 SQLite 使用 WAL、busy_timeout、foreign keys 与 `PRAGMA user_version` 顺序迁移。定义侧保存 Node Type、Node Definition、Node Executor、Workflow 与 Node Instance；运行侧保存 Workflow Run 与逐 Node Run 历史，一行对应一个 round，inputs/outputs 只序列化 `ArtifactRef`，diagnostics 保存非敏感执行事实。Quality Check Result 本体仍由 Artifact Store 保存，历史通过输出 Ref 定位。
 

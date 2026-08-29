@@ -2,6 +2,7 @@ package scriptnode
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -76,10 +77,201 @@ resultAdapter: test/v1
 	if diagnostics.BundleDigest != bundle.ExpectedDigest || diagnostics.CWD != workspace || len(diagnostics.Arguments) != 2 {
 		t.Errorf("diagnostics = %+v", diagnostics)
 	}
+	if _, err := os.Stat(ctx.Run.ToolOutputDir); !os.IsNotExist(err) {
+		t.Errorf("tool-output remains after successful adaptation: %v", err)
+	}
 	entries, err := os.ReadDir(workspace)
 	if err != nil || len(entries) != 0 {
 		t.Errorf("workspace entries = %v/%v, want no Gum products", entries, err)
 	}
+}
+
+func TestNodeExecuteRevalidatesImmutableBundleBeforeLaunch(t *testing.T) {
+	bundle := testBundle(t, "toolOutputs: []", "#!/bin/sh\nexit 0\n")
+	adapterCalled := false
+	check, err := New(bundle, "test-check", "v1", "test/v1", func(ExecutionRecord) (artifact.Artifact, error) {
+		adapterCalled = true
+		return artifact.Artifact{ID: "result", Kind: artifact.KindQualityCheckResult}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle.Files["check.sh"] = []byte("#!/bin/sh\nprintf 'tampered\\n'\n")
+
+	workspace := t.TempDir()
+	runDir := t.TempDir()
+	_, err = check.Execute(node.ExecutionContext{
+		Context: context.Background(), Project: project.Context{Workspace: workspace}, Store: artifact.NewMemStore(),
+		Run: node.RunContext{LogsDir: filepath.Join(runDir, "logs"), ToolOutputDir: filepath.Join(runDir, "tool-output")},
+	}, map[string]artifact.ArtifactRef{"code": {ID: "code", Kind: artifact.KindSourceCode, Version: "1", URI: workspace}})
+	if err == nil || node.ErrorKindOf(err) != node.ErrorKindStructural || !strings.Contains(err.Error(), "bundle digest mismatch") {
+		t.Fatalf("Execute(tampered bundle) error = %v, want digest Structural Error", err)
+	}
+	if adapterCalled {
+		t.Fatal("result adapter called for tampered bundle")
+	}
+}
+
+func TestNodeExecuteRejectsMaterializedBundleMutationAfterRun(t *testing.T) {
+	bundle := testBundleWithRequirements(t, "[sh, chmod]", "toolOutputs: [{path: result.txt, required: true}]", `#!/bin/sh
+chmod u+w "${0%/*}/helper.txt"
+printf 'changed\n' > "${0%/*}/helper.txt"
+printf 'formal-result\n' > "$2/result.txt"
+`)
+	bundle.Files["helper.txt"] = []byte("immutable helper\n")
+	bundle.ExpectedDigest = bundle.Digest()
+	adapterCalled := false
+	check, err := New(bundle, "test-check", "v1", "test/v1", func(ExecutionRecord) (artifact.Artifact, error) {
+		adapterCalled = true
+		return artifact.Artifact{ID: "result", Kind: artifact.KindQualityCheckResult}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	runDir := t.TempDir()
+	_, err = check.Execute(node.ExecutionContext{
+		Context: context.Background(), Project: project.Context{Workspace: workspace}, Store: artifact.NewMemStore(),
+		Run: node.RunContext{LogsDir: filepath.Join(runDir, "logs"), ToolOutputDir: filepath.Join(runDir, "tool-output")},
+	}, map[string]artifact.ArtifactRef{"code": {ID: "code", Kind: artifact.KindSourceCode, Version: "1", URI: workspace}})
+	if err == nil || node.ErrorKindOf(err) != node.ErrorKindStructural || !strings.Contains(err.Error(), "materialized bundle file") {
+		t.Fatalf("Execute(mutated materialized bundle) error = %v, want Structural Error", err)
+	}
+	if adapterCalled {
+		t.Fatal("result adapter called after materialized bundle mutation")
+	}
+}
+
+func TestNodeExecuteRejectsNodeRunPathResolvedInsideWorkspace(t *testing.T) {
+	bundle := testBundle(t, "toolOutputs: []", "#!/bin/sh\nexit 0\n")
+	check, err := New(bundle, "test-check", "v1", "test/v1", func(ExecutionRecord) (artifact.Artifact, error) {
+		return artifact.Artifact{ID: "result", Kind: artifact.KindQualityCheckResult}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	stateLink := filepath.Join(t.TempDir(), "node-run")
+	if err := os.Symlink(workspace, stateLink); err != nil {
+		t.Fatal(err)
+	}
+	_, err = check.Execute(node.ExecutionContext{
+		Context: context.Background(), Project: project.Context{Workspace: workspace}, Store: artifact.NewMemStore(),
+		Run: node.RunContext{LogsDir: filepath.Join(stateLink, "logs"), ToolOutputDir: filepath.Join(stateLink, "tool-output")},
+	}, map[string]artifact.ArtifactRef{"code": {ID: "code", Kind: artifact.KindSourceCode, Version: "1", URI: workspace}})
+	if err == nil || node.ErrorKindOf(err) != node.ErrorKindStructural || !strings.Contains(err.Error(), "outside Project Workspace") {
+		t.Fatalf("Execute(linked Node Run path) error = %v, want path Structural Error", err)
+	}
+	entries, readErr := os.ReadDir(workspace)
+	if readErr != nil || len(entries) != 0 {
+		t.Fatalf("workspace entries = %v/%v, want no Gum products", entries, readErr)
+	}
+}
+
+func TestNodeExecuteRejectsToolOutputSymlinkEscape(t *testing.T) {
+	bundle := testBundleWithRequirements(t, "[sh, ln]", "toolOutputs: [{path: result.txt, required: true}]", "#!/bin/sh\nln -s \"$1/outside.txt\" \"$2/result.txt\"\n")
+	adapterCalled := false
+	check, err := New(bundle, "test-check", "v1", "test/v1", func(ExecutionRecord) (artifact.Artifact, error) {
+		adapterCalled = true
+		return artifact.Artifact{ID: "result", Kind: artifact.KindQualityCheckResult}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	runDir := t.TempDir()
+	toolOutputDir := filepath.Join(runDir, "tool-output")
+	outside := filepath.Join(workspace, "outside.txt")
+	if err := os.WriteFile(outside, []byte("not formal evidence"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = check.Execute(node.ExecutionContext{
+		Context: context.Background(), Project: project.Context{Workspace: workspace}, Store: artifact.NewMemStore(),
+		Run: node.RunContext{LogsDir: filepath.Join(runDir, "logs"), ToolOutputDir: toolOutputDir},
+	}, map[string]artifact.ArtifactRef{"code": {ID: "code", Kind: artifact.KindSourceCode, Version: "1", URI: workspace}})
+	if err == nil || node.ErrorKindOf(err) != node.ErrorKindStructural || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("Execute(symlink output) error = %v, want path Structural Error", err)
+	}
+	if adapterCalled {
+		t.Fatal("result adapter called for escaped tool output")
+	}
+	if _, statErr := os.Stat(toolOutputDir); !os.IsNotExist(statErr) {
+		t.Errorf("tool-output remains after rejected evidence: %v", statErr)
+	}
+}
+
+func TestNodeExecuteRecordsOnlyNonSensitiveHostDiagnostics(t *testing.T) {
+	bin := t.TempDir()
+	goPath := filepath.Join(bin, "go")
+	if err := os.WriteFile(goPath, []byte(`#!/bin/sh
+case "$1" in
+  version) printf 'go version go1.25.0 darwin/arm64\n' ;;
+  env) printf 'go1.25.0\n/test/goroot\ndarwin\narm64\n1\n' ;;
+  *) exit 2 ;;
+esac
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("SECRET_TOKEN", "must-not-enter-history")
+	bundle := testBundleWithRequirements(t, "[sh, go]", "toolOutputs: []", "#!/bin/sh\nexit 0\n")
+	check, err := New(bundle, "test-check", "v1", "test/v1", func(ExecutionRecord) (artifact.Artifact, error) {
+		return artifact.Artifact{ID: "result", Kind: artifact.KindQualityCheckResult}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	runDir := t.TempDir()
+	diagnostics := &node.RunDiagnostics{}
+	_, err = check.Execute(node.ExecutionContext{
+		Context: context.Background(), Project: project.Context{Workspace: workspace}, Store: artifact.NewMemStore(),
+		Run:         node.RunContext{LogsDir: filepath.Join(runDir, "logs"), ToolOutputDir: filepath.Join(runDir, "tool-output")},
+		Diagnostics: diagnostics,
+	}, map[string]artifact.ArtifactRef{"code": {ID: "code", Kind: artifact.KindSourceCode, Version: "1", URI: workspace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diagnostics.Host["goos"] != runtime.GOOS || diagnostics.Host["goarch"] != runtime.GOARCH {
+		t.Errorf("host diagnostics = %+v", diagnostics.Host)
+	}
+	if diagnostics.Executables["go"] != goPath || diagnostics.Toolchain["launcherVersion"] != "go version go1.25.0 darwin/arm64" ||
+		diagnostics.Toolchain["goroot"] != "/test/goroot" || diagnostics.Toolchain["cgoEnabled"] != "1" {
+		t.Errorf("tool diagnostics = executables %+v toolchain %+v", diagnostics.Executables, diagnostics.Toolchain)
+	}
+	encoded, err := json.Marshal(diagnostics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "SECRET_TOKEN") || strings.Contains(string(encoded), "must-not-enter-history") {
+		t.Fatalf("diagnostics persisted sensitive environment: %s", encoded)
+	}
+}
+
+func testBundle(t *testing.T, toolOutputs, script string) Bundle {
+	return testBundleWithRequirements(t, "[sh]", toolOutputs, script)
+}
+
+func testBundleWithRequirements(t *testing.T, executables, toolOutputs, script string) Bundle {
+	t.Helper()
+	manifestBytes := []byte(`apiVersion: automationScript/v1
+kind: automationScript
+node: test-check
+executor: v1
+entry: check.sh
+platforms: [` + runtime.GOOS + `]
+requirements: {executables: ` + executables + `}
+` + toolOutputs + `
+resultAdapter: test/v1
+`)
+	manifest, err := LoadManifest(manifestBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := Bundle{Manifest: manifest, ManifestBytes: manifestBytes, Files: map[string][]byte{"check.sh": []byte(script)}}
+	bundle.ExpectedDigest = bundle.Digest()
+	return bundle
 }
 
 func TestNodeExecuteTreatsMissingFormalOutputAsStructuralError(t *testing.T) {
