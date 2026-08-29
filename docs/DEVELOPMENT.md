@@ -1,6 +1,6 @@
 # gum-workflows 开发规范
 
-本文档是本仓库的唯一开发规范。MVP 历史设计见 `plans/Workflow Engine MVP：workflow-v1 设计与实现计划.md`；当前平台核心语义见 `plans/平台核心设计：组件定义体系与迭代执行引擎.md`。设计与实现冲突时，先显式修订设计，再修改本文档和代码。
+本文档是本仓库的唯一开发规范。MVP 历史设计见 `plans/Workflow Engine MVP：workflow-v1 设计与实现计划.md`；当前平台核心语义见 `plans/平台核心设计：组件定义体系与迭代执行引擎.md`。14 后设计与 ADR 可显式覆盖其中的局部历史决定；Workflow Run 单 UUID 身份见 `docs/adr/0001-workflow-run-uuid-identity.md`。设计与实现冲突时，先显式修订设计，再修改本文档和代码。
 
 ---
 
@@ -16,7 +16,7 @@
 | 终端检测 | `github.com/mattn/go-isatty` |
 | 并发 | 标准库 goroutine / channel；调度状态由 Engine 主循环串行推进 |
 | 日志 | 标准库 `log/slog` |
-| Artifact 与运行快照 | 用户级 Local Data Root 的 `runs/<execution-id>/` |
+| Artifact 与运行快照 | 用户级 Local Data Root 的 `runs/<run-id>/` |
 | Project Workspace | Project Definition 指向的用户项目规范化绝对路径（原地运行） |
 | 定义与运行历史 | 用户级 Local Data Root 的 SQLite `product.db`（`modernc.org/sqlite`） |
 

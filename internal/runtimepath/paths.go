@@ -83,17 +83,17 @@ func (p Paths) RunDir(runID string) string {
 	return filepath.Join(p.runsDir, runID)
 }
 
-// ArtifactsDir returns the Artifact Store directory for one execution.
+// ArtifactsDir returns the Artifact Store directory for one Workflow Run.
 func (p Paths) ArtifactsDir(runID string) string {
 	return filepath.Join(p.RunDir(runID), "artifacts")
 }
 
-// WorkflowSnapshot returns the workflow definition snapshot path for one execution.
+// WorkflowSnapshot returns the workflow definition snapshot path for one Workflow Run.
 func (p Paths) WorkflowSnapshot(runID string) string {
 	return filepath.Join(p.RunDir(runID), "workflow.yaml")
 }
 
-// LogsDir returns the log directory owned by one execution.
+// LogsDir returns the log directory owned by one Workflow Run.
 func (p Paths) LogsDir(runID string) string {
 	return filepath.Join(p.RunDir(runID), "logs")
 }
@@ -113,7 +113,7 @@ func (p Paths) NodeRunToolOutputDir(runID, nodeRunID string) string {
 	return filepath.Join(p.NodeRunDir(runID, nodeRunID), "tool-output")
 }
 
-// TempDir returns the temporary-output directory owned by one execution.
+// TempDir returns the temporary-output directory owned by one Workflow Run.
 func (p Paths) TempDir(runID string) string {
 	return filepath.Join(p.RunDir(runID), "tmp")
 }

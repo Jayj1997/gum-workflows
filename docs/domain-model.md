@@ -133,7 +133,7 @@ Workflow 没有自动 Succeeded 终态。全图静止时仍保持 Running，等�
 
 `NodeExecution` 保存 `Current NodeRun` 和已完成的 `History []NodeRun`。每轮记录 status、inputs、outputs、error/error_kind 和时间；`WorkflowExecution` 记录唯一 Run UUID、Workflow 身份、状态、停止原因和 Node 快照。Run UUID 同时是 SQLite 主键与 Local Data Root 目录名，不再维护第二套 filesystem execution ID。
 
-用户级 Local Data Root 保存全局产品库与运行主体；路径只使用稳定的 Execution / Node Run ID，不编码可变的 Project 或 Workflow 名称：
+用户级 Local Data Root 保存全局产品库与运行主体；路径只使用稳定的 Run / Node Run ID，不编码可变的 Project 或 Workflow 名称：
 
 ```text
 <Local Data Root>/

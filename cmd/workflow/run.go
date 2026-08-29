@@ -65,12 +65,12 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 	}
 
 	runID := uuid.NewString()
-	executionDir := paths.RunDir(runID)
-	if err := os.MkdirAll(executionDir, 0o755); err != nil {
-		return fmt.Errorf("create execution dir: %w", err)
+	runDir := paths.RunDir(runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		return fmt.Errorf("create run dir: %w", err)
 	}
 
-	// 定义快照（计划 §28：execution 目录含 workflow.yaml）。
+	// 定义快照：Run 目录包含本次输入的 workflow.yaml。
 	if err := os.WriteFile(paths.WorkflowSnapshot(runID), data, 0o644); err != nil {
 		return fmt.Errorf("snapshot workflow.yaml: %w", err)
 	}
