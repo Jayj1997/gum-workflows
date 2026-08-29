@@ -174,7 +174,7 @@ Workflow: Running -> Stopped | Failed
 
 ## 8. 推进纪律
 
-MVP 与平台核心 P1–P8 已完成。14 后产品方向不得倒灌到 workflow/v1 或当前 Runtime；GUI、Revision、真实 LLM、恢复与同步等工作必须先有新设计和开发票。
+MVP、平台核心 01–14 与 code-quality-automation 已完成。后续产品方向不得倒灌到 workflow/v1 或已完成模块；GUI、Revision、真实 LLM、恢复与同步等工作必须先有新设计和开发票。
 
 每张票的验收必须进入常绿测试；实现状态、设计目标与未来计划在文档中必须分开表述。
 
@@ -182,4 +182,5 @@ MVP 与平台核心 P1–P8 已完成。14 后产品方向不得倒灌到 workfl
 
 - `CONTEXT.md` 是当前单上下文术语权威；重大模型决定写入 `docs/adr/`。
 - `docs/domain-model.md` 描述已实现模型，不描述尚未落地的产品方向。
+- 独立模块完成后按 `plans/README 更新规范：模块完成后的进度同步.md` 更新 README、Agent 入口和相关状态文档。
 - 代码、Schema、examples、CLAUDE.md 与本规范必须在同一票内同步。

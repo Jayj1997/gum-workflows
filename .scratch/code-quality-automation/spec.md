@@ -1,6 +1,6 @@
 # Spec: Code Quality Check Automation
 
-Status: ready-for-agent
+Status: completed
 
 ## Problem Statement
 
@@ -146,4 +146,4 @@ Gum 的产品数据统一进入用户级 Local Data Root。Project Definition �
 - “结果”指经 Result Adapter 和 `qualityCheckResult/v1` 校验的 Artifact；stdout/stderr、exit code 和 coverprofile 只是生成结果的证据。
 - In-place Project Workspace 意味着 Agent 修改用户代码是预期业务效果，而非 Gum 产物污染。
 - 历史 code ArtifactRef 只表达当时输入身份/触发链，不是可恢复的源码快照。
-- README 的“后续待办（唯一跟踪清单）”是本 spec 之外功能的唯一产品待办索引；本 spec 不建立重复待办列表。
+- README 的“项目规划”是本 spec 之外功能的唯一产品待办索引；本 spec 不建立重复待办列表。

@@ -1,6 +1,6 @@
 # Gum-Workflows Domain Model
 
-本文档描述平台核心 01–14 以及随后已落地的 Local Data Root、In-place Project Workspace、Workflow Context Binding 和首批 Go Code Quality Check。术语以根目录 `CONTEXT.md` 为权威；GUI、Workflow Revision、真实 LLM Client、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
+本文档描述已完成的 platform-core 01–14 与 code-quality-automation，包括 Local Data Root、In-place Project Workspace、Workflow Context Binding 和首批 Go Code Quality Check。术语以根目录 `CONTEXT.md` 为权威；GUI、Workflow Revision、真实 LLM Client、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
 
 ## 1. 定义、实例与运行
 

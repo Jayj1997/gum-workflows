@@ -4,6 +4,8 @@
 >
 > 前置条件：`.scratch/platform-core/spec.md` 与 `.scratch/platform-core/issues/` 中 01–14 全部完成并验收。
 >
+> 当前进度：platform-core 与 code-quality-automation 已完成；Local Data Root、In-place Project Workspace、Workflow Context Binding、ScriptNode 和首批四个 Go Code Quality Check 已落地。本文其余 GUI、Draft/Revision、真实 LLM、Artifact 产品体验与运行恢复仍为后续规划。
+>
 > 范围隔离：本文只规划 14 之后的新阶段，不修改、不替代、不向前倒灌 01–14 的范围、顺序与验收标准。本文涉及的新定义字段、运行控制或持久化模型，实施前必须按新版本或显式升级设计落地，不得静默扩展现有 workflow/v1。
 
 ---
