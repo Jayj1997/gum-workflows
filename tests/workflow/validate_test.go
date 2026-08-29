@@ -1,5 +1,5 @@
 // tests/workflow 放跨包集成测试（见 docs/DEVELOPMENT.md §6）。
-// 本文件验证「已通过 Validator 的 Workflow -> DAG Builder」管线：
+// 本文件验证「已通过 Validator 的 Workflow -> Graph Builder」管线：
 // CUE Schema -> YAML Loader -> 结构校验 -> BuildGraph。
 // 该 fixture 的语义校验（含 Node Registry）在 internal/validation 的
 // testdata/valid/fullstack.yaml 用例中覆盖。
@@ -40,7 +40,7 @@ func loadValidatedWorkflow(t *testing.T) workflow.Definition {
 func TestValidatePipelineOnValidWorkflow(t *testing.T) {
 	def := loadValidatedWorkflow(t)
 
-	// 数据依赖应能完整构建 DAG：human-input 是唯一源节点。
+	// 数据依赖应能完整构建执行图：human-input 是唯一源节点。
 	g, err := workflow.BuildGraph(def)
 	if err != nil {
 		t.Fatalf("BuildGraph() unexpected error: %v", err)
@@ -53,10 +53,10 @@ func TestValidatePipelineOnValidWorkflow(t *testing.T) {
 	}
 }
 
-// TestDAGBuilderMinimalChain 是 DAG Builder（M4）的管线级验收：
-// 输入为已通过 Validator 的 Workflow，输出为 Execution DAG。
+// TestGraphBuilderMinimalChain 是 Graph Builder 的管线级验收：
+// 输入为已通过 Validator 的 Workflow，输出保留 Data/Control Edge 的执行图。
 // 依据设计计划 §10：无需任何 dependsOn，数据关系完整表达执行关系。
-func TestDAGBuilderMinimalChain(t *testing.T) {
+func TestGraphBuilderMinimalChain(t *testing.T) {
 	def := loadValidatedWorkflow(t)
 
 	g, err := workflow.BuildGraph(def)
@@ -95,7 +95,7 @@ func TestDAGBuilderMinimalChain(t *testing.T) {
 		t.Errorf("Cycle() = %v, want nil", cycle)
 	}
 
-	t.Logf("Execution DAG (%d nodes, %d edges):", len(g.NodeIDs), len(g.Edges))
+	t.Logf("Execution graph (%d nodes, %d edges):", len(g.NodeIDs), len(g.Edges))
 	for _, e := range got {
 		t.Logf("  %s --%s--> %s", e.From, e.Type, e.To)
 	}
@@ -104,9 +104,9 @@ func TestDAGBuilderMinimalChain(t *testing.T) {
 	}
 }
 
-// TestDAGBuilderControlEdge 验证 Control Edge 场景（计划 §6/§7.2）：
+// TestGraphBuilderControlEdge 验证 Control Edge 场景（计划 §6/§7.2）：
 // approval 与 deploy 之间没有数据传递，但存在明确执行顺序。
-func TestDAGBuilderControlEdge(t *testing.T) {
+func TestGraphBuilderControlEdge(t *testing.T) {
 	def := workflow.Definition{
 		APIVersion: workflow.APIVersionV1,
 		Kind:       workflow.KindWorkflow,

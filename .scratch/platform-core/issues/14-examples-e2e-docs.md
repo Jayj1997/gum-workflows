@@ -15,4 +15,5 @@
 ## Comments
 
 - 2026-08-29：附录 A fullstack Demo、真实 CLI e2e 骨架与文档同步完成。移除测试专用 `gumworkflowe2e` 终端绕过；完整人工循环继续由 `Engine.Run` 的 fake HumanGateway / RunRecorder 接缝测试覆盖。
+- 双轴 review 后同步 `AGENTS.md`，补充可复制且由 e2e 复用的 Mock `llm.example.yaml`，并删除旧 `tests/dag` 无环模拟调度接缝；Standards 与 Spec 复核均无剩余发现。
 - 验证：`go vet ./...`、`GOCACHE=/private/tmp/gum-workflows-go-cache go test ./... -count=1`、`GOCACHE=/private/tmp/gum-workflows-go-cache-race go test -race ./... -count=1`、`git diff --check` 均通过。

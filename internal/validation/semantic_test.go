@@ -25,7 +25,7 @@ type fakeFactory struct {
 func (f fakeFactory) Definition() string { return f.definition }
 func (f fakeFactory) Version() string    { return "v1" }
 
-// NodeType 声明该定义的类别（缺省 agent，与 tests/dag 的 fakeFactory 同构）。
+// NodeType 声明该定义的类别（缺省 agent）。
 func (f fakeFactory) NodeType() definition.NodeType {
 	if f.nodeType == "" {
 		return definition.TypeAgent

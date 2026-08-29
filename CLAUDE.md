@@ -1,6 +1,6 @@
 # gum-workflows
 
-基于 Go 的轻量级 Workflow Runtime。使用 YAML 定义 Workflow，通过 Node 的 Input/Output Contract 自动形成 DAG，按 Artifact 数据依赖持续执行。
+基于 Go 的轻量级 Workflow Runtime。使用 YAML 定义 Workflow，通过 Node 的 Input/Output Contract 形成可含环的执行图，按 Artifact 版本持续迭代。
 
 - 设计计划（只读，不要修改）：`plans/Workflow Engine MVP：workflow-v1 设计与实现计划.md`
 - 开发规范（必须遵守）：`docs/DEVELOPMENT.md`

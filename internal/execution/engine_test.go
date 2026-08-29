@@ -325,7 +325,7 @@ func TestRunMinimalChain(t *testing.T) {
 		}
 	}
 
-	// 执行顺序（串行拓扑序）与输入数量：
+	// 当前无环 fixture 的串行依赖顺序与输入数量：
 	// 0:coder(0) 1:sdk(1)
 	wantOrder := "coding-agent,openapi-generator"
 	if got := rec.order(); got != wantOrder {

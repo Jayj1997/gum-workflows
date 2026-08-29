@@ -1,0 +1,12 @@
+# Demo-only config for the built-in Mock Agent. No network request is made.
+apiVersion: llm/v1
+kind: llm
+providers:
+  - name: openai
+    type: openai-compatible
+    url: https://example.invalid/v1
+    apikey: not-used-by-mock
+    default: true
+    models:
+      - name: gpt-4o
+        default: true

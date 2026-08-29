@@ -16,20 +16,15 @@ import (
 )
 
 func TestValidateExample(t *testing.T) {
-	tmp := t.TempDir()
-	src := absPath(t, filepath.Join("..", "..", "examples", "fullstack"))
-	if err := copyTree(src, filepath.Join(tmp, "fullstack")); err != nil {
-		t.Fatal(err)
-	}
-
-	out, err := runInDir(t, filepath.Join(tmp, "fullstack"), "validate", "workflow.yaml")
+	dir := copyFullstackExample(t)
+	out, err := runInDir(t, dir, "validate", "workflow.yaml")
 	if err != nil {
 		t.Fatalf("validate failed: %s\n%s", err, out)
 	}
 	if !strings.Contains(out, "valid (workflow/v1)") {
 		t.Errorf("output = %q", out)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, "fullstack", ".workflow", "gum-workflows.db")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, ".workflow", "gum-workflows.db")); !os.IsNotExist(err) {
 		t.Errorf("validate created database or returned unexpected stat error: %v", err)
 	}
 }
@@ -193,19 +188,11 @@ func configureCommand(t *testing.T, cmd *exec.Cmd) {
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("create config dir: %v", err)
 	}
-	llmYAML := `apiVersion: llm/v1
-kind: llm
-providers:
-  - name: openai
-    type: openai-compatible
-    url: https://example.invalid/v1
-    apikey: test-key
-    default: true
-    models:
-      - name: gpt-4o
-        default: true
-`
-	if err := os.WriteFile(filepath.Join(configDir, "llm.yaml"), []byte(llmYAML), 0o600); err != nil {
+	llmYAML, err := os.ReadFile(absPath(t, filepath.Join("..", "..", "examples", "fullstack", "llm.example.yaml")))
+	if err != nil {
+		t.Fatalf("read demo llm config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "llm.yaml"), llmYAML, 0o600); err != nil {
 		t.Fatalf("write llm config: %v", err)
 	}
 	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+xdg)

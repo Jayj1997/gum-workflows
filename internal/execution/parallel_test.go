@@ -68,7 +68,7 @@ func (n slowNode) Execute(ctx node.ExecutionContext, inputs map[string]artifact.
 	return outputs, nil
 }
 
-// diamondDef 是计划 §38 / Case 2 的菱形 DAG：A -> B/C -> D。
+// diamondDef 是计划 §38 / Case 2 的菱形执行图：A -> B/C -> D。
 func diamondDef() workflow.Definition {
 	return workflow.Definition{
 		APIVersion: workflow.APIVersionV1,
@@ -87,7 +87,7 @@ func diamondDef() workflow.Definition {
 	}
 }
 
-// newDiamondEngine 构造菱形 DAG 引擎；所有同 Type Node 共享同一组闸门与计数器。
+// newDiamondEngine 构造菱形执行图引擎；所有同 Definition Node 共享同一组闸门与计数器。
 func newDiamondEngine(t *testing.T) (*Engine, *atomic.Int32, *atomic.Int32, chan struct{}) {
 	t.Helper()
 

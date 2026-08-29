@@ -44,8 +44,7 @@ gum-workflows/
 ├── examples/fullstack/           # human 入口、审批/advise 回环、多轮需求 Demo
 └── tests/
     ├── e2e/                      # 真实 CLI：validate、非 TTY、history 查询骨架
-    ├── workflow/                 # 跨包 validation 接缝
-    └── dag/                      # 跨包 Graph 接缝
+    └── workflow/                 # 跨包 Schema / Loader / Graph 接缝
 ```
 
 不提前创建没有实现的目录或空 adapter。
@@ -60,13 +59,14 @@ cmd/workflow
   └─ node/builtins ──> definition / node / agent / artifact
 
 definition ──> artifact          node ──> definition / artifact / project
-workflow   ──> 标准库             agent ──> artifact / project
+workflow ──(引用校验经 validation)──> definition / llm
+agent ──> artifact / project
 artifact、project ──> 标准库
 ```
 
 具体规则：
 
-- `workflow` 只描述组合与 Graph，不感知 Executor、执行或 SQLite。
+- `workflow` 只描述组合与 Graph，不感知 Executor、执行或 SQLite。平台设计所说的 workflow 对 definition/llm 引用校验依赖由 `validation` 组合完成；Go `internal/workflow` 保持字符串引用，因此没有直接 import。
 - Node 契约唯一来源是 `definition.NodeDefinition` YAML；Go `node.Node` 只实现 `Execute`。`ExecutorRegistry` 按 `(definition, version)` 显式注册并在 Run 启动时固定版本。
 - `execution` 是唯一驱动 Node Run 的包；它通过消费方接口 `HumanGateway` 与 `RunRecorder` 隔离终端和持久化适配器，不 import `cmd` 或 `history`。
 - `history` 实现 `execution.RunRecorder`，以 DTO 接收定义导入数据，不反向 import `definition`、`workflow` 或 `llm`。

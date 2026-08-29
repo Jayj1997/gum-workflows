@@ -117,6 +117,13 @@ go test ./...
 go vet ./...
 ```
 
+fullstack 包含 agent 节点，validate 与 run 都需要用户级 `llm.yaml`。内置 Agent 当前是 Mock，不会发起网络请求；首次体验可复制仅供本地 Demo 使用的配置：
+
+```bash
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/gum-workflows"
+cp -n examples/fullstack/llm.example.yaml "${XDG_CONFIG_HOME:-$HOME/.config}/gum-workflows/llm.yaml"
+```
+
 校验当前 fullstack 示例：
 
 ```bash
