@@ -33,7 +33,7 @@ func newBuiltins(t *testing.T) (*node.ExecutorRegistry, *definition.Registry) {
 func TestRegisterAllRegistersExecutors(t *testing.T) {
 	executors, _ := newBuiltins(t)
 
-	for _, def := range []string{"human-input", "human-approval", "requirement-analysis", "architecture-design", "coding-agent", "openapi-generator", "go-static-analysis"} {
+	for _, def := range []string{"human-input", "human-approval", "requirement-analysis", "architecture-design", "coding-agent", "openapi-generator", "go-static-analysis", "go-coverage-check"} {
 		f, err := executors.Get(def, "v1")
 		if err != nil {
 			t.Fatalf("Get(%s, v1) unexpected error: %v", def, err)
@@ -119,5 +119,19 @@ func TestConsistencyExposesStaticAnalysisContract(t *testing.T) {
 	}
 	if len(definition.Requires) != 1 || definition.Requires[0] != "project" {
 		t.Errorf("go-static-analysis requirements = %+v", definition.Requires)
+	}
+}
+
+func TestConsistencyExposesCoverageContract(t *testing.T) {
+	_, definitions := newBuiltins(t)
+	definition, err := definitions.Definition("go-coverage-check")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if definition.Type != "automation" || definition.Inputs["code"].Type != "SourceCode" || definition.Outputs["result"].Type != "QualityCheckResult" {
+		t.Errorf("go-coverage-check contract = %+v", definition)
+	}
+	if len(definition.Requires) != 1 || definition.Requires[0] != "project" {
+		t.Errorf("go-coverage-check requirements = %+v", definition.Requires)
 	}
 }

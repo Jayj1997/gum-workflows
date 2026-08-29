@@ -1,0 +1,22 @@
+apiVersion: automationScript/v1
+kind: automationScript
+node: go-coverage-check
+executor: v1
+entry: check.sh
+platforms: [darwin, linux]
+requirements:
+  executables: [sh, go, tee]
+toolOutputs:
+  - path: packages.txt
+    required: true
+  - path: coverage.out
+    required: false
+  - path: test.json
+    required: true
+  - path: test-exit.txt
+    required: true
+  - path: go-version.txt
+    required: true
+  - path: go-env.txt
+    required: true
+resultAdapter: go-coverage-check/v1

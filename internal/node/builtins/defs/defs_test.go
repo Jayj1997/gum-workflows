@@ -48,7 +48,7 @@ func TestSeedsDefinitions(t *testing.T) {
 		t.Fatalf("NewRegistry() unexpected error: %v", err)
 	}
 
-	want := []string{"architecture-design", "coding-agent", "go-static-analysis", "human-approval", "human-input", "openapi-generator", "requirement-analysis"}
+	want := []string{"architecture-design", "coding-agent", "go-coverage-check", "go-static-analysis", "human-approval", "human-input", "openapi-generator", "requirement-analysis"}
 	if got := r.DefinitionNames(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("DefinitionNames() = %v, want %v", got, want)
 	}
@@ -155,6 +155,7 @@ func TestSeedsTypeClassification(t *testing.T) {
 		"architecture-design":  definition.TypeAgent,
 		"coding-agent":         definition.TypeAgent,
 		"openapi-generator":    definition.TypeAutomation,
+		"go-coverage-check":    definition.TypeAutomation,
 	}
 	for name, want := range wantType {
 		d, err := r.Definition(name)

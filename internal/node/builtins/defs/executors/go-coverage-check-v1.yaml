@@ -1,0 +1,8 @@
+apiVersion: nodeExecutor/v1
+kind: nodeExecutor
+metadata:
+  name: go-coverage-check-v1
+  description: go-coverage-check 的首个不可变 POSIX Script Bundle。
+node: go-coverage-check
+version: v1
+updates: 首个版本：在 Darwin/Linux 上运行全量 Go 测试并生成 statement coverage Result。
