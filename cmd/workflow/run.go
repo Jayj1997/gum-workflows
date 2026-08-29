@@ -92,6 +92,7 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 		execution.WithWorkflowFile(path),
 		execution.WithHumanGateway(gateway),
 		execution.WithRunRecorder(historyStore),
+		execution.WithParallelism(4),
 	)
 	exec, runErr := engine.Run(ctx, def)
 

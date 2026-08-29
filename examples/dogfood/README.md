@@ -1,6 +1,6 @@
 # gum-workflows code-quality dogfood
 
-`workflow.yaml` 将当前仓库通过 `project.code` 绑定到四个内置 Go Code Quality Check。四个检查没有彼此之间的 Data/Control Edge；human-input 入口完成后，它们会在同一个 In-place Project Workspace 上按无环图默认并发度运行。
+`workflow.yaml` 将当前仓库通过 `project.code` 绑定到四个内置 Go Code Quality Check。四个检查没有彼此之间的 Data/Control Edge；human-input 入口完成后，它们会在同一个 In-place Project Workspace 上按 CLI 的四路并发度运行。
 
 ```bash
 go run ./cmd/workflow validate examples/dogfood/workflow.yaml

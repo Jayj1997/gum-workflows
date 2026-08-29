@@ -133,7 +133,7 @@ Workflow: Running -> Stopped | Failed
 
 - 所有可取消路径携带 `context.Context`，Node 必须响应取消。
 - 同一 Node 同时最多一个 Node Run；新输入到达时标记 dirty，当前轮完成后合并触发下一轮。
-- 无环图中的不同 Node 默认最多四路并发；含环图默认单路迭代以合并同一轮因果输入。组装层可通过 `WithParallelism` 显式覆盖；调度、状态迁移与持久化触发由 Engine 主循环串行管理。
+- 不同 Node 可按 `WithParallelism` 并发；CLI 组装层使用最多四路并发，调度、状态迁移与持久化触发由 Engine 主循环串行管理。
 - 人类事件重置收敛计数；无新人类事件时同一机器节点连续运行超过默认 10 轮触发 `convergence-guard`。
 
 ## 5. YAML / CUE 规范

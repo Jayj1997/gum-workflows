@@ -274,7 +274,7 @@ func TestParallelSerialFallback(t *testing.T) {
 		},
 	}
 
-	e := NewEngine(er, dr, artifact.NewMemStore(), nil, WithParallelism(1))
+	e := NewEngine(er, dr, artifact.NewMemStore(), nil) // 默认串行
 	done := make(chan struct{})
 	go func() {
 		exec, err := runUntilStopped(t, e, def)

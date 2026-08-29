@@ -94,6 +94,7 @@ func TestCoverageAdapterUsesValidProfileDespiteToolchainDiagnostic(t *testing.T)
 
 func TestCoverageAdapterUsesValidProfileWhenToolchainDiagnosticSetsNonzeroExit(t *testing.T) {
 	record := coverageExecutionFixture(t, 1, "mode: atomic\napp.go:1.1,2.2 1 1\n", "go: no such tool \"covdata\"\n")
+	writeFixture(t, filepath.Join(record.ToolOutputDir, "test.json"), "{\"ImportPath\":\"example.com/no-tests\",\"Action\":\"build-output\",\"Output\":\"go: no such tool \\\"covdata\\\"\\n\"}\n")
 	result, err := AdaptCoverageResult(record, 100)
 	if err != nil {
 		t.Fatalf("AdaptCoverageResult() unexpected error: %v", err)
@@ -101,6 +102,23 @@ func TestCoverageAdapterUsesValidProfileWhenToolchainDiagnosticSetsNonzeroExit(t
 	metric := result.Metrics.StatementCoverage
 	if result.Verdict != VerdictPassed || metric.Value == nil || *metric.Value != 100 {
 		t.Fatalf("result = %+v, want valid profile to determine verdict despite nonzero diagnostic exit", result)
+	}
+}
+
+func TestCoverageAdapterRejectsUnknownNonzeroExitWithPartialProfile(t *testing.T) {
+	record := coverageExecutionFixture(t, 1, "mode: atomic\napp.go:1.1,2.2 1 1\n", "tool failed\n")
+	if _, err := AdaptCoverageResult(record, 100); err == nil || node.ErrorKindOf(err) != node.ErrorKindStructural {
+		t.Fatalf("AdaptCoverageResult() error = %v, want Structural Error for unknown nonzero exit", err)
+	}
+}
+
+func TestCoverageAdapterRejectsCovdataAlongsideUnknownBuildFailure(t *testing.T) {
+	record := coverageExecutionFixture(t, 1, "mode: atomic\napp.go:1.1,2.2 1 1\n", "")
+	writeFixture(t, filepath.Join(record.ToolOutputDir, "test.json"),
+		"{\"ImportPath\":\"example.com/no-tests\",\"Action\":\"build-output\",\"Output\":\"go: no such tool \\\"covdata\\\"\\n\"}\n"+
+			"{\"ImportPath\":\"example.com/broken\",\"Action\":\"build-output\",\"Output\":\"compile failed\\n\"}\n")
+	if _, err := AdaptCoverageResult(record, 100); err == nil || node.ErrorKindOf(err) != node.ErrorKindStructural {
+		t.Fatalf("AdaptCoverageResult() error = %v, want Structural Error for unknown build failure", err)
 	}
 }
 

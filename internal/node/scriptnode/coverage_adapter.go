@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -43,21 +42,20 @@ func AdaptCoverageResult(record ExecutionRecord, threshold float64) (CoverageRes
 		Findings: []CoverageFinding{}, StartedAt: record.StartedAt, FinishedAt: record.FinishedAt,
 	}
 
-	testFailed := false
+	evidence := coverageEvidence{}
 	if record.ExitCode != 0 {
-		testFailed, err = coverageHasFailedEvent(record)
+		evidence, err = readCoverageEvidence(record)
 		if err != nil {
 			return CoverageResult{}, node.Structural(fmt.Errorf("coverage result adapter: %w", err))
 		}
-	}
-	if testFailed {
-		reason, reasonErr := coverageFailureReason(record)
-		if reasonErr != nil {
-			return CoverageResult{}, node.Structural(fmt.Errorf("coverage result adapter: %w", reasonErr))
+		if !evidence.testFailed && (!evidence.covdataDiagnostic || evidence.unknownBuildDiagnostic) {
+			return CoverageResult{}, node.Structural(fmt.Errorf("coverage result adapter: go test exited %d without a recognized completed-test diagnostic", record.ExitCode))
 		}
+	}
+	if evidence.testFailed {
 		result.Verdict = VerdictFailed
-		result.Metrics.StatementCoverage = CoverageMetric{Reason: reason}
-		result.Findings = []CoverageFinding{{Tool: "go test", Message: reason}}
+		result.Metrics.StatementCoverage = CoverageMetric{Reason: evidence.failureReason}
+		result.Findings = []CoverageFinding{{Tool: "go test", Message: evidence.failureReason}}
 	} else {
 		profile, readErr := readRequired(filepath.Join(record.ToolOutputDir, "coverage.out"))
 		if readErr != nil {
@@ -86,25 +84,51 @@ func AdaptCoverageResult(record ExecutionRecord, threshold float64) (CoverageRes
 	return result, nil
 }
 
-func coverageHasFailedEvent(record ExecutionRecord) (bool, error) {
+type coverageEvidence struct {
+	testFailed             bool
+	failureReason          string
+	covdataDiagnostic      bool
+	unknownBuildDiagnostic bool
+}
+
+func readCoverageEvidence(record ExecutionRecord) (coverageEvidence, error) {
 	events, err := readRequired(filepath.Join(record.ToolOutputDir, "test.json"))
 	if err != nil {
-		return false, err
+		return coverageEvidence{}, err
 	}
+	evidence := coverageEvidence{}
+	lastPackageOutput := map[string]string{}
 	decoder := json.NewDecoder(bytes.NewReader(events))
 	for {
 		var event struct {
-			Action  string `json:"Action"`
-			Package string `json:"Package"`
+			Action     string `json:"Action"`
+			Package    string `json:"Package"`
+			ImportPath string `json:"ImportPath"`
+			Output     string `json:"Output"`
 		}
 		if err := decoder.Decode(&event); err != nil {
 			if errors.Is(err, io.EOF) {
-				return false, nil
+				return evidence, nil
 			}
-			return false, fmt.Errorf("decode test.json: %w", err)
+			return coverageEvidence{}, fmt.Errorf("decode test.json: %w", err)
+		}
+		output := strings.TrimSpace(event.Output)
+		if event.Package != "" && output != "" {
+			lastPackageOutput[event.Package] = output
 		}
 		if event.Action == "fail" && event.Package != "" {
-			return true, nil
+			evidence.testFailed = true
+			evidence.failureReason = lastPackageOutput[event.Package]
+			if evidence.failureReason == "" {
+				evidence.failureReason = fmt.Sprintf("package %s failed", event.Package)
+			}
+		}
+		if event.Action == "build-output" && event.ImportPath != "" && output != "" {
+			if output == `go: no such tool "covdata"` {
+				evidence.covdataDiagnostic = true
+			} else {
+				evidence.unknownBuildDiagnostic = true
+			}
 		}
 	}
 }
@@ -167,38 +191,4 @@ func validCoverageRange(value string) bool {
 		}
 	}
 	return true
-}
-
-func coverageFailureReason(record ExecutionRecord) (string, error) {
-	events, err := readRequired(filepath.Join(record.ToolOutputDir, "test.json"))
-	if err != nil {
-		return "", err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(events))
-	var outputs []string
-	for {
-		var event struct {
-			Output string `json:"Output"`
-		}
-		if err := decoder.Decode(&event); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return "", fmt.Errorf("decode test.json: %w", err)
-		}
-		if output := strings.TrimSpace(event.Output); output != "" {
-			outputs = append(outputs, output)
-		}
-	}
-	if len(outputs) > 0 {
-		return outputs[len(outputs)-1], nil
-	}
-	stderr, err := os.ReadFile(record.StderrPath)
-	if err != nil {
-		return "", fmt.Errorf("read stderr log: %w", err)
-	}
-	if reason := strings.TrimSpace(string(stderr)); reason != "" {
-		return reason, nil
-	}
-	return fmt.Sprintf("go test failed with exit code %d", record.ExitCode), nil
 }
