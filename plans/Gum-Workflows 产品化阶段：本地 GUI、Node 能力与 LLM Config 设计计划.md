@@ -15,7 +15,7 @@ Gum-Workflows 从 01–14 完成后的 Workflow Runtime，继续发展为面向�
 产品目标：
 
 1. **简易创作**：用户通过本地 GUI 新建 Workflow、声明 Node Instance、配置端口绑定和运行参数；无需手写 YAML，也不依赖拖拽式低代码画布。
-2. **本地优先**：Workflow 定义、LLM Config、运行历史、Artifact 与 Workspace 默认保存在用户本地。云端与多设备同步属于后续演进，但本地数据模型须为其预留稳定身份、版本和迁移能力。
+2. **本地优先**：Workflow 定义、LLM Config、运行历史与 Artifact 默认保存在用户本地；代码工作流直接使用用户项目目录作为 In-place Project Workspace。云端与多设备同步属于后续演进，但本地数据模型须为其预留稳定身份、版本和迁移能力。
 3. **可观察、可调试、可恢复**：用户能理解 Workflow 为什么按当前结构运行，能查看每次 Node Run 的输入输出和错误，并能在 Agent 出现预期外行为时通过人工、半自动或自动方式继续。
 4. **Node 优先**：产品化初期先打磨 Node Definition、Node Executor、真实 Agent Node、Artifact 和调试能力，不急于建设内置 Workflow 库。
 5. **结构即语义**：Workflow 的执行语义来自 Node Contract、Data Edge 与 Control Edge；画布坐标、视觉排列和 UI 操作不是执行语义。
@@ -189,7 +189,7 @@ type WorkflowApplication interface {
 - Run Snapshot、Run Event 和运行索引；
 - Artifact 元数据和引用。
 
-Artifact 本体、大型文件与 Workspace 继续存于文件系统，SQLite 保存引用、哈希和来源。
+Artifact 本体与大型文件继续存于文件系统，SQLite 保存引用、哈希和来源。代码工作流的 Project Workspace 就是用户项目目录：Agent 修改实时落在该目录，Automation 使用同一工作状态。Gum 不复制项目、不创建内部代码 Revision，也不承担代码版本恢复；这些属于用户已有项目工具。
 
 产品需要一个由平台管理的用户级 Local Data Root，而不是把跨项目的 LLM Config 和 Workflow Library 分散到每个项目的 `.workflow/`：
 
@@ -198,7 +198,9 @@ Artifact 本体、大型文件与 Workspace 继续存于文件系统，SQLite �
 ├── product.db
 └── runs/<run-id>/
     ├── artifacts/
-    ├── workspace/
+    ├── node-runs/<node-run-id>/
+    │   ├── logs/
+    │   └── tool-output/
     └── logs/
 ```
 
@@ -818,7 +820,7 @@ Content Delta 可设置保留策略；完整 Artifact 只在 Node Run 成功后�
 
 - 新 Run ID；
 - 来源 Run/Sequence/Snapshot 可追溯；
-- 可以复用不可变 Artifact，但拥有独立 Workspace 和后续事件；
+- 可以复用不可变 Artifact，但不自动复制用户项目；Fork 使用哪个 Project Workspace 由用户显式选择，代码分支/恢复由用户的版本管理工具负责；
 - 原 Run 不再变化；
 - 适用于对历史结果做实验、从 Stopped Run 继续另一条路径。
 

@@ -7,7 +7,7 @@
 ### 定义侧（平台认识什么）
 
 **Node Type（节点类型）**:
-节点按执行主体划分的类别，共三种：agent（AI 执行）、automation（自动化脚本执行）、human（依赖人工审核或输入推进）。
+节点按执行主体划分的类别，共三种：agent（需要模型推理）、automation（依据结构化配置与可观察项目状态，按预定规则运行工具并解析结果）、human（依赖人工审核或输入推进）。automation 不调用 LLM，不编写测试，也不把源码变更写回用户项目；被调用工具的结果可以具有随机性。
 _Avoid_: 用 "node type" 指代具体节点（旧代码用法）--具体节点是 Node Definition。
 
 **Node Definition（节点定义）**:
@@ -60,6 +60,36 @@ Run 启动时固定的 Workflow Revision、Node Executor、LLM Selection 解析�
 
 **Workflow Preview（工作流预览）**:
 由 Draft 或 Revision 派生的只读结构视图，展示 Node、Data/Control Edge、循环组与诊断。自动布局坐标只服务显示，不属于 Workflow 执行语义。
+
+**Local Data Root（本地数据根目录）**:
+平台管理的用户级可配置存储根目录，容纳产品数据、Artifact、Node Run 日志与 tool-output。它位于用户项目之外，Workflow 不得在项目内创建 `.workflow` 等 Gum 产物。
+_Avoid_: 每个 Project 各自成为产品数据事实来源。
+
+**In-place Project Workspace（原地项目工作区）**:
+14 后代码工作流中，Project Definition 指向的用户项目目录直接作为 Project Workspace；Agent 修改实时落在该目录，Automation 读取同一状态。Gum 不为 Run 或 Node 复制项目，代码版本与恢复由用户的工具负责。
+_Avoid_: 把 Local Data Root 当作源码副本或内部代码 Revision 存储。
+
+**Code Artifact（代码引用）**:
+`code` 端口上的 SourceCode Artifact，指向本次 Run 共享的 Project Workspace；新 Artifact 版本表示某次成功开发 Node Run 已完成，用于触发后续检查。它不携带或持久化源码本体，Run 历史也不承诺从该引用恢复当时代码。
+_Avoid_: 把 `code` 理解为修改前源码、独立快照或 Runtime 管理的代码 Revision。
+
+**Host Execution Environment（本机执行环境）**:
+在用户本机上使用 PATH 已安装工具运行受信任项目的执行后端。它记录实际工具与环境，但不提供安全隔离承诺。
+_Avoid_: 把本机进程执行称为 sandbox。
+
+**Code Quality Check（代码质量检查）**:
+对 Project Workspace 按预定规则运行的 automation 验证，包括动态测试与静态度量；检查结果不代表 Node Executor 执行错误。
+_Avoid_: 用“自动化测试”统称静态分析、覆盖率和圈复杂度。
+
+**Quality Check Result（质量检查结果）**:
+Code Quality Check 唯一的结构化业务输出 Artifact，同时供下游 Node 消费与 UI 渲染；以 passed、failed 或 not-applicable 表达已完整执行的检查结果。检查未完成或输出损坏时不产生结果，而是 Node Executor 的 Structural Error。
+_Avoid_: 把发现缺陷与工具无法运行混为同一种失败。
+
+**Automation Script Bundle（自动化脚本包）**:
+某个 automation Node Executor Version 的不可变执行资产，包含 Manifest、单一 POSIX `check.sh` 与必要的内置辅助源码；内容摘要进入 Run Snapshot。首版仅支持 Darwin/Linux，不接受 Node Instance 覆盖脚本或底层命令。
+
+**Result Adapter（结果适配器）**:
+ScriptNode 内部的 Gum 内置解释器，从退出码、stdout/stderr 日志与正式工具产物生成并校验 Quality Check Result。Shell stdout 永远只是日志，不是 Result Channel。
 
 ### 运行侧（每次 run 独立）
 

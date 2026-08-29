@@ -22,6 +22,8 @@ Human Approval ── reject + advise ──┐
 
 Gum-Workflows 面向代码开发、产品经理、测试、设计和运维等能够描述自身工作过程的技术人员。
 
+它的初衷是自动化用户原本就在重复执行的中间处理，而不是重新发明用户的工作方式。例如开发者本来就会“修改代码 → 运行多项检查 → 阅读结果 → 继续开发”，Workflow 应把这些环节和 Artifact 直接串联起来。额外复制、隔离、版本或恢复机制只在有明确用户需求或已验证风险时引入。
+
 核心方向：
 
 - **本地优先**：Workflow、运行历史、Artifact 和 Workspace 默认保存在本地；云同步属于后续演进。
@@ -30,6 +32,8 @@ Gum-Workflows 面向代码开发、产品经理、测试、设计和运维等能
 - **迭代与人工在环**：Workflow 可以表达“产出 → 审批 → 带意见重做”的多轮过程，而不只是运行一次就结束的无环 DAG。
 - **可观察、可调试、可恢复**：每次 Node Run、Artifact 版本、错误和人工事件都应可追溯，并能在明确位置继续。
 - **GUI 是未来的主要创作入口**：用户通过结构化配置声明 Node 和连接；预览界面自动排列执行结构，不使用拖拽节点、手工拉线或画布坐标表达执行语义。
+- **现实工作流优先**：Runtime 负责组合、调度和留存结果，不默认为每个 Node 复制工作区、创建内部代码 Revision 或承担用户未要求的代码恢复职责。
+- **代码修改原地生效**：14 后产品态中，Agent 与 Automation 直接使用用户项目目录；Agent 修改实时可见，项目版本和恢复交给用户已有工具。Gum 只把数据库、日志、tool-output 和 Result 写入 Local Data Root。
 
 当前 YAML 是 Runtime 开发、测试和 CLI 调试入口。产品接近稳定 v1 后，再规划将 Workflow 导出为 YAML、通过 Git 管理以及重新导入的完整能力。
 
@@ -81,6 +85,8 @@ Gum-Workflows 面向代码开发、产品经理、测试、设计和运维等能
 | **Human Approval / Advise** | 人工审批及拒绝意见；拒绝不是运行失败，而是驱动 Agent 新一轮执行 |
 
 术语权威见 [`CONTEXT.md`](CONTEXT.md)。
+
+> 上表 Workspace 是平台核心 01–14 的已实现语义。14 后产品态已确认改为 In-place Project Workspace：不复制用户项目，Gum 产物进入 Local Data Root。
 
 ## 数据依赖与运行条件
 
@@ -265,6 +271,16 @@ Agent Node
 | P14 | Artifact Preview、来源追踪、版本比较和 Manual Artifact |
 | P15 | Run Event、Pause/Resume、Retry/Rerun/Fork 与崩溃恢复 |
 | P16 | 稳定性、Schema Migration、跨平台构建与产品 v1 评审 |
+
+### 后续待办（唯一跟踪清单）
+
+- **项目语言检测**：首批 Code Quality Check 通过 Go 专用 Node Definition 明确语言；多语言和多子项目场景需补充自动检测、用户选择与覆盖语义。
+- **Changed Scope**：首批检查只支持 full scope；后续基于用户现有 Git/项目工具定义 ChangeSet 与受影响依赖的保守边界，不默认复制项目或创建 Runtime 内部代码 Revision。
+- **Container Execution Environment**：首版使用 Host Execution Environment 和客户 PATH，只运行受信任项目；后续增加可复用的容器配置，固定工具链、网络与资源策略。
+- **Windows / WSL Script Runtime**：首批内置 Automation Script 只使用一份 POSIX `check.sh` 支持 Darwin/Linux，不提供 PowerShell 变体。后续单独设计 Windows 宿主上的统一 POSIX Script Runtime 或 WSL 后端，包括发行版、路径映射、PATH/工具发现、文件权限与进程取消语义。
+- **条件执行与 Skipped 传播**：首批 Code Quality Check 只产出结构化结果供人类查看或下游 Node 消费，不新增自动路由语义。后续单独设计类型化 `when`、条件重新求值、false/else、Skipped 传播与迭代图中的 Artifact 版本语义。
+- **Workflow Context Binding**：单独设计 Runtime 提供的类型化上下文引用，例如让没有前置开发 Node 的质量检查直接绑定 Run 初始 `project.code` Artifact。需区分内建上下文、用户变量、OS 环境变量与字符串模板，并保持 Artifact 是 Node 间唯一数据通道。
+- **用户自定义 Automation Script**：在预制质量节点的固定 Script Bundle/Result Adapter 协议稳定后，允许用户通过编辑脚本创建 automation Node Executor，而不是在 Node Instance 中填写一条任意 shell command。需单独设计脚本包身份/版本、跨平台运行时、Result Channel/Schema、权限、校验、分发和升级语义；不属于首批 Code Quality Check 实现范围。
 
 只有产品 v1 的领域模型和交互稳定后，才规划 Workflow 导入/导出、Git 版本管理、Workflow Pack、AI 修改 Workflow、内置 Workflow 库和云同步。
 
