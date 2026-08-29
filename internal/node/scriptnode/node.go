@@ -176,11 +176,12 @@ func (n *Node) Execute(ctx node.ExecutionContext, inputs map[string]artifact.Art
 	command.Stderr = budget.writer(stderr)
 	runErr := command.Run()
 	finished := time.Now().UTC()
-	if closeErr := stdout.Close(); closeErr != nil && runErr == nil {
-		runErr = fmt.Errorf("close stdout log: %w", closeErr)
+	var logCloseErr error
+	if err := stdout.Close(); err != nil {
+		logCloseErr = errors.Join(logCloseErr, fmt.Errorf("close stdout log: %w", err))
 	}
-	if closeErr := stderr.Close(); closeErr != nil && runErr == nil {
-		runErr = fmt.Errorf("close stderr log: %w", closeErr)
+	if err := stderr.Close(); err != nil {
+		logCloseErr = errors.Join(logCloseErr, fmt.Errorf("close stderr log: %w", err))
 	}
 	if ctx.Err() != nil {
 		return nil, node.Structural(fmt.Errorf("script node: %w", ctx.Err()))
@@ -189,6 +190,9 @@ func (n *Node) Execute(ctx node.ExecutionContext, inputs map[string]artifact.Art
 		return nil, node.Structural(fmt.Errorf("script node: %w (%d bytes)", errLogLimit, maxLogBytes))
 	} else if logErr != nil {
 		return nil, node.Structural(fmt.Errorf("script node: write stdout/stderr logs: %w", logErr))
+	}
+	if logCloseErr != nil {
+		return nil, node.Structural(fmt.Errorf("script node: finalize stdout/stderr logs: %w", logCloseErr))
 	}
 	if err := n.validateBundle(); err != nil {
 		return nil, err
