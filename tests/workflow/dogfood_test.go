@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -243,18 +244,18 @@ func (r *dogfoodRecorder) Record(ctx context.Context, exec *execution.WorkflowEx
 func installDogfoodGo(t *testing.T) {
 	t.Helper()
 	bin := t.TempDir()
-	script := `#!/bin/sh
+	script := strings.NewReplacer("__GOOS__", runtime.GOOS, "__GOARCH__", runtime.GOARCH).Replace(`#!/bin/sh
 case "$1" in
   version)
-    printf 'go version go1.25.0 darwin/arm64\n'
+    printf 'go version go1.25.0 __GOOS__/__GOARCH__\n'
     ;;
   env)
     if [ "$2" = CC ]; then
       printf 'fake-cc\n'
 	elif [ "$#" -eq 5 ]; then
-	  printf 'darwin\narm64\n1\nfake-cc\n'
+	  printf '__GOOS__\n__GOARCH__\n1\nfake-cc\n'
     else
-      printf 'go1.25.0\n/go\ndarwin\narm64\n1\n'
+	  printf 'go1.25.0\n/go\n__GOOS__\n__GOARCH__\n1\n'
     fi
     ;;
   list)
@@ -286,7 +287,7 @@ case "$1" in
     exit 2
     ;;
 esac
-`
+`)
 	path := filepath.Join(bin, "go")
 	writeDogfoodFile(t, path, script)
 	if err := os.Chmod(path, 0o755); err != nil {
