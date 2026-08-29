@@ -48,6 +48,7 @@ func TestResolveRejectsRelativeDataRoot(t *testing.T) {
 
 func TestStableIDsOwnRunAndNodeRunProducts(t *testing.T) {
 	root := t.TempDir()
+	t.Setenv(runtimepath.DataRootEnv, "")
 	paths, err := runtimepath.Resolve(root)
 	if err != nil {
 		t.Fatal(err)

@@ -43,7 +43,14 @@ func AdaptCoverageResult(record ExecutionRecord, threshold float64) (CoverageRes
 		Findings: []CoverageFinding{}, StartedAt: record.StartedAt, FinishedAt: record.FinishedAt,
 	}
 
+	testFailed := false
 	if record.ExitCode != 0 {
+		testFailed, err = coverageHasFailedEvent(record)
+		if err != nil {
+			return CoverageResult{}, node.Structural(fmt.Errorf("coverage result adapter: %w", err))
+		}
+	}
+	if testFailed {
 		reason, reasonErr := coverageFailureReason(record)
 		if reasonErr != nil {
 			return CoverageResult{}, node.Structural(fmt.Errorf("coverage result adapter: %w", reasonErr))
@@ -79,6 +86,29 @@ func AdaptCoverageResult(record ExecutionRecord, threshold float64) (CoverageRes
 	return result, nil
 }
 
+func coverageHasFailedEvent(record ExecutionRecord) (bool, error) {
+	events, err := readRequired(filepath.Join(record.ToolOutputDir, "test.json"))
+	if err != nil {
+		return false, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(events))
+	for {
+		var event struct {
+			Action  string `json:"Action"`
+			Package string `json:"Package"`
+		}
+		if err := decoder.Decode(&event); err != nil {
+			if errors.Is(err, io.EOF) {
+				return false, nil
+			}
+			return false, fmt.Errorf("decode test.json: %w", err)
+		}
+		if event.Action == "fail" && event.Package != "" {
+			return true, nil
+		}
+	}
+}
+
 func parseCoverageProfile(data []byte) (percentage float64, statements int64, err error) {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	if !scanner.Scan() {
@@ -97,7 +127,7 @@ func parseCoverageProfile(data []byte) (percentage float64, statements int64, er
 			return 0, 0, fmt.Errorf("coverage.out line %d is not a complete profile block", line)
 		}
 		blockStatements, parseErr := strconv.ParseInt(fields[1], 10, 64)
-		if parseErr != nil || blockStatements <= 0 {
+		if parseErr != nil || blockStatements < 0 {
 			return 0, 0, fmt.Errorf("coverage.out line %d has invalid statement count", line)
 		}
 		count, parseErr := strconv.ParseInt(fields[2], 10, 64)

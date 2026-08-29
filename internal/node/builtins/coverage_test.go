@@ -173,6 +173,7 @@ case "$1" in
         ;;
       failed)
         printf '%s\n' '{"Action":"output","Package":"example.com/app","Output":"package example.com/app failed\\n"}'
+		printf '%s\n' '{"Action":"fail","Package":"example.com/app"}'
         exit 1
         ;;
       no-statements)

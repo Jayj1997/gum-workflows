@@ -17,6 +17,7 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/execution"
 	"github.com/Jayj1997/gum-workflows/internal/history"
 	"github.com/Jayj1997/gum-workflows/internal/node"
+	"github.com/Jayj1997/gum-workflows/internal/workflow"
 )
 
 func TestValidateExample(t *testing.T) {
@@ -31,6 +32,37 @@ func TestValidateExample(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".workflow", "gum-workflows.db")); !os.IsNotExist(err) {
 		t.Errorf("validate created database or returned unexpected stat error: %v", err)
+	}
+	if _, err := os.Stat(dataRoot); !os.IsNotExist(err) {
+		t.Errorf("validate created Local Data Root or returned unexpected stat error: %v", err)
+	}
+}
+
+func TestValidateDogfoodWorkflow(t *testing.T) {
+	dataRoot := filepath.Join(t.TempDir(), "local-data")
+	workflowPath := absPath(t, filepath.Join("..", "..", "examples", "dogfood", "workflow.yaml"))
+	out, err := runInDirWithDataRoot(t, t.TempDir(), dataRoot, "validate", workflowPath)
+	if err != nil {
+		t.Fatalf("validate dogfood workflow failed: %s\n%s", err, out)
+	}
+	if !strings.Contains(out, "valid (workflow/v1)") {
+		t.Errorf("dogfood validation output = %q", out)
+	}
+	definition, err := workflow.LoadFile(workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantChecks := map[string]string{
+		"static-analysis":  "go-static-analysis",
+		"coverage-check":   "go-coverage-check",
+		"race-check":       "go-race-check",
+		"complexity-check": "go-complexity-check",
+	}
+	for id, wantDefinition := range wantChecks {
+		spec := definition.Nodes[id]
+		if spec.Node != wantDefinition || spec.Inputs["code"].From != "project.code" {
+			t.Errorf("node %q = %+v, want %s bound to project.code", id, spec, wantDefinition)
+		}
 	}
 	if _, err := os.Stat(dataRoot); !os.IsNotExist(err) {
 		t.Errorf("validate created Local Data Root or returned unexpected stat error: %v", err)

@@ -41,6 +41,18 @@ func TestCoverageAdapterComputesStatementCoverageAndThresholdVerdict(t *testing.
 	}
 }
 
+func TestCoverageAdapterIgnoresValidZeroStatementBlocks(t *testing.T) {
+	record := coverageExecutionFixture(t, 0, "mode: atomic\napp.go:1.1,1.1 0 9\napp.go:2.1,3.2 2 1\n", "")
+	result, err := AdaptCoverageResult(record, 100)
+	if err != nil {
+		t.Fatalf("AdaptCoverageResult() unexpected error: %v", err)
+	}
+	metric := result.Metrics.StatementCoverage
+	if result.Verdict != VerdictPassed || metric.Value == nil || *metric.Value != 100 {
+		t.Fatalf("result = %+v, want zero-statement block excluded from 100%% coverage", result)
+	}
+}
+
 func TestCoverageAdapterReportsNoStatementsAsNotApplicable(t *testing.T) {
 	result, err := AdaptCoverageResult(coverageExecutionFixture(t, 0, "mode: set\n", ""), 80)
 	if err != nil {
@@ -54,6 +66,7 @@ func TestCoverageAdapterReportsNoStatementsAsNotApplicable(t *testing.T) {
 
 func TestCoverageAdapterReportsTestFailureWithoutFabricatingZeroCoverage(t *testing.T) {
 	record := coverageExecutionFixture(t, 1, "", "package example.com/app failed\n")
+	writeFixture(t, filepath.Join(record.ToolOutputDir, "test.json"), "{\"Action\":\"fail\",\"Package\":\"example.com/app\",\"Output\":\"package example.com/app failed\\n\"}\n")
 	result, err := AdaptCoverageResult(record, 80)
 	if err != nil {
 		t.Fatalf("AdaptCoverageResult() unexpected error: %v", err)
@@ -76,6 +89,18 @@ func TestCoverageAdapterUsesValidProfileDespiteToolchainDiagnostic(t *testing.T)
 	metric := result.Metrics.StatementCoverage
 	if result.Verdict != VerdictPassed || metric.Value == nil || *metric.Value != 100 {
 		t.Fatalf("result = %+v, want valid profile to determine verdict", result)
+	}
+}
+
+func TestCoverageAdapterUsesValidProfileWhenToolchainDiagnosticSetsNonzeroExit(t *testing.T) {
+	record := coverageExecutionFixture(t, 1, "mode: atomic\napp.go:1.1,2.2 1 1\n", "go: no such tool \"covdata\"\n")
+	result, err := AdaptCoverageResult(record, 100)
+	if err != nil {
+		t.Fatalf("AdaptCoverageResult() unexpected error: %v", err)
+	}
+	metric := result.Metrics.StatementCoverage
+	if result.Verdict != VerdictPassed || metric.Value == nil || *metric.Value != 100 {
+		t.Fatalf("result = %+v, want valid profile to determine verdict despite nonzero diagnostic exit", result)
 	}
 }
 

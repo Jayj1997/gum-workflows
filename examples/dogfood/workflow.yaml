@@ -1,0 +1,47 @@
+apiVersion: workflow/v1
+kind: workflow
+
+metadata:
+  name: gum-workflows-code-quality
+  version: v1
+  description: Run all four built-in Go quality checks against gum-workflows.
+
+projects:
+  - name: gum-workflows
+    repository: ../..
+
+nodes:
+  entry:
+    node: human-input
+
+  static-analysis:
+    node: go-static-analysis
+    executor: v1
+    dependsOn: [entry]
+    inputs:
+      code:
+        from: project.code
+
+  coverage-check:
+    node: go-coverage-check
+    executor: v1
+    dependsOn: [entry]
+    inputs:
+      code:
+        from: project.code
+
+  race-check:
+    node: go-race-check
+    executor: v1
+    dependsOn: [entry]
+    inputs:
+      code:
+        from: project.code
+
+  complexity-check:
+    node: go-complexity-check
+    executor: v1
+    dependsOn: [entry]
+    inputs:
+      code:
+        from: project.code

@@ -19,6 +19,7 @@ import (
 )
 
 const defaultConvergenceLimit = 10
+const defaultParallelism = 4
 
 // Option configures optional engine behavior.
 type Option func(*Engine)
@@ -40,7 +41,7 @@ func WithRunID(id string) Option { return func(e *Engine) { e.runID = id } }
 // WithParallelism sets the maximum number of distinct nodes that may run concurrently.
 func WithParallelism(n int) Option {
 	return func(e *Engine) {
-		if n > 1 {
+		if n > 0 {
 			e.parallelism = n
 		}
 	}
@@ -102,8 +103,8 @@ func NewEngine(executors *node.ExecutorRegistry, defs *definition.Registry, stor
 	}
 	e := &Engine{
 		executors: executors, defs: defs, store: store, logger: logger,
-		parallelism: 1, convergenceLimit: defaultConvergenceLimit,
-		humanGateway: noHumanGateway{},
+		convergenceLimit: defaultConvergenceLimit,
+		humanGateway:     noHumanGateway{},
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -128,6 +129,13 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 	g, err := workflow.BuildGraph(def)
 	if err != nil {
 		return nil, fmt.Errorf("build graph: %w", err)
+	}
+	parallelism := e.parallelism
+	if parallelism == 0 {
+		parallelism = defaultParallelism
+		if g.Cycle() != nil {
+			parallelism = 1
+		}
 	}
 	nodes, executorVersions, err := e.instantiate(def)
 	if err != nil {
@@ -162,7 +170,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 	}
 	adviseCtx, cancelAdvise := context.WithCancel(ctx)
 	defer cancelAdvise()
-	results := make(chan nodeResult, max(1, e.parallelism))
+	results := make(chan nodeResult, parallelism)
 	ready := make([]string, 0, len(g.NodeIDs))
 	queued := map[string]bool{}
 	inflight := 0
@@ -186,7 +194,7 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 			}
 			sort.Strings(ready)
 
-			for inflight < e.parallelism && len(ready) > 0 {
+			for inflight < parallelism && len(ready) > 0 {
 				id := ready[0]
 				ready = ready[1:]
 				queued[id] = false
