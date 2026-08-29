@@ -34,15 +34,32 @@ type RunContext struct {
 	ToolOutputDir string
 }
 
+// HostDiagnostics records the operating system that launched an automation.
+type HostDiagnostics struct {
+	GOOS   string `json:"goos"`
+	GOARCH string `json:"goarch"`
+}
+
+// ToolchainDiagnostics records the non-sensitive Go toolchain facts used by an automation.
+type ToolchainDiagnostics struct {
+	Tool            string `json:"tool,omitempty"`
+	LauncherVersion string `json:"launcherVersion,omitempty"`
+	FinalVersion    string `json:"finalVersion,omitempty"`
+	GOROOT          string `json:"goroot,omitempty"`
+	GOOS            string `json:"goos,omitempty"`
+	GOARCH          string `json:"goarch,omitempty"`
+	CGOEnabled      string `json:"cgoEnabled,omitempty"`
+}
+
 // RunDiagnostics records non-sensitive facts needed to explain host script execution.
 type RunDiagnostics struct {
 	BundleDigest  string                          `json:"bundleDigest,omitempty"`
-	Host          map[string]string               `json:"host,omitempty"`
+	Host          *HostDiagnostics                `json:"host,omitempty"`
 	CWD           string                          `json:"cwd,omitempty"`
 	Arguments     []string                        `json:"arguments,omitempty"`
 	Launcher      string                          `json:"launcher,omitempty"`
 	Executables   map[string]string               `json:"executables,omitempty"`
-	Toolchain     map[string]string               `json:"toolchain,omitempty"`
+	Toolchain     *ToolchainDiagnostics           `json:"toolchain,omitempty"`
 	ResultAdapter string                          `json:"resultAdapter,omitempty"`
 	Logs          map[string]artifact.ArtifactRef `json:"logs,omitempty"`
 }

@@ -233,11 +233,11 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
-	if diagnostics.Host["goos"] != runtime.GOOS || diagnostics.Host["goarch"] != runtime.GOARCH {
+	if diagnostics.Host == nil || diagnostics.Host.GOOS != runtime.GOOS || diagnostics.Host.GOARCH != runtime.GOARCH {
 		t.Errorf("host diagnostics = %+v", diagnostics.Host)
 	}
-	if diagnostics.Executables["go"] != goPath || diagnostics.Toolchain["launcherVersion"] != "go version go1.25.0 darwin/arm64" ||
-		diagnostics.Toolchain["goroot"] != "/test/goroot" || diagnostics.Toolchain["cgoEnabled"] != "1" {
+	if diagnostics.Toolchain == nil || diagnostics.Executables["go"] != goPath || diagnostics.Toolchain.LauncherVersion != "go version go1.25.0 darwin/arm64" ||
+		diagnostics.Toolchain.GOROOT != "/test/goroot" || diagnostics.Toolchain.CGOEnabled != "1" {
 		t.Errorf("tool diagnostics = executables %+v toolchain %+v", diagnostics.Executables, diagnostics.Toolchain)
 	}
 	encoded, err := json.Marshal(diagnostics)

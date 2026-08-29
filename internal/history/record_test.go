@@ -206,7 +206,7 @@ func TestRecordPreservesStaticResultAndExecutionDiagnostics(t *testing.T) {
 		Arguments: []string{"/workspace/project", "/data/tool-output"},
 		Launcher:  "/bin/sh", ResultAdapter: "go-static-analysis/v1",
 		Executables: map[string]string{"go": "/usr/local/bin/go"},
-		Toolchain:   map[string]string{"finalVersion": "go1.25.0", "goos": "darwin", "goarch": "arm64"},
+		Toolchain:   &node.ToolchainDiagnostics{FinalVersion: "go1.25.0", GOOS: "darwin", GOARCH: "arm64"},
 		Logs: map[string]artifact.ArtifactRef{
 			"stdout": {ID: "stdout", Kind: artifact.KindLog, URI: "/data/stdout.log"},
 		},
@@ -244,7 +244,7 @@ func TestRecordPreservesStaticResultAndExecutionDiagnostics(t *testing.T) {
 	if result["effectiveConfig"] == nil || result["toolchain"] == nil || result["logs"] == nil {
 		t.Errorf("result evidence = %+v", result)
 	}
-	if round.Diagnostics.BundleDigest != diagnostics.BundleDigest || round.Diagnostics.ResultAdapter != diagnostics.ResultAdapter || round.Diagnostics.Toolchain["finalVersion"] != "go1.25.0" {
+	if round.Diagnostics.BundleDigest != diagnostics.BundleDigest || round.Diagnostics.ResultAdapter != diagnostics.ResultAdapter || round.Diagnostics.Toolchain == nil || round.Diagnostics.Toolchain.FinalVersion != "go1.25.0" {
 		t.Errorf("diagnostics = %+v, want %+v", round.Diagnostics, diagnostics)
 	}
 }

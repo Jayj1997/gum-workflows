@@ -104,6 +104,31 @@ func TestNodeExecuteLogLimitTerminatesProcessWithoutResult(t *testing.T) {
 	}
 }
 
+func TestNodeExecuteReportsFailurePathCleanupError(t *testing.T) {
+	bundle := testBundleWithRequirements(t, "[sh, chmod]", "toolOutputs: []", `#!/bin/sh
+chmod 0555 "${2%/*}"
+exit 0
+`)
+	check, err := New(bundle, "test-check", "v1", "test/v1", func(ExecutionRecord) (artifact.Artifact, error) {
+		return artifact.Artifact{}, errors.New("adapter failed")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	runDir := t.TempDir()
+	_, err = check.Execute(node.ExecutionContext{
+		Context: context.Background(), Project: project.Context{Workspace: workspace}, Store: artifact.NewMemStore(),
+		Run: node.RunContext{LogsDir: filepath.Join(runDir, "logs"), ToolOutputDir: filepath.Join(runDir, "tool-output")},
+	}, map[string]artifact.ArtifactRef{"code": {ID: "code", Kind: artifact.KindSourceCode, Version: "1", URI: workspace}})
+	if chmodErr := os.Chmod(runDir, 0o755); chmodErr != nil {
+		t.Fatal(chmodErr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "adapter failed") || !strings.Contains(err.Error(), "remove non-persistent tool-output after failure") {
+		t.Fatalf("Execute(cleanup failure) error = %v, want adapter and cleanup errors", err)
+	}
+}
+
 func waitForPIDFile(t *testing.T, path string) int {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

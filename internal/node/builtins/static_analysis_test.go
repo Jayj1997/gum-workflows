@@ -153,7 +153,7 @@ func TestEngineRunPublishesStaticResultAndNodeRunDiagnostics(t *testing.T) {
 	if run.Status != execution.StatusSucceeded || run.Outputs["result"].Kind != artifact.KindQualityCheckResult {
 		t.Fatalf("check run = %+v", run)
 	}
-	if run.Diagnostics.BundleDigest == "" || run.Diagnostics.ResultAdapter != staticAnalysisAdapterID || run.Diagnostics.Toolchain["finalVersion"] != "go1.25.0" {
+	if run.Diagnostics.BundleDigest == "" || run.Diagnostics.ResultAdapter != staticAnalysisAdapterID || run.Diagnostics.Toolchain == nil || run.Diagnostics.Toolchain.FinalVersion != "go1.25.0" {
 		t.Errorf("run diagnostics = %+v", run.Diagnostics)
 	}
 	body, err := store.Get(run.Outputs["result"])

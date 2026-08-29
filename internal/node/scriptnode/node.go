@@ -60,7 +60,7 @@ func New(bundle Bundle, nodeName, executorVersion, adapterID string, adapter Res
 }
 
 // Execute runs the POSIX entry with workspace and tool-output as fixed arguments.
-func (n *Node) Execute(ctx node.ExecutionContext, inputs map[string]artifact.ArtifactRef) (map[string]artifact.ArtifactRef, error) {
+func (n *Node) Execute(ctx node.ExecutionContext, inputs map[string]artifact.ArtifactRef) (outputs map[string]artifact.ArtifactRef, executeErr error) {
 	if err := n.validateBundle(); err != nil {
 		return nil, err
 	}
@@ -103,7 +103,7 @@ func (n *Node) Execute(ctx node.ExecutionContext, inputs map[string]artifact.Art
 	if ctx.Diagnostics != nil {
 		*ctx.Diagnostics = node.RunDiagnostics{
 			BundleDigest: n.bundle.ExpectedDigest,
-			Host:         map[string]string{"goos": runtime.GOOS, "goarch": runtime.GOARCH},
+			Host:         &node.HostDiagnostics{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH},
 			Launcher:     launcher, Executables: executables,
 			ResultAdapter: n.bundle.Manifest.ResultAdapter,
 		}
@@ -128,7 +128,11 @@ func (n *Node) Execute(ctx node.ExecutionContext, inputs map[string]artifact.Art
 	toolOutputCleaned := false
 	defer func() {
 		if !toolOutputCleaned {
-			_ = os.RemoveAll(ctx.Run.ToolOutputDir)
+			if err := os.RemoveAll(ctx.Run.ToolOutputDir); err != nil {
+				outputs = nil
+				executeErr = node.Structural(errors.Join(executeErr,
+					fmt.Errorf("script node: remove non-persistent tool-output after failure: %w", err)))
+			}
 		}
 	}()
 	bundleDir := filepath.Join(filepath.Dir(ctx.Run.ToolOutputDir), "bundle")
@@ -181,8 +185,10 @@ func (n *Node) Execute(ctx node.ExecutionContext, inputs map[string]artifact.Art
 	if ctx.Err() != nil {
 		return nil, node.Structural(fmt.Errorf("script node: %w", ctx.Err()))
 	}
-	if budget.isExceeded() {
+	if logErr := budget.err(); errors.Is(logErr, errLogLimit) {
 		return nil, node.Structural(fmt.Errorf("script node: %w (%d bytes)", errLogLimit, maxLogBytes))
+	} else if logErr != nil {
+		return nil, node.Structural(fmt.Errorf("script node: write stdout/stderr logs: %w", logErr))
 	}
 	if err := n.validateBundle(); err != nil {
 		return nil, err
@@ -216,7 +222,9 @@ func (n *Node) Execute(ctx node.ExecutionContext, inputs map[string]artifact.Art
 	if err := n.validateToolOutputs(ctx.Run.ToolOutputDir); err != nil {
 		return nil, err
 	}
-	if provider, ok := result.Data.(interface{ ToolchainDiagnostics() map[string]string }); ok && ctx.Diagnostics != nil {
+	if provider, ok := result.Data.(interface {
+		ToolchainDiagnostics() *node.ToolchainDiagnostics
+	}); ok && ctx.Diagnostics != nil {
 		ctx.Diagnostics.Toolchain = provider.ToolchainDiagnostics()
 	}
 	if err := os.RemoveAll(ctx.Run.ToolOutputDir); err != nil {
@@ -230,7 +238,7 @@ func (n *Node) Execute(ctx node.ExecutionContext, inputs map[string]artifact.Art
 	return map[string]artifact.ArtifactRef{"result": ref}, nil
 }
 
-func diagnoseImportantTools(ctx context.Context, executables map[string]string) (map[string]string, error) {
+func diagnoseImportantTools(ctx context.Context, executables map[string]string) (*node.ToolchainDiagnostics, error) {
 	goPath, ok := executables["go"]
 	if !ok {
 		return nil, nil
@@ -247,10 +255,10 @@ func diagnoseImportantTools(ctx context.Context, executables map[string]string) 
 	if len(lines) != 5 {
 		return nil, fmt.Errorf("go env returned %d fields, want 5", len(lines))
 	}
-	return map[string]string{
-		"launcherVersion": strings.TrimSpace(version), "finalVersion": strings.TrimSpace(lines[0]),
-		"goroot": strings.TrimSpace(lines[1]), "goos": strings.TrimSpace(lines[2]),
-		"goarch": strings.TrimSpace(lines[3]), "cgoEnabled": strings.TrimSpace(lines[4]),
+	return &node.ToolchainDiagnostics{
+		LauncherVersion: strings.TrimSpace(version), FinalVersion: strings.TrimSpace(lines[0]),
+		GOROOT: strings.TrimSpace(lines[1]), GOOS: strings.TrimSpace(lines[2]),
+		GOARCH: strings.TrimSpace(lines[3]), CGOEnabled: strings.TrimSpace(lines[4]),
 	}, nil
 }
 
@@ -265,8 +273,8 @@ func runDiagnosticCommand(ctx context.Context, executable string, arguments ...s
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
-	if budget.isExceeded() {
-		return "", fmt.Errorf("diagnostic output exceeded fixed limit")
+	if outputErr := budget.err(); outputErr != nil {
+		return "", fmt.Errorf("diagnostic output: %w", outputErr)
 	}
 	if err != nil {
 		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
@@ -340,53 +348,22 @@ func withinPath(parent, candidate string) bool {
 
 func (n *Node) validateToolOutputs(dir string) error {
 	declared := make(map[string]ToolOutput, len(n.bundle.Manifest.ToolOutputs))
-	allowedDirs := map[string]bool{".": true}
+	expected := make(map[string]declaredTreeFile, len(n.bundle.Manifest.ToolOutputs))
 	for _, output := range n.bundle.Manifest.ToolOutputs {
-		declared[filepath.FromSlash(output.Path)] = output
-		for parent := filepath.Dir(filepath.FromSlash(output.Path)); parent != "."; parent = filepath.Dir(parent) {
-			allowedDirs[parent] = true
-		}
+		name := filepath.FromSlash(output.Path)
+		declared[name] = output
+		expected[name] = declaredTreeFile{}
 	}
-	if err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		relative, err := filepath.Rel(dir, path)
-		if err != nil {
-			return err
-		}
-		if relative == "." {
-			return nil
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("tool output %q must not be a symbolic link", filepath.ToSlash(relative))
-		}
-		if entry.IsDir() {
-			if !allowedDirs[relative] {
-				return fmt.Errorf("undeclared tool output directory %q", filepath.ToSlash(relative))
-			}
-			return nil
-		}
-		if _, ok := declared[relative]; !ok {
-			return fmt.Errorf("undeclared tool output %q", filepath.ToSlash(relative))
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("tool output %q must be a regular file", filepath.ToSlash(relative))
-		}
-		return nil
-	}); err != nil {
+	seen, err := validateDeclaredTree(dir, "tool output", "tool output directory", expected)
+	if err != nil {
 		return node.Structural(fmt.Errorf("script node: validate tool-output directory: %w", err))
 	}
 	for relative, output := range declared {
 		if !output.Required {
 			continue
 		}
-		if _, err := os.Lstat(filepath.Join(dir, relative)); err != nil {
-			return node.Structural(fmt.Errorf("script node: required tool output %q: %w", output.Path, err))
+		if !seen[relative] {
+			return node.Structural(fmt.Errorf("script node: required tool output %q: file does not exist", output.Path))
 		}
 	}
 	return nil
@@ -403,15 +380,36 @@ func (n *Node) validateBundle() error {
 }
 
 func (n *Node) validateMaterializedBundle(dir string) error {
-	expected := n.bundle.Files
+	expected := make(map[string]declaredTreeFile, len(n.bundle.Files))
+	for name, content := range n.bundle.Files {
+		expected[filepath.FromSlash(name)] = declaredTreeFile{content: content, compareContent: true}
+	}
+	seen, err := validateDeclaredTree(dir, "materialized bundle file", "materialized bundle directory", expected)
+	if err != nil {
+		return node.Structural(fmt.Errorf("script node: validate materialized bundle: %w", err))
+	}
+	for name := range expected {
+		if !seen[name] {
+			return node.Structural(fmt.Errorf("script node: validate materialized bundle: file %q is missing", filepath.ToSlash(name)))
+		}
+	}
+	return nil
+}
+
+type declaredTreeFile struct {
+	content        []byte
+	compareContent bool
+}
+
+func validateDeclaredTree(dir, fileLabel, directoryLabel string, expected map[string]declaredTreeFile) (map[string]bool, error) {
 	allowedDirs := map[string]bool{".": true}
 	for name := range expected {
-		for parent := filepath.Dir(filepath.FromSlash(name)); parent != "."; parent = filepath.Dir(parent) {
+		for parent := filepath.Dir(name); parent != "."; parent = filepath.Dir(parent) {
 			allowedDirs[parent] = true
 		}
 	}
 	seen := make(map[string]bool, len(expected))
-	if err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -423,37 +421,40 @@ func (n *Node) validateMaterializedBundle(dir string) error {
 			return nil
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("materialized bundle file %q must not be a symbolic link", filepath.ToSlash(relative))
+			return fmt.Errorf("%s %q must not be a symbolic link", fileLabel, filepath.ToSlash(relative))
 		}
 		if entry.IsDir() {
 			if !allowedDirs[relative] {
-				return fmt.Errorf("undeclared materialized bundle directory %q", filepath.ToSlash(relative))
+				return fmt.Errorf("undeclared %s %q", directoryLabel, filepath.ToSlash(relative))
 			}
 			return nil
 		}
-		name := filepath.ToSlash(relative)
-		want, ok := expected[name]
+		want, ok := expected[relative]
 		if !ok {
-			return fmt.Errorf("undeclared materialized bundle file %q", name)
+			return fmt.Errorf("undeclared %s %q", fileLabel, filepath.ToSlash(relative))
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%s %q must be a regular file", fileLabel, filepath.ToSlash(relative))
+		}
+		if !want.compareContent {
+			seen[relative] = true
+			return nil
 		}
 		got, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		if !bytes.Equal(got, want) {
-			return fmt.Errorf("materialized bundle file %q does not match immutable digest", name)
+		if !bytes.Equal(got, want.content) {
+			return fmt.Errorf("%s %q does not match immutable digest", fileLabel, filepath.ToSlash(relative))
 		}
-		seen[name] = true
+		seen[relative] = true
 		return nil
-	}); err != nil {
-		return node.Structural(fmt.Errorf("script node: validate materialized bundle: %w", err))
-	}
-	for name := range expected {
-		if !seen[name] {
-			return node.Structural(fmt.Errorf("script node: validate materialized bundle: file %q is missing", name))
-		}
-	}
-	return nil
+	})
+	return seen, err
 }
 
 func (n *Node) materialize(dir string) (string, error) {

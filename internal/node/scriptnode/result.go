@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
+	"github.com/Jayj1997/gum-workflows/internal/node"
 )
 
 const (
@@ -135,11 +136,11 @@ func (r StaticResult) Validate() error {
 }
 
 // ToolchainDiagnostics exposes the result's non-sensitive toolchain facts to Node Run history.
-func (r StaticResult) ToolchainDiagnostics() map[string]string {
-	return map[string]string{
-		"tool": r.Toolchain.Tool, "launcherVersion": r.Toolchain.LauncherVersion,
-		"finalVersion": r.Toolchain.FinalVersion, "goroot": r.Toolchain.GOROOT,
-		"goos": r.Toolchain.GOOS, "goarch": r.Toolchain.GOARCH, "cgoEnabled": r.Toolchain.CGOEnabled,
+func (r StaticResult) ToolchainDiagnostics() *node.ToolchainDiagnostics {
+	return &node.ToolchainDiagnostics{
+		Tool: r.Toolchain.Tool, LauncherVersion: r.Toolchain.LauncherVersion,
+		FinalVersion: r.Toolchain.FinalVersion, GOROOT: r.Toolchain.GOROOT,
+		GOOS: r.Toolchain.GOOS, GOARCH: r.Toolchain.GOARCH, CGOEnabled: r.Toolchain.CGOEnabled,
 	}
 }
 
