@@ -101,6 +101,7 @@ func TestApprovalWaitPersistsWaitingHumanAndCancellationStopsRun(t *testing.T) {
 		},
 	}
 	stateRoot := t.TempDir()
+	runID := "11111111-1111-4111-8111-111111111111"
 	started := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -109,11 +110,11 @@ func TestApprovalWaitPersistsWaitingHumanAndCancellationStopsRun(t *testing.T) {
 	go func() {
 		exec, runErr = NewEngine(er, dr, store, nil,
 			WithHumanGateway(blockingHumanGateway{started: started}),
-			WithStateDir(stateRoot), WithExecutionID("execution-approval-wait")).Run(ctx, def)
+			WithStateDir(stateRoot), WithRunID(runID)).Run(ctx, def)
 		close(done)
 	}()
 	<-started
-	loaded, err := LoadNodeState(filepath.Join(stateRoot, "execution-approval-wait"), "review")
+	loaded, err := LoadNodeState(filepath.Join(stateRoot, runID), "review")
 	if err != nil {
 		t.Fatal(err)
 	}

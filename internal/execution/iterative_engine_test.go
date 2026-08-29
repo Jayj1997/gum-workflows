@@ -421,19 +421,19 @@ func TestCancellationWhileNodeRunsStopsWorkflow(t *testing.T) {
 
 func TestIterativeStatePersistsCurrentHistoryAndRoundDetails(t *testing.T) {
 	root := t.TempDir()
-	e := newIterativeEngine(t, artifact.NewMemStore(), WithConvergenceLimit(2), WithStateDir(root), WithExecutionID("execution-000008"))
+	e := newIterativeEngine(t, artifact.NewMemStore(), WithConvergenceLimit(2), WithStateDir(root), WithRunID("11111111-1111-4111-8111-111111111111"))
 
 	exec, err := e.Run(context.Background(), iterativeDefinition())
 	if err == nil {
 		t.Fatal("Run() = nil error, want convergence failure")
 	}
-	nodeDir := filepath.Join(root, exec.ID, "nodes", "worker")
+	nodeDir := filepath.Join(root, exec.RunID, "nodes", "worker")
 	for _, relative := range []string{"state.json", "runs/1.json", "runs/2.json", "runs/3.json"} {
 		if _, statErr := os.Stat(filepath.Join(nodeDir, relative)); statErr != nil {
 			t.Errorf("missing %s: %v", relative, statErr)
 		}
 	}
-	loaded, loadErr := LoadNodeState(filepath.Join(root, exec.ID), "worker")
+	loaded, loadErr := LoadNodeState(filepath.Join(root, exec.RunID), "worker")
 	if loadErr != nil {
 		t.Fatal(loadErr)
 	}

@@ -14,7 +14,7 @@ import (
 func TestPersistStateLayout(t *testing.T) {
 	// 直接构造一个确定状态的执行对象验证布局。
 	sample := &WorkflowExecution{
-		ID:       "execution-000001",
+		RunID:    "11111111-1111-4111-8111-111111111111",
 		Workflow: "fullstack-development",
 		Status:   StatusFailed,
 		Nodes: map[string]*NodeExecution{
@@ -37,7 +37,7 @@ func TestPersistStateLayout(t *testing.T) {
 			},
 		},
 	}
-	execDir := filepath.Join(t.TempDir(), "executions", sample.ID)
+	execDir := filepath.Join(t.TempDir(), "runs", sample.RunID)
 	if err := PersistState(execDir, sample); err != nil {
 		t.Fatalf("PersistState() unexpected error: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestPersistStateLayout(t *testing.T) {
 	if err := json.Unmarshal(data, &top); err != nil {
 		t.Fatalf("parse state.json: %v", err)
 	}
-	if top["id"] != sample.ID || top["status"] != "Failed" || top["workflow"] != sample.Workflow {
+	if top["run_id"] != sample.RunID || top["status"] != "Failed" || top["workflow"] != sample.Workflow {
 		t.Errorf("state.json = %v", top)
 	}
 
@@ -109,7 +109,7 @@ func TestEnginePersistsWithStateDir(t *testing.T) {
 			t.Fatal("Run() = nil error, want failure")
 		}
 		// 未配置 stateDir 时不写盘：目录不存在。
-		if _, err := os.Stat(filepath.Join(root, exec.ID)); !os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(root, exec.RunID)); !os.IsNotExist(err) {
 			t.Errorf("state written without WithStateDir")
 		}
 	})
@@ -122,7 +122,7 @@ func TestEnginePersistsWithStateDir(t *testing.T) {
 			t.Fatalf("Run() unexpected error: %v", err)
 		}
 
-		execDir := filepath.Join(root, exec.ID)
+		execDir := filepath.Join(root, exec.RunID)
 		ne, err := LoadNodeState(execDir, "sdk")
 		if err != nil {
 			t.Fatalf("LoadNodeState(sdk): %v", err)

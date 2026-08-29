@@ -19,7 +19,7 @@ func TestResolvePrefersEnvironmentOverrideToProductSetting(t *testing.T) {
 	}
 
 	assertPath(t, paths.Database(), filepath.Join(environmentRoot, "product.db"))
-	assertPath(t, paths.ExecutionsDir(), filepath.Join(environmentRoot, "runs"))
+	assertPath(t, paths.RunsDir(), filepath.Join(environmentRoot, "runs"))
 	if _, err := os.Stat(environmentRoot); !os.IsNotExist(err) {
 		t.Fatalf("Resolve() touched the filesystem: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestResolveUsesProductSettingWithoutEnvironmentOverride(t *testing.T) {
 	}
 
 	assertPath(t, paths.Database(), filepath.Join(root, "product.db"))
-	assertPath(t, paths.ExecutionDir("stable-run-id"), filepath.Join(root, "runs", "stable-run-id"))
+	assertPath(t, paths.RunDir("stable-run-id"), filepath.Join(root, "runs", "stable-run-id"))
 }
 
 func TestResolveRejectsRelativeDataRoot(t *testing.T) {
@@ -62,17 +62,6 @@ func TestStableIDsOwnRunAndNodeRunProducts(t *testing.T) {
 	assertPath(t, paths.NodeRunToolOutputDir(runID, nodeRunID), filepath.Join(root, "runs", runID, "node-runs", nodeRunID, "tool-output"))
 }
 
-func TestLegacyPathsPreservePlatformCoreLayout(t *testing.T) {
-	paths := runtimepath.Legacy()
-
-	assertPath(t, paths.Database(), filepath.Join(".workflow", "gum-workflows.db"))
-	assertPath(t, paths.ExecutionsDir(), filepath.Join(".workflow", "executions"))
-	assertPath(t, paths.ExecutionDir("execution-000007"), filepath.Join(".workflow", "executions", "execution-000007"))
-	assertPath(t, paths.ArtifactsDir("execution-000007"), filepath.Join(".workflow", "executions", "execution-000007", "artifacts"))
-	assertPath(t, paths.LogsDir("execution-000007"), filepath.Join(".workflow", "executions", "execution-000007", "logs"))
-	assertPath(t, paths.TempDir("execution-000007"), filepath.Join(".workflow", "executions", "execution-000007", "tmp"))
-}
-
 func TestPathsCanBeInjectedWithoutTouchingFilesystem(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "not-created")
 	paths, err := runtimepath.New(
@@ -91,16 +80,16 @@ func TestPathsCanBeInjectedWithoutTouchingFilesystem(t *testing.T) {
 
 func TestNewRejectsIncompleteLayout(t *testing.T) {
 	tests := []struct {
-		name       string
-		database   string
-		executions string
+		name     string
+		database string
+		runs     string
 	}{
-		{name: "missing database", executions: "runs"},
-		{name: "missing executions", database: "product.db"},
+		{name: "missing database", runs: "runs"},
+		{name: "missing runs", database: "product.db"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := runtimepath.New(tt.database, tt.executions); err == nil {
+			if _, err := runtimepath.New(tt.database, tt.runs); err == nil {
 				t.Fatal("New() = nil error, want incomplete layout rejection")
 			}
 		})

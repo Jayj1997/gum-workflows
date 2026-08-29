@@ -154,7 +154,6 @@ func (n *NodeExecution) startPreparedRun(next Status) error {
 
 // WorkflowExecution is one independent run of a workflow definition.
 type WorkflowExecution struct {
-	ID              string                    `json:"id"`
 	RunID           string                    `json:"run_id"`
 	Workflow        string                    `json:"workflow"`
 	WorkflowVersion string                    `json:"workflow_version,omitempty"`

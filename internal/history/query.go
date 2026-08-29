@@ -28,7 +28,6 @@ type RunSummary struct {
 type RunDetail struct {
 	RunSummary
 	WorkflowFile  string
-	ExecutionID   string
 	Error         string
 	StoppedReason string
 	Nodes         []NodeSummary
@@ -151,12 +150,12 @@ func (s *Store) GetRun(ctx context.Context, idOrPrefix string) (*RunDetail, erro
 	var started string
 	var finished sql.NullString
 	err = s.db.QueryRowContext(ctx, `
-SELECT id, workflow_name, workflow_version, status, workflow_file, execution_id,
+SELECT id, workflow_name, workflow_version, status, workflow_file,
        error, stopped_reason, started_at, finished_at
   FROM workflow_run_history
  WHERE id = ?`, runID).Scan(
 		&run.ID, &run.Workflow, &run.WorkflowVersion, &status, &run.WorkflowFile,
-		&run.ExecutionID, &run.Error, &run.StoppedReason, &started, &finished,
+		&run.Error, &run.StoppedReason, &started, &finished,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get workflow run %s: %w", runID, err)

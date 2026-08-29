@@ -4,13 +4,12 @@
 
 **Blocked by:** 02: Local Data Root cutover
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Project Context 中的 Workspace 解析为用户项目的规范化绝对路径。
-- [ ] `run` 不再将项目复制到 Local Data Root 或其他 Run 私有目录。
-- [ ] Agent Node 在 Workspace 中的修改立即出现在用户项目目录。
-- [ ] Automation Node 获得与 Agent 相同的 Workspace 路径。
-- [ ] Gum 自身的数据库、Artifact、日志与工具产物仍只写 Local Data Root。
-- [ ] Runtime 不创建代码 Snapshot/Revision，不执行 Git 提交、回滚或恢复。
-- [ ] 端到端测试证明项目不被复制，Agent 修改实时可见。
-
+- [x] Project Context 中的 Workspace 解析为用户项目的规范化绝对路径。
+- [x] `run` 不再将项目复制到 Local Data Root 或其他 Run 私有目录。
+- [x] Agent Node 在 Workspace 中的修改立即出现在用户项目目录。
+- [x] Automation Node 获得与 Agent 相同的 Workspace 路径。
+- [x] Gum 自身的数据库、Artifact、日志与工具产物仍只写 Local Data Root。
+- [x] Runtime 不创建代码 Snapshot/Revision，不执行 Git 提交、回滚或恢复。
+- [x] 端到端测试证明项目不被复制，Agent 修改实时可见。

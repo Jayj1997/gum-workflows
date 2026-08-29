@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
@@ -20,8 +19,6 @@ import (
 )
 
 const defaultConvergenceLimit = 10
-
-var executionSeq atomic.Int64
 
 // Option configures optional engine behavior.
 type Option func(*Engine)
@@ -37,8 +34,8 @@ func WithProjectContext(ctx project.Context) Option {
 	}
 }
 
-// WithExecutionID fixes the filesystem execution identifier.
-func WithExecutionID(id string) Option { return func(e *Engine) { e.executionID = id } }
+// WithRunID fixes the stable Workflow Run identity.
+func WithRunID(id string) Option { return func(e *Engine) { e.runID = id } }
 
 // WithParallelism sets the maximum number of distinct nodes that may run concurrently.
 func WithParallelism(n int) Option {
@@ -91,7 +88,7 @@ type Engine struct {
 	parallelism      int
 	convergenceLimit int
 	projectCtx       *project.Context
-	executionID      string
+	runID            string
 	workflowFile     string
 	humanGateway     HumanGateway
 	runRecorder      RunRecorder
@@ -136,12 +133,12 @@ func (e *Engine) Run(ctx context.Context, def workflow.Definition) (*WorkflowExe
 		return nil, err
 	}
 
-	execID := e.executionID
-	if execID == "" {
-		execID = fmt.Sprintf("execution-%06d", executionSeq.Add(1))
+	runID := e.runID
+	if runID == "" {
+		runID = uuid.NewString()
 	}
 	exec := &WorkflowExecution{
-		ID: execID, Workflow: def.Metadata.Name, WorkflowVersion: def.Metadata.Version,
+		RunID: runID, Workflow: def.Metadata.Name, WorkflowVersion: def.Metadata.Version,
 		WorkflowFile: e.workflowFile, Status: StatusRunning, StartedAt: time.Now().UTC(),
 		Nodes: make(map[string]*NodeExecution, len(g.NodeIDs)),
 	}
@@ -831,12 +828,12 @@ func (e *Engine) fail(ctx context.Context, exec *WorkflowExecution, err error) (
 func (e *Engine) persist(ctx context.Context, exec *WorkflowExecution) {
 	if e.runRecorder != nil {
 		if err := e.runRecorder.Record(ctx, exec); err != nil && !errors.Is(err, context.Canceled) {
-			e.logger.Warn("record run history failed", "execution", exec.ID, "error", err)
+			e.logger.Warn("record run history failed", "run", exec.RunID, "error", err)
 		}
 	}
 	if e.stateDir != "" {
-		if err := PersistState(filepath.Join(e.stateDir, exec.ID), exec); err != nil && !errors.Is(err, context.Canceled) {
-			e.logger.Error("persist state failed", "execution", exec.ID, "error", err)
+		if err := PersistState(filepath.Join(e.stateDir, exec.RunID), exec); err != nil && !errors.Is(err, context.Canceled) {
+			e.logger.Error("persist state failed", "run", exec.RunID, "error", err)
 		}
 	}
 }

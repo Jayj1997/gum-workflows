@@ -60,7 +60,7 @@ Gum-Workflows 面向代码开发、产品经理、测试、设计和运维等能
 
 > 当前内置 Node 仍为 Mock 实现；`internal/llm` 当前只负责配置与解析，不包含真实网络调用。
 
-当前 `run`、Artifact 与全局 `history` 使用用户级 Local Data Root，不再向项目写入 `.workflow`。可用 `GUM_WORKFLOWS_DATA_ROOT` 指定该目录；未指定时使用操作系统默认的用户应用数据位置。旧项目内 `.workflow` 数据尚不会自动迁移。
+当前 `run`、Artifact 与全局 `history` 使用用户级 Local Data Root，不再向项目写入 `.workflow`。可用 `GUM_WORKFLOWS_DATA_ROOT` 指定该目录；未指定时使用操作系统默认的用户应用数据位置。Run UUID 同时作为历史主键与 `runs/<run-id>/` 目录身份。旧项目内 `.workflow` 数据不会自动扫描；开发期需要保留时可显式调用 `history.MigrateLegacy` 一次性迁移。
 
 ## 核心概念
 

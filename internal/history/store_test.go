@@ -65,6 +65,22 @@ func TestOpenCreatesAndMigrates(t *testing.T) {
 			t.Errorf("table %q missing: %v", table, err)
 		}
 	}
+	rows, err := s.db.Query(`PRAGMA table_info(workflow_run_history)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatal(err)
+		}
+		if name == "execution_id" {
+			t.Fatal("workflow_run_history still contains legacy execution_id")
+		}
+	}
 
 	if _, err := os.Stat(dbPath); err != nil {
 		t.Errorf("db file not created: %v", err)
@@ -103,6 +119,49 @@ func TestOpenIsIdempotent(t *testing.T) {
 	}
 	if v != latestUserVersion() {
 		t.Fatalf("user_version = %d, want %d", v, latestUserVersion())
+	}
+}
+
+func TestOpenUpgradesRunHistoryToSingleRunIdentity(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "product.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, migration := range migrations[:RunHistorySchemaVersion] {
+		if err := applyMigration(context.Background(), tx, migration); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runID := "11111111-1111-4111-8111-111111111111"
+	if _, err := tx.Exec(`
+INSERT INTO workflow_run_history
+  (id, workflow_name, workflow_version, status, workflow_file, execution_id, error, stopped_reason, started_at)
+VALUES (?, 'legacy-local-data', 'v1', 'Stopped', 'workflow.yaml', 'execution-000007', '', 'user_interrupt', '2026-08-29T12:00:00Z')`, runID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(context.Background(), dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run, err := store.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run == nil || run.ID != runID || run.Workflow != "legacy-local-data" {
+		t.Fatalf("upgraded Run = %+v", run)
 	}
 }
 

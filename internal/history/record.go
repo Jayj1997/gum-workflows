@@ -18,7 +18,7 @@ func (s *Store) Record(ctx context.Context, exec *execution.WorkflowExecution) e
 		return fmt.Errorf("record run: execution must not be nil")
 	}
 	if exec.RunID == "" {
-		exec.RunID = uuid.NewString()
+		return fmt.Errorf("record run: run id must not be empty")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -28,20 +28,19 @@ func (s *Store) Record(ctx context.Context, exec *execution.WorkflowExecution) e
 
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO workflow_run_history
-  (id, workflow_name, workflow_version, status, workflow_file, execution_id, error, stopped_reason, started_at, finished_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  (id, workflow_name, workflow_version, status, workflow_file, error, stopped_reason, started_at, finished_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
   workflow_name = excluded.workflow_name,
   workflow_version = excluded.workflow_version,
   status = excluded.status,
   workflow_file = excluded.workflow_file,
-  execution_id = excluded.execution_id,
   error = excluded.error,
   stopped_reason = excluded.stopped_reason,
   started_at = excluded.started_at,
   finished_at = excluded.finished_at`,
 		exec.RunID, exec.Workflow, exec.WorkflowVersion, exec.Status, exec.WorkflowFile,
-		exec.ID, exec.Error, exec.StoppedReason, formatTime(exec.StartedAt), nullableTime(exec.FinishedAt)); err != nil {
+		exec.Error, exec.StoppedReason, formatTime(exec.StartedAt), nullableTime(exec.FinishedAt)); err != nil {
 		return fmt.Errorf("record workflow run %s: %w", exec.RunID, err)
 	}
 

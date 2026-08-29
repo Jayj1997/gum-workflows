@@ -40,7 +40,7 @@ func TestMigrateLegacyPreservesHistoryAndArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run == nil || run.ID != fixture.runID || run.ExecutionID != fixture.runID || run.Workflow != "legacy-quality" {
+	if run == nil || run.ID != fixture.runID || run.Workflow != "legacy-quality" {
 		t.Fatalf("GetRun() = %+v, want migrated legacy run", run)
 	}
 	detail, err := store.GetNodeRun(ctx, fixture.runID, "check")
@@ -158,7 +158,7 @@ func TestMigrateLegacyRejectsConflictingRunWithoutPublishingArtifacts(t *testing
 	}
 	started := time.Date(2026, 8, 27, 8, 0, 0, 0, time.UTC)
 	if err := target.Record(ctx, &execution.WorkflowExecution{
-		ID: fixture.executionID, RunID: fixture.runID, Workflow: "different-workflow",
+		RunID: fixture.runID, Workflow: "different-workflow",
 		Status: execution.StatusStopped, StartedAt: started, FinishedAt: started.Add(time.Second),
 		Nodes: map[string]*execution.NodeExecution{},
 	}); err != nil {
@@ -288,7 +288,7 @@ func TestMigrateLegacyCommitFailureRestoresPublishedArtifacts(t *testing.T) {
 	if run != nil {
 		t.Fatalf("commit failure published Run: %+v", run)
 	}
-	if _, err := os.Stat(destination.ExecutionDir(fixture.runID)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(destination.RunDir(fixture.runID)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("commit failure left published Run artifacts: %v", err)
 	}
 }
@@ -433,7 +433,6 @@ func assertEquivalentHistory(t *testing.T, ctx context.Context, source, destinat
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacyRun.ExecutionID = migratedRun.ExecutionID // Local Data Root uses the stable Run identity.
 	if !reflect.DeepEqual(legacyRun, migratedRun) {
 		t.Fatalf("Run history changed:\nlegacy: %+v\nmigrated: %+v", legacyRun, migratedRun)
 	}

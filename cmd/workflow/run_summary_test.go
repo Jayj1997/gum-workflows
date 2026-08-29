@@ -11,7 +11,7 @@ import (
 
 func TestRunSummaryShowsWaitingRoundsAndErrorKind(t *testing.T) {
 	exec := &execution.WorkflowExecution{
-		ID: "execution-000001", Workflow: "review-loop", Status: execution.StatusRunning,
+		RunID: "11111111-1111-4111-8111-111111111111", Workflow: "review-loop", Status: execution.StatusRunning,
 		Nodes: map[string]*execution.NodeExecution{
 			"review": {
 				NodeID: "review", NodeDefinition: "human-approval",

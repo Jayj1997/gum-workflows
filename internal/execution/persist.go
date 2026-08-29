@@ -31,7 +31,6 @@ func PersistState(dir string, exec *WorkflowExecution) error {
 
 	// WorkflowExecution level metadata does not duplicate node round bodies.
 	top := map[string]any{
-		"id":               exec.ID,
 		"run_id":           exec.RunID,
 		"workflow":         exec.Workflow,
 		"workflow_version": exec.WorkflowVersion,
@@ -44,7 +43,7 @@ func PersistState(dir string, exec *WorkflowExecution) error {
 		"node_count":       len(exec.Nodes),
 	}
 	if err := writeJSON(filepath.Join(dir, "state.json"), top); err != nil {
-		return fmt.Errorf("persist state %s: %w", exec.ID, err)
+		return fmt.Errorf("persist state %s: %w", exec.RunID, err)
 	}
 
 	// NodeExecution 级：每个 Node 一个 state.json（快照，含定义身份）。
@@ -64,7 +63,7 @@ func PersistState(dir string, exec *WorkflowExecution) error {
 			History: summarizeRuns(ne.History),
 		}
 		if err := writeJSON(filepath.Join(nodeDir, "state.json"), nodeState); err != nil {
-			return fmt.Errorf("persist state %s/%s: %w", exec.ID, id, err)
+			return fmt.Errorf("persist state %s/%s: %w", exec.RunID, id, err)
 		}
 		runsDir := filepath.Join(nodeDir, "runs")
 		if err := os.MkdirAll(runsDir, 0o755); err != nil {
@@ -75,7 +74,7 @@ func PersistState(dir string, exec *WorkflowExecution) error {
 				continue
 			}
 			if err := writeJSON(filepath.Join(runsDir, fmt.Sprintf("%d.json", run.Round)), run); err != nil {
-				return fmt.Errorf("persist state %s/%s round %d: %w", exec.ID, id, run.Round, err)
+				return fmt.Errorf("persist state %s/%s round %d: %w", exec.RunID, id, run.Round, err)
 			}
 		}
 	}

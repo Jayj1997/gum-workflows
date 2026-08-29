@@ -17,6 +17,10 @@ const DefinitionSchemaVersion = 1
 // RunHistorySchemaVersion adds workflow and node-run history tables.
 const RunHistorySchemaVersion = 2
 
+// StableRunIdentitySchemaVersion removes the legacy filesystem execution ID;
+// the Workflow Run UUID is now the only Run and directory identity.
+const StableRunIdentitySchemaVersion = 3
+
 // 新增迁移只允许 append（不改写历史迁移），保证已迁移的库向前兼容。
 var migrations = []migration{
 	{
@@ -111,6 +115,12 @@ var migrations = []migration{
   UNIQUE (run_id, node_id, round)
 )`,
 			`CREATE INDEX idx_node_run_history_run ON workflow_node_run_history (run_id)`,
+		},
+	},
+	{
+		version: StableRunIdentitySchemaVersion,
+		stmts: []string{
+			`ALTER TABLE workflow_run_history DROP COLUMN execution_id`,
 		},
 	},
 }

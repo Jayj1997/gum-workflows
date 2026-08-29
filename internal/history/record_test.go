@@ -16,7 +16,7 @@ func TestRecordUpsertsWorkflowAndOneRowPerNodeRound(t *testing.T) {
 	store, _ := openTest(t)
 	started := time.Date(2026, 8, 29, 1, 2, 3, 0, time.UTC)
 	exec := &execution.WorkflowExecution{
-		ID: "execution-000007", Workflow: "approval-loop", WorkflowFile: "workflow.yaml",
+		RunID: uuid.NewString(), Workflow: "approval-loop", WorkflowFile: "workflow.yaml",
 		Status: execution.StatusRunning, StartedAt: started,
 		Nodes: map[string]*execution.NodeExecution{
 			"review": {
@@ -28,9 +28,6 @@ func TestRecordUpsertsWorkflowAndOneRowPerNodeRound(t *testing.T) {
 
 	if err := store.Record(context.Background(), exec); err != nil {
 		t.Fatalf("Record(initial): %v", err)
-	}
-	if _, err := uuid.Parse(exec.RunID); err != nil {
-		t.Fatalf("RunID = %q, want UUID: %v", exec.RunID, err)
 	}
 	firstRunID := exec.RunID
 	var firstNodeRunID string
@@ -139,5 +136,16 @@ func TestRecordUpsertsWorkflowAndOneRowPerNodeRound(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("node rows after workflow run delete = %d, want 0", count)
+	}
+}
+
+func TestRecordRejectsMissingRunIdentity(t *testing.T) {
+	store, _ := openTest(t)
+	err := store.Record(context.Background(), &execution.WorkflowExecution{
+		Workflow: "missing-identity", Status: execution.StatusRunning, StartedAt: fixedTime,
+		Nodes: map[string]*execution.NodeExecution{},
+	})
+	if err == nil {
+		t.Fatal("Record() = nil error, want missing Run ID rejection")
 	}
 }

@@ -62,7 +62,7 @@ func TestHistoryShowsRunDetailsByPrefix(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Run " + runID, "Workflow:", "history-demo v1", "Status:", "Stopped",
-		"Stopped reason:", "user_interrupt", "State dir:", filepath.Join(dataRoot, "runs", "execution-000007"),
+		"Stopped reason:", "user_interrupt", "State dir:", filepath.Join(dataRoot, "runs", runID),
 		"Nodes:", "worker", "coding-agent", "rounds: 2", "inputs: 1", "outputs: 1",
 		"Round 1 Failed", "error_kind: interaction", "Round 2 Succeeded",
 	} {
@@ -110,7 +110,7 @@ func seedHistoryRun(t *testing.T, dataRoot string) string {
 	started := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	runID := "11223344-1111-4111-8111-111111111111"
 	exec := &execution.WorkflowExecution{
-		RunID: runID, ID: "execution-000007", Workflow: "history-demo", WorkflowVersion: "v1",
+		RunID: runID, Workflow: "history-demo", WorkflowVersion: "v1",
 		WorkflowFile: "workflow.yaml", Status: execution.StatusStopped, StoppedReason: "user_interrupt",
 		StartedAt: started, FinishedAt: started.Add(1500 * time.Millisecond),
 		Nodes: map[string]*execution.NodeExecution{

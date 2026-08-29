@@ -244,8 +244,8 @@ func TestRunCreatesIndependentExecutions(t *testing.T) {
 	}
 
 	// 三次运行的 ID 互不相同。
-	if execs[0].ID == execs[1].ID || execs[1].ID == execs[2].ID {
-		t.Fatalf("execution IDs not unique: %s %s %s", execs[0].ID, execs[1].ID, execs[2].ID)
+	if execs[0].RunID == execs[1].RunID || execs[1].RunID == execs[2].RunID {
+		t.Fatalf("Run IDs not unique: %s %s %s", execs[0].RunID, execs[1].RunID, execs[2].RunID)
 	}
 
 	// 每次 Run 都为自己的 WorkflowExecution 创建全部 NodeExecution，

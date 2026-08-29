@@ -16,6 +16,7 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/project"
 	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
 	"github.com/Jayj1997/gum-workflows/internal/workflow"
+	"github.com/google/uuid"
 	"github.com/mattn/go-isatty"
 )
 
@@ -41,22 +42,18 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 		return fmt.Errorf("workflow contains human nodes and requires an interactive terminal on stdin")
 	}
 
-	def, err = pinAndImportDefinitions(ctx, paths.Database(), def, executors, defsRegistry, llmConfig)
+	historyStore, err := history.Open(ctx, paths.Database())
+	if err != nil {
+		return fmt.Errorf("open history database: %w", err)
+	}
+	defer historyStore.Close()
+	def, err = pinAndImportDefinitions(ctx, historyStore, def, executors, defsRegistry, llmConfig)
 	if err != nil {
 		return err
 	}
-	var runRecorder execution.RunRecorder
-	historyStore, historyErr := history.Open(ctx, paths.Database())
-	if historyErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: run history disabled: %v\n", historyErr)
-	} else {
-		defer historyStore.Close()
-		runRecorder = historyStore
-	}
 
 	// ③ Project Runtime：解析 projects[0] 声明为原地 Workspace。
-	// Execution ID 由 execution.NextExecutionID 分配（唯一来源），
-	// artifacts / 状态目录与 Engine 使用同一 ID。
+	// Run UUID 在任何运行文件写入前分配，数据库、Artifacts 与状态目录共用。
 	// projects 的「恰好 1 个」校验属票 06；此处取第一个条目。
 	projSpec := project.Spec{}
 	if len(def.Projects) > 0 {
@@ -67,22 +64,19 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 		return fmt.Errorf("resolve project: %w", err)
 	}
 
-	executionID, err := execution.NextExecutionID(paths.ExecutionsDir())
-	if err != nil {
-		return fmt.Errorf("allocate execution id: %w", err)
-	}
-	executionDir := paths.ExecutionDir(executionID)
+	runID := uuid.NewString()
+	executionDir := paths.RunDir(runID)
 	if err := os.MkdirAll(executionDir, 0o755); err != nil {
 		return fmt.Errorf("create execution dir: %w", err)
 	}
 
 	// 定义快照（计划 §28：execution 目录含 workflow.yaml）。
-	if err := os.WriteFile(paths.WorkflowSnapshot(executionID), data, 0o644); err != nil {
+	if err := os.WriteFile(paths.WorkflowSnapshot(runID), data, 0o644); err != nil {
 		return fmt.Errorf("snapshot workflow.yaml: %w", err)
 	}
 
 	// ④ 执行：FS Artifact Store + 状态持久化 + Workspace 注入。
-	store, err := artifact.NewFilesystemStore(paths.ArtifactsDir(executionID))
+	store, err := artifact.NewFilesystemStore(paths.ArtifactsDir(runID))
 	if err != nil {
 		return fmt.Errorf("create artifact store: %w", err)
 	}
@@ -92,12 +86,12 @@ func runWorkflow(ctx context.Context, path string, interactive bool, gateway exe
 		defsRegistry,
 		store,
 		nil,
-		execution.WithStateDir(paths.ExecutionsDir()),
+		execution.WithStateDir(paths.RunsDir()),
 		execution.WithProjectContext(projCtx),
-		execution.WithExecutionID(executionID),
+		execution.WithRunID(runID),
 		execution.WithWorkflowFile(path),
 		execution.WithHumanGateway(gateway),
-		execution.WithRunRecorder(runRecorder),
+		execution.WithRunRecorder(historyStore),
 	)
 	exec, runErr := engine.Run(ctx, def)
 
@@ -131,7 +125,7 @@ func printExecutionSummaryTo(out io.Writer, exec *execution.WorkflowExecution) {
 	if exec == nil {
 		return
 	}
-	fmt.Fprintf(out, "\nWorkflow %s %s (%s)\n", exec.Workflow, exec.Status, exec.ID)
+	fmt.Fprintf(out, "\nWorkflow %s %s (%s)\n", exec.Workflow, exec.Status, exec.RunID)
 
 	ids := make([]string, 0, len(exec.Nodes))
 	for id := range exec.Nodes {

@@ -17,8 +17,8 @@ func TestListRunsReturnsNewestTwentyWithDistinctNodeProgress(t *testing.T) {
 	base := time.Date(2026, 8, 29, 8, 0, 0, 0, time.UTC)
 	for i := range 21 {
 		exec := &execution.WorkflowExecution{
-			RunID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i),
-			ID:    fmt.Sprintf("execution-%06d", i+1), Workflow: "history-demo", WorkflowVersion: "v1",
+			RunID:    fmt.Sprintf("00000000-0000-4000-8000-%012d", i),
+			Workflow: "history-demo", WorkflowVersion: "v1",
 			Status: execution.StatusRunning, StartedAt: base.Add(time.Duration(i) * time.Minute),
 			Nodes: map[string]*execution.NodeExecution{
 				"done": {
@@ -55,7 +55,7 @@ func TestListRunsReturnsNewestTwentyWithDistinctNodeProgress(t *testing.T) {
 func TestListRunsCountsOnlyTheLatestRoundOfEachNode(t *testing.T) {
 	store, _ := openTest(t)
 	exec := &execution.WorkflowExecution{
-		RunID: "99999999-1111-4111-8111-111111111111", ID: "execution-000099", Workflow: "queued-retry",
+		RunID: "99999999-1111-4111-8111-111111111111", Workflow: "queued-retry",
 		Status: execution.StatusRunning, StartedAt: fixedTime,
 		Nodes: map[string]*execution.NodeExecution{
 			"worker": {
@@ -84,7 +84,7 @@ func TestGetNodeRunReturnsAllRoundsAndArtifactReferences(t *testing.T) {
 	advise := artifact.ArtifactRef{ID: "advise", Kind: "markdown", Version: "2", URI: "artifacts/advise/2.json"}
 	result := artifact.ArtifactRef{ID: "result", Kind: "markdown", Version: "3", URI: "artifacts/result/3.json"}
 	exec := &execution.WorkflowExecution{
-		RunID: "87654321-1111-4111-8111-111111111111", ID: "execution-000002", Workflow: "retry-demo",
+		RunID: "87654321-1111-4111-8111-111111111111", Workflow: "retry-demo",
 		Status: execution.StatusRunning, StartedAt: started,
 		Nodes: map[string]*execution.NodeExecution{
 			"worker": {
@@ -136,7 +136,7 @@ func TestGetRunResolvesUUIDPrefixAndReturnsLatestNodeSummaries(t *testing.T) {
 	store, _ := openTest(t)
 	started := time.Date(2026, 8, 29, 9, 30, 0, 0, time.UTC)
 	exec := &execution.WorkflowExecution{
-		RunID: "12345678-1111-4111-8111-111111111111", ID: "execution-000001",
+		RunID:    "12345678-1111-4111-8111-111111111111",
 		Workflow: "approval-loop", WorkflowVersion: "v2", WorkflowFile: "workflow.yaml",
 		Status: execution.StatusStopped, StoppedReason: "user_interrupt", StartedAt: started, FinishedAt: started.Add(3 * time.Second),
 		Nodes: map[string]*execution.NodeExecution{
@@ -158,7 +158,7 @@ func TestGetRunResolvesUUIDPrefixAndReturnsLatestNodeSummaries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRun(): %v", err)
 	}
-	if run == nil || run.ID != exec.RunID || run.ExecutionID != "execution-000001" || run.StoppedReason != "user_interrupt" {
+	if run == nil || run.ID != exec.RunID || run.StoppedReason != "user_interrupt" {
 		t.Fatalf("GetRun() = %+v", run)
 	}
 	if len(run.Nodes) != 1 {
@@ -177,7 +177,7 @@ func TestGetRunPrefixResolutionEmptyAndErrors(t *testing.T) {
 		"abcdef12-2222-4222-8222-222222222222",
 	} {
 		exec := &execution.WorkflowExecution{
-			RunID: id, ID: fmt.Sprintf("execution-%06d", i+1), Workflow: "demo",
+			RunID: id, Workflow: "demo",
 			Status: execution.StatusRunning, StartedAt: fixedTime.Add(time.Duration(i) * time.Second),
 			Nodes: map[string]*execution.NodeExecution{},
 		}

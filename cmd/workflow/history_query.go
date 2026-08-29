@@ -99,7 +99,7 @@ func printRunDetail(out io.Writer, paths runtimepath.Paths, run *history.RunDeta
 	fmt.Fprintf(out, "  Finished:       %s\n", formatHistoryTime(run.FinishedAt))
 	fmt.Fprintf(out, "  Duration:       %s\n", formatHistoryDuration(run.StartedAt, run.FinishedAt))
 	fmt.Fprintf(out, "  File:           %s\n", emptyHistoryValue(run.WorkflowFile))
-	fmt.Fprintf(out, "  State dir:      %s\n", executionStateDir(paths, run.ExecutionID))
+	fmt.Fprintf(out, "  State dir:      %s\n", runStateDir(paths, run.ID))
 	if run.StoppedReason != "" {
 		fmt.Fprintf(out, "  Stopped reason: %s\n", run.StoppedReason)
 	}
@@ -202,11 +202,11 @@ func sortedHistoryKeys[T any](items map[string]T) []string {
 	return keys
 }
 
-func executionStateDir(paths runtimepath.Paths, executionID string) string {
-	if executionID == "" {
+func runStateDir(paths runtimepath.Paths, runID string) string {
+	if runID == "" {
 		return "-"
 	}
-	return paths.ExecutionDir(executionID)
+	return paths.RunDir(runID)
 }
 
 func emptyHistoryValue(value string) string {

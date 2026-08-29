@@ -22,7 +22,7 @@ import (
 // the Local Data Root. Existing equivalent identities are reused, conflicts
 // fail without publishing database rows, and the legacy store remains read-only.
 func MigrateLegacy(ctx context.Context, source, destination runtimepath.Paths) error {
-	if source.Database() == destination.Database() || source.ExecutionsDir() == destination.ExecutionsDir() {
+	if source.Database() == destination.Database() || source.RunsDir() == destination.RunsDir() {
 		return fmt.Errorf("migrate legacy history: source and destination must be distinct")
 	}
 	sourceStore, err := OpenReadOnly(ctx, source.Database())
@@ -376,10 +376,10 @@ func ensureNodeInstance(ctx context.Context, tx *sql.Tx, row legacyNodeInstance,
 }
 
 func ensureRun(ctx context.Context, tx *sql.Tx, row legacyRun) error {
-	row.executionID = row.id
 	var got legacyRun
-	err := tx.QueryRowContext(ctx, `SELECT id,workflow_name,workflow_version,status,workflow_file,execution_id,error,stopped_reason,started_at,finished_at FROM workflow_run_history WHERE id=?`, row.id).Scan(&got.id, &got.workflowName, &got.workflowVersion, &got.status, &got.workflowFile, &got.executionID, &got.runError, &got.stoppedReason, &got.startedAt, &got.finishedAt)
+	err := tx.QueryRowContext(ctx, `SELECT id,workflow_name,workflow_version,status,workflow_file,error,stopped_reason,started_at,finished_at FROM workflow_run_history WHERE id=?`, row.id).Scan(&got.id, &got.workflowName, &got.workflowVersion, &got.status, &got.workflowFile, &got.runError, &got.stoppedReason, &got.startedAt, &got.finishedAt)
 	if err == nil {
+		row.executionID = ""
 		if got != row {
 			return conflict("workflow run", row.id)
 		}
@@ -388,7 +388,7 @@ func ensureRun(ctx context.Context, tx *sql.Tx, row legacyRun) error {
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO workflow_run_history(id,workflow_name,workflow_version,status,workflow_file,execution_id,error,stopped_reason,started_at,finished_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, row.id, row.workflowName, row.workflowVersion, row.status, row.workflowFile, row.executionID, row.runError, row.stoppedReason, row.startedAt, row.finishedAt)
+	_, err = tx.ExecContext(ctx, `INSERT INTO workflow_run_history(id,workflow_name,workflow_version,status,workflow_file,error,stopped_reason,started_at,finished_at) VALUES(?,?,?,?,?,?,?,?,?)`, row.id, row.workflowName, row.workflowVersion, row.status, row.workflowFile, row.runError, row.stoppedReason, row.startedAt, row.finishedAt)
 	if err != nil {
 		return conflictCause("workflow run", row.id, err)
 	}
@@ -441,10 +441,10 @@ type artifactGroup struct {
 var legacyArtifactName = regexp.MustCompile(`^[0-9]+\.json$`)
 
 func stageLegacyArtifacts(source, destination runtimepath.Paths, snapshot legacySnapshot) ([]stagedArtifact, func(), error) {
-	if err := os.MkdirAll(filepath.Dir(destination.ExecutionsDir()), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destination.RunsDir()), 0o755); err != nil {
 		return nil, func() {}, err
 	}
-	stageRoot, err := os.MkdirTemp(filepath.Dir(destination.ExecutionsDir()), ".legacy-migration-")
+	stageRoot, err := os.MkdirTemp(filepath.Dir(destination.RunsDir()), ".legacy-migration-")
 	if err != nil {
 		return nil, func() {}, err
 	}

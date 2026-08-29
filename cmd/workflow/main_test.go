@@ -12,6 +12,7 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/execution"
 	"github.com/Jayj1997/gum-workflows/internal/history"
 	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
+	"github.com/google/uuid"
 )
 
 // validFixtureEnv 满足语义校验的运行前提（票 06 起 validate 全链生效）：
@@ -148,17 +149,20 @@ func TestRunWorkflowUsesInjectedRuntimePaths(t *testing.T) {
 	if _, err := os.Stat(paths.Database()); err != nil {
 		t.Fatalf("injected database path: %v", err)
 	}
-	entries, err := os.ReadDir(paths.ExecutionsDir())
+	entries, err := os.ReadDir(paths.RunsDir())
 	if err != nil {
-		t.Fatalf("read injected executions path: %v", err)
+		t.Fatalf("read injected Runs path: %v", err)
 	}
 	if len(entries) != 1 {
 		t.Fatalf("execution entries = %d, want 1", len(entries))
 	}
-	executionID := entries[0].Name()
+	runID := entries[0].Name()
+	if _, err := uuid.Parse(runID); err != nil {
+		t.Fatalf("Run directory %q is not a stable UUID: %v", runID, err)
+	}
 	for _, want := range []string{
-		filepath.Join(paths.ExecutionDir(executionID), "state.json"),
-		paths.ArtifactsDir(executionID),
+		filepath.Join(paths.RunDir(runID), "state.json"),
+		paths.ArtifactsDir(runID),
 	} {
 		if _, err := os.Stat(want); err != nil {
 			t.Errorf("injected runtime path %q: %v", want, err)
@@ -170,6 +174,18 @@ func TestRunWorkflowUsesInjectedRuntimePaths(t *testing.T) {
 	projectStateDir := filepath.Join(filepath.Dir(workflowFile), "project", ".workflow")
 	if _, err := os.Stat(projectStateDir); !os.IsNotExist(err) {
 		t.Fatalf("run wrote Gum state into the user project: %v", err)
+	}
+	historyStore, err := history.OpenReadOnly(context.Background(), paths.Database())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer historyStore.Close()
+	runs, err := historyStore.ListRuns(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].ID != runID {
+		t.Fatalf("History Run identity = %+v, want directory UUID %q", runs, runID)
 	}
 }
 
@@ -204,7 +220,7 @@ func TestHistoryUsesInjectedRuntimePaths(t *testing.T) {
 	started := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	runID := "11223344-1111-4111-8111-111111111111"
 	if err := store.Record(context.Background(), &execution.WorkflowExecution{
-		RunID: runID, ID: "execution-000007", Workflow: "injected-history",
+		RunID: runID, Workflow: "injected-history",
 		Status: execution.StatusStopped, StartedAt: started, FinishedAt: started.Add(time.Second),
 		Nodes: map[string]*execution.NodeExecution{},
 	}); err != nil {
@@ -219,7 +235,7 @@ func TestHistoryUsesInjectedRuntimePaths(t *testing.T) {
 	if err := historyCmd(context.Background(), []string{runID[:8]}, paths, &out); err != nil {
 		t.Fatalf("historyCmd() unexpected error: %v", err)
 	}
-	for _, want := range []string{"injected-history", paths.ExecutionDir("execution-000007")} {
+	for _, want := range []string{"injected-history", paths.RunDir(runID)} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("history output missing %q:\n%s", want, out.String())
 		}

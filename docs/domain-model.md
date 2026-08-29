@@ -131,25 +131,25 @@ Workflow 没有自动 Succeeded 终态。全图静止时仍保持 Running，等�
 
 ## 8. 运行状态与持久化
 
-`NodeExecution` 保存 `Current NodeRun` 和已完成的 `History []NodeRun`。每轮记录 status、inputs、outputs、error/error_kind 和时间；`WorkflowExecution` 记录 Run UUID、filesystem execution ID、Workflow 身份、状态、停止原因和 Node 快照。
+`NodeExecution` 保存 `Current NodeRun` 和已完成的 `History []NodeRun`。每轮记录 status、inputs、outputs、error/error_kind 和时间；`WorkflowExecution` 记录唯一 Run UUID、Workflow 身份、状态、停止原因和 Node 快照。Run UUID 同时是 SQLite 主键与 Local Data Root 目录名，不再维护第二套 filesystem execution ID。
 
 用户级 Local Data Root 保存全局产品库与运行主体；路径只使用稳定的 Execution / Node Run ID，不编码可变的 Project 或 Workflow 名称：
 
 ```text
 <Local Data Root>/
 ├── product.db
-└── runs/execution-000001/
+└── runs/<run-uuid>/
     ├── workflow.yaml
     ├── state.json
     ├── nodes/<node-id>/state.json
     └── artifacts/<n>.json
 ```
 
-CLI 可用 `GUM_WORKFLOWS_DATA_ROOT` 覆盖位置；未覆盖时使用操作系统的用户级应用数据目录。路径解析本身不创建目录。`runtimepath` 已为后续执行器定义 `runs/<execution-id>/logs/` 与 `runs/<execution-id>/node-runs/<node-run-id>/{logs,tool-output}/`，当前尚无执行器创建这些目录。Project Definition 中的 repository 相对 Workflow 文件解析为规范化绝对路径，该目录直接作为 Agent 与 Automation 共享的 In-place Project Workspace；Runtime 不把项目复制到 Local Data Root。
+CLI 可用 `GUM_WORKFLOWS_DATA_ROOT` 覆盖位置；未覆盖时使用操作系统的用户级应用数据目录。路径解析本身不创建目录。`runtimepath` 已为后续执行器定义 `runs/<run-id>/logs/` 与 `runs/<run-id>/node-runs/<node-run-id>/{logs,tool-output}/`，当前尚无执行器创建这些目录。Project Definition 中的 repository 相对 Workflow 文件解析为规范化绝对路径，该目录直接作为 Agent 与 Automation 共享的 In-place Project Workspace；Runtime 不把项目复制到 Local Data Root。
 
 SQLite 使用 WAL、busy_timeout、foreign keys 与 `PRAGMA user_version` 顺序迁移。定义侧保存 Node Type、Node Definition、Node Executor、Workflow 与 Node Instance；运行侧保存 Workflow Run 与逐 Node Run 历史，一行对应一个 round，inputs/outputs 只序列化 `ArtifactRef`。
 
-`history.Store` 实现 `execution.RunRecorder`。Engine 在与 state.json 相同的状态点提交完整快照；Record 使用 upsert 保持重放幂等。`validate` 只在数据库已经存在时 read-only 检查 Executor 解析，不建库、不迁移；`history` 同样 read-only 打开且无库时返回空态。新 Run 不在用户项目内创建或更新 `.workflow`，新旧位置不双写；旧项目数据的显式一次性迁移属于后续票据。
+`history.Store` 实现 `execution.RunRecorder`。Engine 在与 state.json 相同的状态点提交完整快照；Record 使用 upsert 保持重放幂等。`validate` 只在数据库已经存在时 read-only 检查 Executor 解析，不建库、不迁移；`history` 同样 read-only 打开且无库时返回空态。新 Run 不在用户项目内创建或更新 `.workflow`，新旧位置不双写。开发期旧项目数据可通过显式调用 `history.MigrateLegacy` 一次性迁入 Local Data Root；普通 `run`、`validate` 与 `history` 不会自动扫描 legacy 目录。
 
 ## 9. 校验管线
 
