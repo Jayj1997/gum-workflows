@@ -5,10 +5,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 
@@ -45,7 +47,7 @@ func MigrateLegacy(ctx context.Context, source, destination runtimepath.Paths) e
 		return fmt.Errorf("migrate legacy history: open destination: %w", err)
 	}
 	defer target.Close()
-	if err := importLegacySnapshot(ctx, target.db, snapshot, false); err != nil {
+	if err := preflightLegacySnapshot(ctx, target.db, snapshot); err != nil {
 		return fmt.Errorf("migrate legacy history: preflight: %w", err)
 	}
 
@@ -57,7 +59,7 @@ func MigrateLegacy(ctx context.Context, source, destination runtimepath.Paths) e
 	if err := publishLegacyArtifacts(staged); err != nil {
 		return fmt.Errorf("migrate legacy history: publish artifacts: %w", err)
 	}
-	if err := importLegacySnapshot(ctx, target.db, snapshot, true); err != nil {
+	if err := commitLegacySnapshot(ctx, target.db, snapshot); err != nil {
 		return fmt.Errorf("migrate legacy history: commit: %w", err)
 	}
 	return nil
@@ -190,12 +192,31 @@ func loadRows(ctx context.Context, db *sql.DB, query string, scan func(*sql.Rows
 	return rows.Err()
 }
 
-func importLegacySnapshot(ctx context.Context, db *sql.DB, snapshot legacySnapshot, commit bool) error {
+func preflightLegacySnapshot(ctx context.Context, db *sql.DB, snapshot legacySnapshot) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	return applyLegacySnapshot(ctx, tx, snapshot)
+}
+
+func commitLegacySnapshot(ctx context.Context, db *sql.DB, snapshot legacySnapshot) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := applyLegacySnapshot(ctx, tx, snapshot); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	return nil
+}
+
+func applyLegacySnapshot(ctx context.Context, tx *sql.Tx, snapshot legacySnapshot) error {
 	typeIDs, defIDs, executorIDs, workflowIDs := map[string]string{}, map[string]string{}, map[string]string{}, map[string]string{}
 	for _, row := range snapshot.nodeTypes {
 		id, err := ensureNodeType(ctx, tx, row)
@@ -253,12 +274,6 @@ func importLegacySnapshot(ctx context.Context, db *sql.DB, snapshot legacySnapsh
 			return err
 		}
 	}
-	if !commit {
-		return nil
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
-	}
 	return nil
 }
 
@@ -281,7 +296,7 @@ func ensureNodeType(ctx context.Context, tx *sql.Tx, row legacyNodeType) (string
 		}
 		return id, nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO node_type_definition(id,name,description,requires_json,created_at) VALUES(?,?,?,?,?)`, row.id, row.name, row.description, row.requires, row.createdAt)
@@ -300,7 +315,7 @@ func ensureNodeDefinition(ctx context.Context, tx *sql.Tx, row legacyNodeDef) (s
 		}
 		return id, nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO node_definition(id,name,description,type,requires_json,inputs_json,outputs_json,created_at) VALUES(?,?,?,?,?,?,?,?)`, row.id, row.name, row.description, row.nodeType, row.requires, row.inputs, row.outputs, row.createdAt)
@@ -320,7 +335,7 @@ func ensureNodeExecutor(ctx context.Context, tx *sql.Tx, row legacyNodeExecutor,
 		}
 		return id, nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO node_executor(id,node_definition_id,version,name,description,updates,created_at) VALUES(?,?,?,?,?,?,?)`, row.id, definitionID, row.version, row.name, row.description, row.updates, row.createdAt)
@@ -340,7 +355,7 @@ func ensureWorkflow(ctx context.Context, tx *sql.Tx, row legacyWorkflow) (string
 		}
 		return id, nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO workflow(id,name,version,description,projects_json,created_at) VALUES(?,?,?,?,?,?)`, row.id, row.name, row.version, row.description, row.projects, row.createdAt)
@@ -359,7 +374,7 @@ func ensureNodeInstance(ctx context.Context, tx *sql.Tx, row legacyNodeInstance,
 		}
 		return nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO node_instance(id,workflow_id,node_id,node_definition_id,node_executor_id,display_name,description,llm_provider,llm_model,inputs_json,depends_on_json,config_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, row.id, workflowID, row.nodeID, definitionID, executorID, row.displayName, row.description, row.provider, row.model, row.inputs, row.dependsOn, row.config)
@@ -370,6 +385,7 @@ func ensureNodeInstance(ctx context.Context, tx *sql.Tx, row legacyNodeInstance,
 }
 
 func ensureRun(ctx context.Context, tx *sql.Tx, row legacyRun) error {
+	row.executionID = row.id
 	var got legacyRun
 	err := tx.QueryRowContext(ctx, `SELECT id,workflow_name,workflow_version,status,workflow_file,execution_id,error,stopped_reason,started_at,finished_at FROM workflow_run_history WHERE id=?`, row.id).Scan(&got.id, &got.workflowName, &got.workflowVersion, &got.status, &got.workflowFile, &got.executionID, &got.runError, &got.stoppedReason, &got.startedAt, &got.finishedAt)
 	if err == nil {
@@ -378,7 +394,7 @@ func ensureRun(ctx context.Context, tx *sql.Tx, row legacyRun) error {
 		}
 		return nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO workflow_run_history(id,workflow_name,workflow_version,status,workflow_file,execution_id,error,stopped_reason,started_at,finished_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, row.id, row.workflowName, row.workflowVersion, row.status, row.workflowFile, row.executionID, row.runError, row.stoppedReason, row.startedAt, row.finishedAt)
@@ -397,7 +413,7 @@ func ensureNodeRun(ctx context.Context, tx *sql.Tx, row legacyNodeRun) error {
 		}
 		return nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO workflow_node_run_history(id,run_id,node_id,node_definition,node_executor,round,status,error,error_kind,inputs_json,outputs_json,started_at,finished_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, row.id, row.runID, row.nodeID, row.definition, row.executor, row.round, row.status, row.runError, row.errorKind, row.inputs, row.outputs, row.startedAt, row.finishedAt)
@@ -416,10 +432,20 @@ func conflictCause(kind, identity string, cause error) error {
 
 func jsonEqual(left, right string) bool {
 	var a, b any
-	return json.Unmarshal([]byte(left), &a) == nil && json.Unmarshal([]byte(right), &b) == nil && fmt.Sprint(a) == fmt.Sprint(b)
+	return json.Unmarshal([]byte(left), &a) == nil && json.Unmarshal([]byte(right), &b) == nil && reflect.DeepEqual(a, b)
 }
 
 type stagedArtifact struct{ sourcePath, stagedPath, destinationPath string }
+
+type legacyExecutionPath struct {
+	source, destination string
+}
+
+type artifactGroup struct {
+	stagedRun, destinationRun string
+	items                     []stagedArtifact
+	exists                    bool
+}
 
 var legacyArtifactName = regexp.MustCompile(`^[0-9]+\.json$`)
 
@@ -432,13 +458,13 @@ func stageLegacyArtifacts(source, destination runtimepath.Paths, snapshot legacy
 		return nil, func() {}, err
 	}
 	cleanup := func() { _ = os.RemoveAll(stageRoot) }
-	runExecutions := make(map[string]string, len(snapshot.runs))
+	runExecutions := make(map[string]legacyExecutionPath, len(snapshot.runs))
 	for _, run := range snapshot.runs {
-		runExecutions[run.id] = run.executionID
+		runExecutions[run.id] = legacyExecutionPath{source: run.executionID, destination: run.id}
 	}
 	paths := map[string]stagedArtifact{}
 	for _, nodeRun := range snapshot.nodeRuns {
-		executionID, ok := runExecutions[nodeRun.runID]
+		executionPath, ok := runExecutions[nodeRun.runID]
 		if !ok {
 			cleanup()
 			return nil, func() {}, fmt.Errorf("node run %q references unknown run %q", nodeRun.id, nodeRun.runID)
@@ -452,8 +478,8 @@ func stageLegacyArtifacts(source, destination runtimepath.Paths, snapshot legacy
 			if !legacyArtifactName.MatchString(ref.URI) {
 				continue
 			}
-			sourcePath := filepath.Join(source.ArtifactsDir(executionID), ref.URI)
-			destinationPath := filepath.Join(destination.ArtifactsDir(executionID), ref.URI)
+			sourcePath := filepath.Join(source.ArtifactsDir(executionPath.source), ref.URI)
+			destinationPath := filepath.Join(destination.ArtifactsDir(executionPath.destination), ref.URI)
 			if existing, ok := paths[destinationPath]; ok {
 				if existing.sourcePath != sourcePath {
 					cleanup()
@@ -461,12 +487,12 @@ func stageLegacyArtifacts(source, destination runtimepath.Paths, snapshot legacy
 				}
 				continue
 			}
-			if err := stageFile(sourcePath, filepath.Join(stageRoot, executionID, "artifacts", ref.URI)); err != nil {
+			if err := stageFile(sourcePath, filepath.Join(stageRoot, executionPath.destination, "artifacts", ref.URI)); err != nil {
 				cleanup()
 				return nil, func() {}, err
 			}
 			paths[destinationPath] = stagedArtifact{
-				sourcePath: sourcePath, stagedPath: filepath.Join(stageRoot, executionID, "artifacts", ref.URI),
+				sourcePath: sourcePath, stagedPath: filepath.Join(stageRoot, executionPath.destination, "artifacts", ref.URI),
 				destinationPath: destinationPath,
 			}
 		}
@@ -522,25 +548,85 @@ func stageFile(sourcePath, stagedPath string) error {
 }
 
 func publishLegacyArtifacts(items []stagedArtifact) error {
+	grouped := map[string]*artifactGroup{}
 	for _, item := range items {
-		if data, err := os.ReadFile(item.destinationPath); err == nil {
-			staged, readErr := os.ReadFile(item.stagedPath)
-			if readErr != nil {
-				return readErr
+		destinationRun := filepath.Dir(filepath.Dir(item.destinationPath))
+		group := grouped[destinationRun]
+		if group == nil {
+			group = &artifactGroup{
+				stagedRun: filepath.Dir(filepath.Dir(item.stagedPath)), destinationRun: destinationRun,
 			}
-			if !bytes.Equal(data, staged) {
-				return conflict("artifact", item.destinationPath)
-			}
+			grouped[destinationRun] = group
+		}
+		group.items = append(group.items, item)
+	}
+	keys := make([]string, 0, len(grouped))
+	for key := range grouped {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		group := grouped[key]
+		info, err := os.Stat(group.destinationRun)
+		if os.IsNotExist(err) {
 			continue
-		} else if !os.IsNotExist(err) {
+		}
+		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(item.destinationPath), 0o755); err != nil {
-			return err
+		if !info.IsDir() {
+			return conflict("run artifacts", group.destinationRun)
 		}
-		if err := os.Rename(item.stagedPath, item.destinationPath); err != nil {
-			return err
+		group.exists = true
+		for _, item := range group.items {
+			if err := requireEqualFiles(item.stagedPath, item.destinationPath); err != nil {
+				return err
+			}
 		}
 	}
+
+	published := make([]*artifactGroup, 0, len(grouped))
+	for _, key := range keys {
+		group := grouped[key]
+		if group.exists {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(group.destinationRun), 0o755); err != nil {
+			return rollbackPublishedArtifacts(published, err)
+		}
+		if err := os.Rename(group.stagedRun, group.destinationRun); err != nil {
+			return rollbackPublishedArtifacts(published, err)
+		}
+		published = append(published, group)
+	}
 	return nil
+}
+
+func requireEqualFiles(left, right string) error {
+	leftData, err := os.ReadFile(left)
+	if err != nil {
+		return err
+	}
+	rightData, err := os.ReadFile(right)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return conflict("artifact", right)
+		}
+		return err
+	}
+	if !bytes.Equal(leftData, rightData) {
+		return conflict("artifact", right)
+	}
+	return nil
+}
+
+func rollbackPublishedArtifacts(groups []*artifactGroup, cause error) error {
+	var rollbackErrors []error
+	for i := len(groups) - 1; i >= 0; i-- {
+		group := groups[i]
+		if err := os.Rename(group.destinationRun, group.stagedRun); err != nil {
+			rollbackErrors = append(rollbackErrors, fmt.Errorf("restore %s: %w", group.destinationRun, err))
+		}
+	}
+	return errors.Join(append([]error{cause}, rollbackErrors...)...)
 }

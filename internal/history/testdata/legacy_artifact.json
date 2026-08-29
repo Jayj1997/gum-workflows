@@ -1,0 +1,6 @@
+{
+  "ID": "quality-result",
+  "Kind": "QualityCheckResult",
+  "Version": "1",
+  "Data": "legacy passed"
+}
