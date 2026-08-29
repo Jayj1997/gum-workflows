@@ -209,6 +209,14 @@ nodes:
 
 `go-static-analysis` 固定运行 full-scope `go vet -json ./...`；`go-coverage-check` 固定运行禁用缓存的 full-scope Go JSON 测试并按 statement coverage 阈值判定；`go-race-check` 在平台、CGO 和 C 编译器 Requirement 满足后固定运行 `go test -race -count=1 -json ./...`；`go-complexity-check` 通过用户 Go 运行内嵌标准库 AST Analyzer，默认单函数上限 15，并默认排除测试、generated files 和 vendor。四者都以 `passed`、`failed`、`not-applicable` 的严格 `qualityCheckResult/v1` 表达业务结果，工具或产物故障是 Structural Error。Race 的 `passed` 只表示本次执行未观察到 race，不声称项目不存在数据竞争。真实 `llm-chat` 仍需后续实施。
 
+### 当前平台边界
+
+- 四个内置 Code Quality Check 当前只支持 Darwin/Linux；Windows 原生、PowerShell 与 WSL 后端尚未实现。
+- Host Execution Environment 直接继承用户的 PATH、Go 配置、缓存、工具链与网络策略，只适合运行受信任项目；它不是安全沙箱，也不提供容器、CPU 或内存隔离。
+- ScriptNode 响应用户取消并限制日志大小，但不设置自动 timeout；长时间运行的检查需要用户主动取消。
+- SourceCode Artifact 只引用当前 In-place Project Workspace。历史保存当轮消费的 ArtifactRef、配置、结果与诊断，不保存源码快照，也不能据此恢复当时的源码。
+- Static 只执行 `go vet`，不代表完整静态分析；Coverage 只报告本次 full-scope Go 测试的 statement coverage；Race 只报告本次执行是否观察到 race。
+
 ## LLM Config 方向
 
 LLM Config 是独立的用户级配置，不属于某个 Agent Node：

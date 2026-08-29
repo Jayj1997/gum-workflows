@@ -219,11 +219,15 @@ func TestRunWritesOnlyLocalDataRootAndIsVisibleToHistory(t *testing.T) {
 		t.Fatalf("start CLI run: %v", err)
 	}
 	waitForOutput(t, &output, "[requirement] Enter requirement", cmd)
-	if _, err := io.WriteString(stdin, "implement the requested change\n\nf\n\n"); err != nil {
-		t.Fatalf("write CLI input: %v", err)
+	if _, err := io.WriteString(stdin, "implement the requested change\r\r"); err != nil {
+		t.Fatalf("write CLI requirement: %v", err)
+	}
+	waitForOutput(t, &output, "Continue or Finish? [c/F]:", cmd)
+	if _, err := io.WriteString(stdin, "\r"); err != nil {
+		t.Fatalf("finish CLI requirements: %v", err)
 	}
 
-	stateFile := waitForReviewSuccess(t, dataRoot, cmd, &output)
+	stateFile := waitForNodeSuccess(t, dataRoot, "backend", cmd, &output)
 	if _, err := stdin.Write([]byte{3}); err != nil {
 		t.Fatalf("send Ctrl-C to CLI run after %s: %v", stateFile, err)
 	}
@@ -267,10 +271,10 @@ func TestRunWritesOnlyLocalDataRootAndIsVisibleToHistory(t *testing.T) {
 	}
 }
 
-func waitForReviewSuccess(t *testing.T, dataRoot string, cmd *exec.Cmd, output *lockedBuffer) string {
+func waitForNodeSuccess(t *testing.T, dataRoot, nodeID string, cmd *exec.Cmd, output *lockedBuffer) string {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
-	pattern := filepath.Join(dataRoot, "runs", "*", "nodes", "review", "state.json")
+	pattern := filepath.Join(dataRoot, "runs", "*", "nodes", nodeID, "state.json")
 	for time.Now().Before(deadline) {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
@@ -286,7 +290,7 @@ func waitForReviewSuccess(t *testing.T, dataRoot string, cmd *exec.Cmd, output *
 	}
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait()
-	t.Fatalf("review did not succeed before timeout:\n%s", output.String())
+	t.Fatalf("node %q did not succeed before timeout:\n%s", nodeID, output.String())
 	return ""
 }
 

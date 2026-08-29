@@ -204,7 +204,7 @@ Artifact 本体与大型文件继续存于文件系统，SQLite 保存引用、�
     └── logs/
 ```
 
-Local Data Root 由平台 Adapter 按操作系统规范解析，领域模型不保存硬编码的 macOS/Windows 根路径。01–14 的项目级 `.workflow/gum-workflows.db` 在其范围内保持不变；P9 开工前单独决定开发期数据是否需要一次性迁移。产品模式不得长期维持“项目库与用户库都是事实来源”的双写结构。
+Local Data Root 由平台 Adapter 按操作系统规范解析，领域模型不保存硬编码的 macOS/Windows 根路径。该切换已在 14 后实现：当前 `run`、Artifact 与全局 `history` 只写用户级 Local Data Root，新 Run 不再写项目内 `.workflow`；需要保留的开发期 legacy 数据通过显式、幂等的一次性迁移进入新事实来源，不维持新旧位置双写。
 
 ### 5.2 Workflow / Draft / Revision
 
