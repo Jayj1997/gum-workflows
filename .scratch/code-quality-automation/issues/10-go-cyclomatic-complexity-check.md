@@ -19,3 +19,4 @@
 ## Comments
 
 - 2026-08-30：实现完成。新增 `go-complexity-check` v1 定义、不可变 POSIX Bundle、内嵌标准库 Go AST Analyzer、完整 config Validation、严格 Complexity Result/Adapter，以及真实 Bundle 与 Engine/Node Run 验收；等待人工验收。
+- 2026-08-30：双轴 review 发现并修复原始文件树遍历与声明的 Go `./...` package scope 不一致、嵌套 vendor 风险，以及 package-level 匿名函数中的嵌套匿名函数漏计；Analyzer 改用用户 Go 的 `go list -e -json ./...` 确定源文件成员，复核无剩余发现。

@@ -14,7 +14,10 @@ import (
 
 const (
 	// ComplexityCheck identifies the go-complexity-check result shape.
-	ComplexityCheck = "complexity"
+	ComplexityCheck            = "complexity"
+	complexityTool             = "go ast"
+	complexityThresholdFinding = "complexity-threshold"
+	complexitySyntaxFinding    = "syntax-error"
 )
 
 // ComplexityResult is the strict qualityCheckResult/v1 payload for cyclomatic complexity.
@@ -83,7 +86,7 @@ func (r ComplexityResult) Validate() error {
 	if r.EffectiveConfig.PackageScope != "./..." || r.EffectiveConfig.MaximumCyclomaticComplexity < 1 || !r.EffectiveConfig.ExcludeVendor {
 		return fmt.Errorf("effectiveConfig must contain packageScope ./..., a positive maximum, and excludeVendor true")
 	}
-	if r.Toolchain.Tool != "go ast" || strings.TrimSpace(r.Toolchain.LauncherVersion) == "" ||
+	if r.Toolchain.Tool != complexityTool || strings.TrimSpace(r.Toolchain.LauncherVersion) == "" ||
 		strings.TrimSpace(r.Toolchain.FinalVersion) == "" || strings.TrimSpace(r.Toolchain.GOROOT) == "" ||
 		strings.TrimSpace(r.Toolchain.GOOS) == "" || strings.TrimSpace(r.Toolchain.GOARCH) == "" ||
 		strings.TrimSpace(r.Toolchain.CGOEnabled) == "" {
@@ -120,11 +123,11 @@ func (r ComplexityResult) Validate() error {
 		return fmt.Errorf("maxCyclomaticComplexity must be available and positive when functions were analyzed")
 	}
 	for i, finding := range r.Findings {
-		if finding.Tool != "go ast" || (finding.Kind != "complexity-threshold" && finding.Kind != "syntax-error") ||
+		if finding.Tool != complexityTool || (finding.Kind != complexityThresholdFinding && finding.Kind != complexitySyntaxFinding) ||
 			invalidComplexityLocation(finding.File, finding.Line) || strings.TrimSpace(finding.Message) == "" {
 			return fmt.Errorf("findings[%d] must be a located go ast complexity or syntax finding", i)
 		}
-		if finding.Kind == "complexity-threshold" && (finding.Function == "" || finding.Complexity == nil || *finding.Complexity <= r.EffectiveConfig.MaximumCyclomaticComplexity) {
+		if finding.Kind == complexityThresholdFinding && (finding.Function == "" || finding.Complexity == nil || *finding.Complexity <= r.EffectiveConfig.MaximumCyclomaticComplexity) {
 			return fmt.Errorf("findings[%d] must identify an over-threshold function", i)
 		}
 	}

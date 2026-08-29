@@ -13,6 +13,8 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/node"
 )
 
+const complexityAnalyzerAPIVersion = "goComplexityAnalyzer/v1"
+
 // ComplexityPolicy is the validated per-instance threshold and source selection policy.
 type ComplexityPolicy struct {
 	MaximumCyclomaticComplexity int
@@ -71,14 +73,14 @@ func AdaptComplexityResult(record ExecutionRecord, policy ComplexityPolicy) (Com
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return ComplexityResult{}, node.Structural(fmt.Errorf("complexity result adapter: complexity.json contains more than one JSON value"))
 	}
-	if output.APIVersion != "goComplexityAnalyzer/v1" || output.Functions == nil || output.SyntaxErrors == nil {
+	if output.APIVersion != complexityAnalyzerAPIVersion || output.Functions == nil || output.SyntaxErrors == nil {
 		return ComplexityResult{}, node.Structural(fmt.Errorf("complexity result adapter: complexity.json has an invalid contract"))
 	}
 	toolchain, err := readToolchain(record.ToolOutputDir)
 	if err != nil {
 		return ComplexityResult{}, node.Structural(fmt.Errorf("complexity result adapter: %w", err))
 	}
-	toolchain.Tool = "go ast"
+	toolchain.Tool = complexityTool
 	result := ComplexityResult{
 		APIVersion: qualityCheckResultAPIVersion, Check: ComplexityCheck, Code: record.Code,
 		EffectiveConfig: ComplexityEffectiveConfig{PackageScope: "./...", MaximumCyclomaticComplexity: policy.MaximumCyclomaticComplexity, IncludeTests: policy.IncludeTests, ExcludeGeneratedFiles: policy.ExcludeGeneratedFiles, ExcludeVendor: true},
@@ -103,7 +105,7 @@ func AdaptComplexityResult(record ExecutionRecord, policy ComplexityPolicy) (Com
 		if syntaxError.Vendor || (!policy.IncludeTests && syntaxError.Test) || (policy.ExcludeGeneratedFiles && syntaxError.Generated) {
 			continue
 		}
-		result.Findings = append(result.Findings, ComplexityFinding{Tool: "go ast", Kind: "syntax-error", File: syntaxError.File, Line: syntaxError.Line, Message: syntaxError.Message})
+		result.Findings = append(result.Findings, ComplexityFinding{Tool: complexityTool, Kind: complexitySyntaxFinding, File: syntaxError.File, Line: syntaxError.Line, Message: syntaxError.Message})
 	}
 	maxComplexity, over := 0, 0
 	for _, function := range selected {
@@ -113,7 +115,7 @@ func AdaptComplexityResult(record ExecutionRecord, policy ComplexityPolicy) (Com
 		if function.Complexity > policy.MaximumCyclomaticComplexity {
 			over++
 			value := function.Complexity
-			result.Findings = append(result.Findings, ComplexityFinding{Tool: "go ast", Kind: "complexity-threshold", File: function.File, Line: function.Line, Function: function.Name, Complexity: &value, Message: fmt.Sprintf("function %s has cyclomatic complexity %d, exceeding maximum %d", function.Name, function.Complexity, policy.MaximumCyclomaticComplexity)})
+			result.Findings = append(result.Findings, ComplexityFinding{Tool: complexityTool, Kind: complexityThresholdFinding, File: function.File, Line: function.Line, Function: function.Name, Complexity: &value, Message: fmt.Sprintf("function %s has cyclomatic complexity %d, exceeding maximum %d", function.Name, function.Complexity, policy.MaximumCyclomaticComplexity)})
 		}
 	}
 	count := len(selected)

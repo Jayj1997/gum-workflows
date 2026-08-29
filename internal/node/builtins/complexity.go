@@ -13,7 +13,7 @@ const (
 	complexityDefinition               = "go-complexity-check"
 	complexityVersion                  = "v1"
 	complexityAdapterID                = "go-complexity-check/v1"
-	complexityBundleDigest             = "sha256:5d86984e1250854d2ccfbb66376083747168f13efdf1457853bc4d88345b1734"
+	complexityBundleDigest             = "sha256:e1508923ccc4a9002d27270b268c4d03a583512458dd215c65a811b64faab969"
 	defaultMaximumCyclomaticComplexity = 15
 )
 
