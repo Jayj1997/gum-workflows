@@ -9,7 +9,7 @@
 
 **MVP 与平台核心 01–14 已全部完成**：四层定义体系（Node Type / Node Definition / Node Executor / Node Instance）、用户级 LLM 配置解析、允许有环的迭代 Execution Engine、human-input / human-approval、advise 重试、结构性/交互性错误二分、本地 SQLite 定义与 Node Run 历史、`workflow validate|run|history` CLI，以及 `examples/fullstack` 人工在环 Demo。运行在全图静止后继续保持 Running，直至用户 Ctrl-C / SIGTERM 记为 Stopped。设计说明见 `docs/domain-model.md`。
 
-**14 后产品化正在实施**：Local Data Root、In-place Project Workspace、`project.code` Workflow Context Binding，以及真实 `go-static-analysis` / `go-coverage-check` / `go-race-check` Code Quality Check 已落地。三者使用不可变 POSIX Script Bundle 在 Darwin/Linux 的用户 PATH 上原地运行；Coverage 禁用 Go test cache、运行 full scope Go JSON 测试，并按默认 80%（可配置）的 statement coverage 阈值生成严格 Result；Race 在满足平台、CGO 与 C 编译器 Requirement 后运行 full scope Race Detector，只报告本次是否观察到 race。Complexity 尚未实现。
+**14 后产品化正在实施**：Local Data Root、In-place Project Workspace、`project.code` Workflow Context Binding，以及真实 `go-static-analysis` / `go-coverage-check` / `go-race-check` / `go-complexity-check` Code Quality Check 已落地。四者使用不可变 POSIX Script Bundle 在 Darwin/Linux 的用户 PATH 上原地运行；Coverage 禁用 Go test cache、运行 full scope Go JSON 测试，并按默认 80%（可配置）的 statement coverage 阈值生成严格 Result；Race 在满足平台、CGO 与 C 编译器 Requirement 后运行 full scope Race Detector，只报告本次是否观察到 race；Complexity 运行内嵌标准库 Go AST Analyzer，默认单函数上限 15，并默认排除测试、generated files 和 vendor。
 
 后续版本方向（需先升级设计文档）：真实 Coding Agent Adapter（替换 MockCodingAgent）、真实 OpenAPI Generator、Skipped 传播、重试/超时等 workflow/v2 字段。
 

@@ -1,0 +1,18 @@
+apiVersion: automationScript/v1
+kind: automationScript
+node: go-complexity-check
+executor: v1
+entry: check.sh
+platforms: [darwin, linux]
+requirements:
+  executables: [sh, go]
+toolOutputs:
+  - path: complexity.json
+    required: true
+  - path: analyzer-exit.txt
+    required: true
+  - path: go-version.txt
+    required: true
+  - path: go-env.txt
+    required: true
+resultAdapter: go-complexity-check/v1

@@ -1,0 +1,8 @@
+apiVersion: nodeExecutor/v1
+kind: nodeExecutor
+metadata:
+  name: go-complexity-check-v1
+  description: go-complexity-check 的首个不可变 POSIX Script Bundle。
+node: go-complexity-check
+version: v1
+updates: 首个版本：运行内嵌标准库 Go AST Analyzer 并应用单函数复杂度策略。

@@ -1,0 +1,15 @@
+apiVersion: nodeDefinition/v1
+kind: nodeDefinition
+metadata:
+  name: go-complexity-check
+  description: 使用内嵌 Go AST Analyzer 检查单函数圈复杂度。
+type: automation
+requires: [project]
+inputs:
+  code:
+    type: SourceCode
+    description: 指向原地 Project Workspace 的代码引用。
+outputs:
+  result:
+    type: QualityCheckResult
+    description: 严格的圈复杂度质量检查结果。

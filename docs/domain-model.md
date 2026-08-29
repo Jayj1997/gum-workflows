@@ -88,9 +88,10 @@ Run 前会交叉检查：
 | `go-static-analysis` | automation | `code: SourceCode` | `result: QualityCheckResult` |
 | `go-coverage-check` | automation | `code: SourceCode` | `result: QualityCheckResult` |
 | `go-race-check` | automation | `code: SourceCode` | `result: QualityCheckResult` |
+| `go-complexity-check` | automation | `code: SourceCode` | `result: QualityCheckResult` |
 | `human-approval` | human | —；以 dependsOn 挂接被审 Node | `approve: bool`、`advise: markdown` |
 
-Agent 与 OpenAPI 生成目前仍是 Mock 实现；真实网络模型调用和真实 generator 属后续设计。`go-static-analysis`、`go-coverage-check` 与 `go-race-check` 是已落地的真实 automation：各自固定 v1 POSIX Script Bundle，在 Darwin/Linux 的 Host Execution Environment 中使用用户 PATH 原地运行，不接受实例级脚本、命令或 scope 覆盖。
+Agent 与 OpenAPI 生成目前仍是 Mock 实现；真实网络模型调用和真实 generator 属后续设计。四个 Go 质量检查是已落地的真实 automation：各自固定 v1 POSIX Script Bundle，在 Darwin/Linux 的 Host Execution Environment 中使用用户 PATH 原地运行，不接受实例级脚本、命令或 scope 覆盖。Complexity Bundle 通过用户 Go 运行仅依赖标准库的内嵌 AST Analyzer；Adapter 独立应用单函数上限以及测试/generated/vendor 排除策略。
 
 Static Script 的 stdout/stderr 只流式进入 Node Run 日志；正式工具产物进入该轮独立的 tool-output 目录。内置 Result Adapter 从退出状态、`vet.json`、package/toolchain 产物和日志生成严格的 `qualityCheckResult/v1`：无诊断为 `passed`，vet/package 诊断为 `failed`，无 Go package 为 `not-applicable`；工具、I/O、产物或 Schema 损坏是 Structural Error，不产生 Result Artifact。业务 `failed` 仍是成功 Node Run 的普通 `result: QualityCheckResult` 输出。
 
