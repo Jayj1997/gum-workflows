@@ -8,6 +8,7 @@ import (
 	"io"
 	"os/exec"
 	"path"
+	"reflect"
 	"runtime"
 	"slices"
 	"sort"
@@ -114,14 +115,18 @@ type Bundle struct {
 
 // Validate checks bundle identity and ensures the declared entry is present.
 func (b Bundle) Validate(nodeName, executorVersion string) error {
-	if err := b.Manifest.Validate(); err != nil {
-		return err
+	if len(b.ManifestBytes) == 0 {
+		return fmt.Errorf("manifest bytes must not be empty")
+	}
+	immutableManifest, err := LoadManifest(b.ManifestBytes)
+	if err != nil {
+		return fmt.Errorf("manifest bytes: %w", err)
+	}
+	if !reflect.DeepEqual(b.Manifest, immutableManifest) {
+		return fmt.Errorf("parsed manifest does not match immutable manifest bytes")
 	}
 	if b.Manifest.Node != nodeName || b.Manifest.Executor != executorVersion {
 		return fmt.Errorf("bundle identity (%s, %s) does not match executor (%s, %s)", b.Manifest.Node, b.Manifest.Executor, nodeName, executorVersion)
-	}
-	if len(b.ManifestBytes) == 0 {
-		return fmt.Errorf("manifest bytes must not be empty")
 	}
 	if b.ExpectedDigest == "" {
 		return fmt.Errorf("expected bundle digest must not be empty")

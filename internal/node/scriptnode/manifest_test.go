@@ -97,4 +97,9 @@ resultAdapter: go-static-analysis/v1
 	if err := bundle.Validate("other-node", "v1"); err == nil {
 		t.Fatal("Validate(identity mismatch) = nil error")
 	}
+	bundle.Files["check.sh"] = []byte("#!/bin/sh\n")
+	bundle.Manifest.ToolOutputs[0].Path = "changed.json"
+	if err := bundle.Validate("go-static-analysis", "v1"); err == nil || !strings.Contains(err.Error(), "manifest bytes") {
+		t.Fatalf("Validate(mutated parsed manifest) error = %v, want immutable manifest mismatch", err)
+	}
 }
