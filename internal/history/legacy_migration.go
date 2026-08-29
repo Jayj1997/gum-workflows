@@ -47,20 +47,23 @@ func MigrateLegacy(ctx context.Context, source, destination runtimepath.Paths) e
 		return fmt.Errorf("migrate legacy history: open destination: %w", err)
 	}
 	defer target.Close()
-	if err := preflightLegacySnapshot(ctx, target.db, snapshot); err != nil {
-		return fmt.Errorf("migrate legacy history: preflight: %w", err)
+	tx, err := beginLegacyImport(ctx, target.db, snapshot)
+	if err != nil {
+		return fmt.Errorf("migrate legacy history: prepare destination: %w", err)
 	}
+	defer func() { _ = tx.Rollback() }()
 
 	staged, cleanup, err := stageLegacyArtifacts(source, destination, snapshot)
 	if err != nil {
 		return fmt.Errorf("migrate legacy history: stage artifacts: %w", err)
 	}
 	defer cleanup()
-	if err := publishLegacyArtifacts(staged); err != nil {
+	rollbackArtifacts, err := publishLegacyArtifacts(staged)
+	if err != nil {
 		return fmt.Errorf("migrate legacy history: publish artifacts: %w", err)
 	}
-	if err := commitLegacySnapshot(ctx, target.db, snapshot); err != nil {
-		return fmt.Errorf("migrate legacy history: commit: %w", err)
+	if err := tx.Commit(); err != nil {
+		return errors.Join(fmt.Errorf("migrate legacy history: commit: %w", err), rollbackArtifacts())
 	}
 	return nil
 }
@@ -192,28 +195,16 @@ func loadRows(ctx context.Context, db *sql.DB, query string, scan func(*sql.Rows
 	return rows.Err()
 }
 
-func preflightLegacySnapshot(ctx context.Context, db *sql.DB, snapshot legacySnapshot) error {
+func beginLegacyImport(ctx context.Context, db *sql.DB, snapshot legacySnapshot) (*sql.Tx, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
-	return applyLegacySnapshot(ctx, tx, snapshot)
-}
-
-func commitLegacySnapshot(ctx context.Context, db *sql.DB, snapshot legacySnapshot) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
 	if err := applyLegacySnapshot(ctx, tx, snapshot); err != nil {
-		return err
+		_ = tx.Rollback()
+		return nil, err
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
-	}
-	return nil
+	return tx, nil
 }
 
 func applyLegacySnapshot(ctx context.Context, tx *sql.Tx, snapshot legacySnapshot) error {
@@ -547,7 +538,7 @@ func stageFile(sourcePath, stagedPath string) error {
 	return closeErr
 }
 
-func publishLegacyArtifacts(items []stagedArtifact) error {
+func publishLegacyArtifacts(items []stagedArtifact) (func() error, error) {
 	grouped := map[string]*artifactGroup{}
 	for _, item := range items {
 		destinationRun := filepath.Dir(filepath.Dir(item.destinationPath))
@@ -568,19 +559,19 @@ func publishLegacyArtifacts(items []stagedArtifact) error {
 	for _, key := range keys {
 		group := grouped[key]
 		info, err := os.Stat(group.destinationRun)
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if !info.IsDir() {
-			return conflict("run artifacts", group.destinationRun)
+			return nil, conflict("run artifacts", group.destinationRun)
 		}
 		group.exists = true
 		for _, item := range group.items {
 			if err := requireEqualFiles(item.stagedPath, item.destinationPath); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
@@ -592,14 +583,14 @@ func publishLegacyArtifacts(items []stagedArtifact) error {
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(group.destinationRun), 0o755); err != nil {
-			return rollbackPublishedArtifacts(published, err)
+			return nil, errors.Join(err, restorePublishedArtifacts(published))
 		}
 		if err := os.Rename(group.stagedRun, group.destinationRun); err != nil {
-			return rollbackPublishedArtifacts(published, err)
+			return nil, errors.Join(err, restorePublishedArtifacts(published))
 		}
 		published = append(published, group)
 	}
-	return nil
+	return func() error { return restorePublishedArtifacts(published) }, nil
 }
 
 func requireEqualFiles(left, right string) error {
@@ -609,7 +600,7 @@ func requireEqualFiles(left, right string) error {
 	}
 	rightData, err := os.ReadFile(right)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return conflict("artifact", right)
 		}
 		return err
@@ -620,7 +611,7 @@ func requireEqualFiles(left, right string) error {
 	return nil
 }
 
-func rollbackPublishedArtifacts(groups []*artifactGroup, cause error) error {
+func restorePublishedArtifacts(groups []*artifactGroup) error {
 	var rollbackErrors []error
 	for i := len(groups) - 1; i >= 0; i-- {
 		group := groups[i]
@@ -628,5 +619,5 @@ func rollbackPublishedArtifacts(groups []*artifactGroup, cause error) error {
 			rollbackErrors = append(rollbackErrors, fmt.Errorf("restore %s: %w", group.destinationRun, err))
 		}
 	}
-	return errors.Join(append([]error{cause}, rollbackErrors...)...)
+	return errors.Join(rollbackErrors...)
 }

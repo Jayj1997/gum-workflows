@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -184,7 +185,7 @@ func TestMigrateLegacyRejectsConflictingRunWithoutPublishingArtifacts(t *testing
 	if run == nil || run.Workflow != "different-workflow" {
 		t.Fatalf("conflicting destination Run was modified: %+v", run)
 	}
-	if _, err := os.Stat(filepath.Join(destination.ArtifactsDir(fixture.runID), fixture.ref.URI)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(destination.ArtifactsDir(fixture.runID), fixture.ref.URI)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("conflict published an Artifact: %v", err)
 	}
 }
@@ -262,6 +263,33 @@ func TestMigrateLegacyMissingArtifactRollsBackVisibleHistory(t *testing.T) {
 	}
 	if detail != nil {
 		t.Fatalf("failed migration published partial Node Run: %+v", detail)
+	}
+}
+
+func TestMigrateLegacyCommitFailureRestoresPublishedArtifacts(t *testing.T) {
+	ctx := context.Background()
+	source, destination := migrationPaths(t)
+	fixture := seedLegacyFixture(t, ctx, source)
+	seedCommitFailureTarget(t, ctx, destination)
+
+	if err := history.MigrateLegacy(ctx, source, destination); err == nil {
+		t.Fatal("MigrateLegacy() = nil error, want commit-time failure")
+	}
+
+	target, err := history.OpenReadOnly(ctx, destination.Database())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	run, err := target.GetRun(ctx, fixture.runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run != nil {
+		t.Fatalf("commit failure published Run: %+v", run)
+	}
+	if _, err := os.Stat(destination.ExecutionDir(fixture.runID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("commit failure left published Run artifacts: %v", err)
 	}
 }
 
@@ -440,6 +468,35 @@ func seedEquivalentTargetDefinitions(t *testing.T, ctx context.Context, paths ru
 			ID: "target-executor-id", Node: "go-static-analysis", Version: "v1", Name: "Go Static Analysis",
 		}},
 	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedCommitFailureTarget(t *testing.T, ctx context.Context, paths runtimepath.Paths) {
+	t.Helper()
+	store, err := history.Open(ctx, paths.Database())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", paths.Database())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+CREATE TABLE migration_commit_parent (id TEXT PRIMARY KEY);
+CREATE TABLE migration_commit_failure (
+  parent_id TEXT REFERENCES migration_commit_parent(id) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE TRIGGER fail_legacy_migration_commit
+AFTER INSERT ON workflow_run_history
+BEGIN
+  INSERT INTO migration_commit_failure(parent_id) VALUES ('missing-parent');
+END;
+`); err != nil {
 		t.Fatal(err)
 	}
 }
