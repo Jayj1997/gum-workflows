@@ -28,6 +28,16 @@ type WorkflowApplication interface {
 	GetDraft(ctx context.Context, workflowID string) (DraftView, error)
 	UpdateDraft(ctx context.Context, input UpdateDraftInput) (DraftUpdateView, error)
 	ListNodeCatalog(ctx context.Context) ([]nodecatalog.Entry, error)
+	GetLLMSettings(ctx context.Context) (LLMSettingsView, error)
+	CreateLLMProvider(ctx context.Context, input CreateLLMProviderInput) (LLMProviderView, error)
+	UpdateLLMProvider(ctx context.Context, input UpdateLLMProviderInput) (LLMProviderView, error)
+	DeleteLLMProvider(ctx context.Context, providerID string) error
+	SetDefaultLLMProvider(ctx context.Context, providerID string) (LLMSettingsView, error)
+	CreateLLMModel(ctx context.Context, input CreateLLMModelInput) (LLMModelView, error)
+	UpdateLLMModel(ctx context.Context, input UpdateLLMModelInput) (LLMModelView, error)
+	DeleteLLMModel(ctx context.Context, providerID, modelID string) error
+	SetDefaultLLMModel(ctx context.Context, providerID, modelID string) (LLMSettingsView, error)
+	ResolveDefaultLLMModel(ctx context.Context) (ResolvedLLMModelView, error)
 }
 
 // DraftView is the current mutable Product Workflow definition returned to UI adapters.
@@ -108,14 +118,16 @@ type WorkflowView struct {
 
 // Application coordinates Product Workflow use cases for UI adapters.
 type Application struct {
-	repository productworkflow.Repository
-	catalog    *nodecatalog.Registry
+	repository  productworkflow.Repository
+	llmSettings productworkflow.LLMSettingsRepository
+	catalog     *nodecatalog.Registry
 }
 
 // NewApplication creates the Product Application with injected persistence and
 // the explicitly assembled product Node Definition/Executor registry.
 func NewApplication(repository productworkflow.Repository, catalog *nodecatalog.Registry) *Application {
-	return &Application{repository: repository, catalog: catalog}
+	settings, _ := repository.(productworkflow.LLMSettingsRepository)
+	return &Application{repository: repository, llmSettings: settings, catalog: catalog}
 }
 
 // ListNodeCatalog returns addable Nodes from the registered Definitions and Executors.

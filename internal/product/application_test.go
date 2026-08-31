@@ -12,7 +12,176 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/history"
 	"github.com/Jayj1997/gum-workflows/internal/product"
 	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
+	productworkflow "github.com/Jayj1997/gum-workflows/internal/product/workflow"
 )
+
+func TestApplicationManagesProviderModelSettingsAndResolvesDefaults(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "product.db")
+	store, err := history.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open product database: %v", err)
+	}
+	application := newTestApplication(t, store)
+
+	first, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{
+		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://primary.example/v1", APIKeyRef: "keychain://primary",
+	})
+	if err != nil {
+		t.Fatalf("create first Provider: %v", err)
+	}
+	if !first.EffectiveDefault || first.ExplicitDefault {
+		t.Fatalf("first Provider defaults = effective %t explicit %t", first.EffectiveDefault, first.ExplicitDefault)
+	}
+	second, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{
+		Name: "Secondary", Protocol: "openai-chat-completions", BaseURL: "https://secondary.example/v1", APIKeyRef: "keychain://secondary",
+	})
+	if err != nil {
+		t.Fatalf("create second Provider: %v", err)
+	}
+	temperature := 0.3
+	maxOutputTokens := 1024
+	firstModel, err := application.CreateLLMModel(ctx, product.CreateLLMModelInput{
+		ProviderID: first.ID, DisplayName: "Fast", ProviderModelID: "model-fast",
+		GenerationDefaults: productworkflow.GenerationDefaults{Temperature: &temperature, MaxOutputTokens: &maxOutputTokens},
+	})
+	if err != nil {
+		t.Fatalf("create first Model: %v", err)
+	}
+	if !firstModel.EffectiveDefault || firstModel.ExplicitDefault {
+		t.Fatalf("first Model defaults = effective %t explicit %t", firstModel.EffectiveDefault, firstModel.ExplicitDefault)
+	}
+	secondModel, err := application.CreateLLMModel(ctx, product.CreateLLMModelInput{
+		ProviderID: first.ID, DisplayName: "Strong", ProviderModelID: "model-strong",
+	})
+	if err != nil {
+		t.Fatalf("create second Model: %v", err)
+	}
+	if _, err := application.CreateLLMModel(ctx, product.CreateLLMModelInput{
+		ProviderID: second.ID, DisplayName: "Backup", ProviderModelID: "backup-model",
+	}); err != nil {
+		t.Fatalf("create backup Model: %v", err)
+	}
+
+	resolved, err := application.ResolveDefaultLLMModel(ctx)
+	if err != nil {
+		t.Fatalf("resolve fallback default: %v", err)
+	}
+	if resolved.Provider.ID != first.ID || resolved.Model.ID != firstModel.ID {
+		t.Fatalf("fallback selection = %#v, want first Provider and Model", resolved)
+	}
+
+	if _, err := application.SetDefaultLLMProvider(ctx, second.ID); err != nil {
+		t.Fatalf("set Provider default: %v", err)
+	}
+	if _, err := application.SetDefaultLLMModel(ctx, first.ID, secondModel.ID); err != nil {
+		t.Fatalf("set Model default: %v", err)
+	}
+	resolved, err = application.ResolveDefaultLLMModel(ctx)
+	if err != nil {
+		t.Fatalf("resolve explicit default: %v", err)
+	}
+	if resolved.Provider.ID != second.ID || resolved.Model.ProviderID != second.ID {
+		t.Fatalf("explicit selection = %#v, want second Provider and its Model", resolved)
+	}
+
+	updatedProvider, err := application.UpdateLLMProvider(ctx, product.UpdateLLMProviderInput{
+		ID: first.ID, Name: "Primary renamed", Protocol: "openai-chat-completions", BaseURL: "https://new.example/v1", APIKeyRef: "keychain://rotated",
+	})
+	if err != nil {
+		t.Fatalf("update Provider: %v", err)
+	}
+	updatedModel, err := application.UpdateLLMModel(ctx, product.UpdateLLMModelInput{
+		ID: firstModel.ID, ProviderID: first.ID, DisplayName: "Fast renamed", ProviderModelID: "model-fast-v2",
+		GenerationDefaults: productworkflow.GenerationDefaults{MaxOutputTokens: &maxOutputTokens},
+	})
+	if err != nil {
+		t.Fatalf("update Model: %v", err)
+	}
+	if updatedProvider.ID != first.ID || updatedModel.ID != firstModel.ID {
+		t.Fatalf("editing changed stable UUIDs: Provider %q -> %q, Model %q -> %q", first.ID, updatedProvider.ID, firstModel.ID, updatedModel.ID)
+	}
+	if updatedModel.GenerationDefaults.Temperature != nil || updatedModel.GenerationDefaults.MaxOutputTokens == nil || *updatedModel.GenerationDefaults.MaxOutputTokens != 1024 {
+		t.Fatalf("updated generation defaults = %#v", updatedModel.GenerationDefaults)
+	}
+
+	if err := application.DeleteLLMProvider(ctx, second.ID); err != nil {
+		t.Fatalf("delete explicit default Provider: %v", err)
+	}
+	resolved, err = application.ResolveDefaultLLMModel(ctx)
+	if err != nil {
+		t.Fatalf("resolve after deleting Provider default: %v", err)
+	}
+	if resolved.Provider.ID != first.ID || resolved.Model.ID != secondModel.ID {
+		t.Fatalf("selection after deleting Provider default = %#v", resolved)
+	}
+	if err := application.DeleteLLMModel(ctx, first.ID, secondModel.ID); err != nil {
+		t.Fatalf("delete explicit default Model: %v", err)
+	}
+	resolved, err = application.ResolveDefaultLLMModel(ctx)
+	if err != nil {
+		t.Fatalf("resolve after deleting Model default: %v", err)
+	}
+	if resolved.Model.ID != firstModel.ID {
+		t.Fatalf("Model after deleting explicit default = %q, want %q", resolved.Model.ID, firstModel.ID)
+	}
+
+	settingsBeforeRestart, err := application.GetLLMSettings(ctx)
+	if err != nil {
+		t.Fatalf("get LLM settings: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close product database: %v", err)
+	}
+	reopened, err := history.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("reopen product database: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	settingsAfterRestart, err := newTestApplication(t, reopened).GetLLMSettings(ctx)
+	if err != nil {
+		t.Fatalf("get LLM settings after restart: %v", err)
+	}
+	if !reflect.DeepEqual(settingsAfterRestart, settingsBeforeRestart) {
+		t.Fatalf("settings after restart = %#v, want %#v", settingsAfterRestart, settingsBeforeRestart)
+	}
+}
+
+func TestApplicationReturnsSettingsDiagnosticsWhenDefaultCannotResolve(t *testing.T) {
+	ctx := context.Background()
+	store, err := history.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	if err != nil {
+		t.Fatalf("open product database: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	application := newTestApplication(t, store)
+	if _, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{
+		Name: "Unsafe", Protocol: "openai-chat-completions", BaseURL: "https://api.example/v1", APIKeyRef: "plaintext-secret",
+	}); err == nil {
+		t.Fatal("create Provider accepted a plaintext API Key instead of a Secret reference")
+	}
+
+	resolved, err := application.ResolveDefaultLLMModel(ctx)
+	if err != nil {
+		t.Fatalf("resolve without Provider: %v", err)
+	}
+	if len(resolved.Diagnostics) != 1 || resolved.Diagnostics[0].Code != "llm-provider-required" {
+		t.Fatalf("diagnostics without Provider = %#v", resolved.Diagnostics)
+	}
+	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{
+		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://api.example/v1", APIKeyRef: "keychain://primary",
+	})
+	if err != nil {
+		t.Fatalf("create Provider: %v", err)
+	}
+	resolved, err = application.ResolveDefaultLLMModel(ctx)
+	if err != nil {
+		t.Fatalf("resolve without Model: %v", err)
+	}
+	if len(resolved.Diagnostics) != 1 || resolved.Diagnostics[0].Code != "llm-model-required" || resolved.Diagnostics[0].Path != "llm.providers."+provider.ID+".models" {
+		t.Fatalf("diagnostics without Model = %#v", resolved.Diagnostics)
+	}
+}
 
 func newTestApplication(t *testing.T, store *history.Store) *product.Application {
 	t.Helper()

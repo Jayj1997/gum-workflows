@@ -264,6 +264,55 @@ VALUES (?, 'Existing product workflow', '2026-08-31T09:00:00Z')`, workflowID); e
 	}
 }
 
+func TestProductLLMSettingsMigrationAndUUIDTieBreak(t *testing.T) {
+	s, _ := openTest(t)
+	for _, table := range []string{"product_llm_provider", "product_llm_model"} {
+		var name string
+		if err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name); err != nil {
+			t.Fatalf("table %s: %v", table, err)
+		}
+	}
+	providerTime := "2026-09-01T00:00:00Z"
+	for _, row := range []struct{ id, name string }{
+		{id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "Later UUID"},
+		{id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Earlier UUID"},
+	} {
+		if _, err := s.db.Exec(`INSERT INTO product_llm_provider (id, name, protocol, base_url, api_key_ref, created_at) VALUES (?, ?, 'openai-chat-completions', 'https://api.example/v1', 'keychain://test', ?)`, row.id, row.name, providerTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"dddddddd-dddd-4ddd-8ddd-dddddddddddd", "cccccccc-cccc-4ccc-8ccc-cccccccccccc"} {
+		if _, err := s.db.Exec(`INSERT INTO product_llm_model (id, provider_id, display_name, provider_model_id, created_at) VALUES (?, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Model', ?, ?)`, id, id, providerTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resolved, err := s.ResolveDefaultLLMModel(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Provider.ID != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" || resolved.Model.ID != "cccccccc-cccc-4ccc-8ccc-cccccccccccc" {
+		t.Fatalf("UUID tie-break = Provider %s Model %s", resolved.Provider.ID, resolved.Model.ID)
+	}
+	rows, err := s.db.Query(`PRAGMA table_info(product_llm_provider)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	columns := map[string]bool{}
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatal(err)
+		}
+		columns[name] = true
+	}
+	if !columns["api_key_ref"] || columns["api_key"] || columns["secret"] {
+		t.Fatalf("Provider credential columns = %#v", columns)
+	}
+}
+
 func TestConcurrentOpenIsIdempotent(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "gum-workflows.db")
 	start := make(chan struct{})

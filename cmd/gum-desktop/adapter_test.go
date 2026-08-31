@@ -54,6 +54,33 @@ func (s *applicationStub) ListNodeCatalog(context.Context) ([]nodecatalog.Entry,
 	return s.catalog, s.err
 }
 
+func (s *applicationStub) GetLLMSettings(context.Context) (product.LLMSettingsView, error) {
+	return product.LLMSettingsView{}, s.err
+}
+func (s *applicationStub) CreateLLMProvider(context.Context, product.CreateLLMProviderInput) (product.LLMProviderView, error) {
+	return product.LLMProviderView{}, s.err
+}
+func (s *applicationStub) UpdateLLMProvider(context.Context, product.UpdateLLMProviderInput) (product.LLMProviderView, error) {
+	return product.LLMProviderView{}, s.err
+}
+func (s *applicationStub) DeleteLLMProvider(context.Context, string) error { return s.err }
+func (s *applicationStub) SetDefaultLLMProvider(context.Context, string) (product.LLMSettingsView, error) {
+	return product.LLMSettingsView{}, s.err
+}
+func (s *applicationStub) CreateLLMModel(context.Context, product.CreateLLMModelInput) (product.LLMModelView, error) {
+	return product.LLMModelView{}, s.err
+}
+func (s *applicationStub) UpdateLLMModel(context.Context, product.UpdateLLMModelInput) (product.LLMModelView, error) {
+	return product.LLMModelView{}, s.err
+}
+func (s *applicationStub) DeleteLLMModel(context.Context, string, string) error { return s.err }
+func (s *applicationStub) SetDefaultLLMModel(context.Context, string, string) (product.LLMSettingsView, error) {
+	return product.LLMSettingsView{}, s.err
+}
+func (s *applicationStub) ResolveDefaultLLMModel(context.Context) (product.ResolvedLLMModelView, error) {
+	return product.ResolvedLLMModelView{}, s.err
+}
+
 func TestDesktopAdapterUsesWorkflowApplication(t *testing.T) {
 	t.Parallel()
 

@@ -54,3 +54,48 @@ func (a *DesktopAdapter) UpdateDraft(input product.UpdateDraftInput) (product.Dr
 func (a *DesktopAdapter) ListNodeCatalog() ([]nodecatalog.Entry, error) {
 	return a.application.ListNodeCatalog(a.ctx)
 }
+
+// GetLLMSettings forwards the active Provider -> Models settings query.
+func (a *DesktopAdapter) GetLLMSettings() (product.LLMSettingsView, error) {
+	return a.application.GetLLMSettings(a.ctx)
+}
+
+// CreateLLMProvider forwards Provider creation through WorkflowApplication.
+func (a *DesktopAdapter) CreateLLMProvider(input product.CreateLLMProviderInput) (product.LLMProviderView, error) {
+	return a.application.CreateLLMProvider(a.ctx, input)
+}
+
+// UpdateLLMProvider forwards Provider editing through WorkflowApplication.
+func (a *DesktopAdapter) UpdateLLMProvider(input product.UpdateLLMProviderInput) (product.LLMProviderView, error) {
+	return a.application.UpdateLLMProvider(a.ctx, input)
+}
+
+// DeleteLLMProvider forwards Provider deletion through WorkflowApplication.
+func (a *DesktopAdapter) DeleteLLMProvider(providerID string) error {
+	return a.application.DeleteLLMProvider(a.ctx, providerID)
+}
+
+// SetDefaultLLMProvider forwards explicit Provider default selection.
+func (a *DesktopAdapter) SetDefaultLLMProvider(providerID string) (product.LLMSettingsView, error) {
+	return a.application.SetDefaultLLMProvider(a.ctx, providerID)
+}
+
+// CreateLLMModel forwards Model Slot creation through WorkflowApplication.
+func (a *DesktopAdapter) CreateLLMModel(input product.CreateLLMModelInput) (product.LLMModelView, error) {
+	return a.application.CreateLLMModel(a.ctx, input)
+}
+
+// UpdateLLMModel forwards Model Slot editing through WorkflowApplication.
+func (a *DesktopAdapter) UpdateLLMModel(input product.UpdateLLMModelInput) (product.LLMModelView, error) {
+	return a.application.UpdateLLMModel(a.ctx, input)
+}
+
+// DeleteLLMModel forwards Model Slot deletion through WorkflowApplication.
+func (a *DesktopAdapter) DeleteLLMModel(providerID, modelID string) error {
+	return a.application.DeleteLLMModel(a.ctx, providerID, modelID)
+}
+
+// SetDefaultLLMModel forwards explicit Model default selection.
+func (a *DesktopAdapter) SetDefaultLLMModel(providerID, modelID string) (product.LLMSettingsView, error) {
+	return a.application.SetDefaultLLMModel(a.ctx, providerID, modelID)
+}

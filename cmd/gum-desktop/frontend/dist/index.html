@@ -28,6 +28,18 @@
           <h2 id="workflow-library-title">Product Workflows</h2>
           <ol id="workflow-list"></ol>
         </section>
+		<section class="llm-settings" aria-labelledby="llm-settings-title">
+			<h2 id="llm-settings-title">LLM Providers &amp; Models</h2>
+			<form id="create-provider" class="provider-form">
+				<input id="provider-name" required placeholder="Provider name" aria-label="Provider name" />
+				<select id="provider-protocol" aria-label="Provider protocol"><option value="openai-chat-completions">OpenAI-compatible Chat Completions</option></select>
+				<input id="provider-base-url" type="url" required placeholder="https://api.example/v1" aria-label="Base URL" />
+				<input id="provider-api-key-ref" required placeholder="keychain://provider" aria-label="API Key reference" />
+				<button type="submit">Add Provider</button>
+			</form>
+			<ul id="llm-settings-diagnostics" class="settings-diagnostics"></ul>
+			<div id="llm-provider-list" class="llm-provider-list"></div>
+		</section>
 		<section class="node-authoring" aria-labelledby="node-catalog-title">
 			<div>
 				<h2 id="node-catalog-title">Node Catalog</h2>

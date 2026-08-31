@@ -30,6 +30,9 @@ const ProductWorkflowSchemaVersion = 5
 // ProductWorkflowDraftSchemaVersion adds one mutable Draft per Product Workflow.
 const ProductWorkflowDraftSchemaVersion = 6
 
+// ProductLLMSettingsSchemaVersion adds SQLite-backed Provider and Model Slots.
+const ProductLLMSettingsSchemaVersion = 7
+
 // 新增迁移只允许 append（不改写历史迁移），保证已迁移的库向前兼容。
 var migrations = []migration{
 	{
@@ -161,6 +164,41 @@ var migrations = []migration{
 			`INSERT INTO product_workflow_draft (workflow_id, content_json, lock_version, updated_at)
 SELECT id, '{"nodes":[],"semanticSchemaVersion":"productWorkflow/v1"}', 1, created_at
 FROM product_workflow`,
+		},
+	},
+	{
+		version: ProductLLMSettingsSchemaVersion,
+		stmts: []string{
+			`CREATE TABLE product_llm_provider (
+  id                  TEXT PRIMARY KEY,
+  name                TEXT NOT NULL CHECK (length(trim(name)) > 0),
+  protocol            TEXT NOT NULL CHECK (length(trim(protocol)) > 0),
+  base_url            TEXT NOT NULL CHECK (length(trim(base_url)) > 0),
+  api_key_ref         TEXT NOT NULL CHECK (length(trim(api_key_ref)) > 0),
+  is_explicit_default INTEGER NOT NULL DEFAULT 0 CHECK (is_explicit_default IN (0, 1)),
+  created_at          TEXT NOT NULL,
+  deleted_at          TEXT
+)`,
+			`CREATE UNIQUE INDEX idx_product_llm_provider_default
+ON product_llm_provider (is_explicit_default)
+WHERE is_explicit_default = 1 AND deleted_at IS NULL`,
+			`CREATE INDEX idx_product_llm_provider_order
+ON product_llm_provider (created_at ASC, id ASC)`,
+			`CREATE TABLE product_llm_model (
+  id                  TEXT PRIMARY KEY,
+  provider_id         TEXT NOT NULL REFERENCES product_llm_provider(id),
+  display_name        TEXT NOT NULL CHECK (length(trim(display_name)) > 0),
+  provider_model_id   TEXT NOT NULL CHECK (length(trim(provider_model_id)) > 0),
+  generation_defaults_json TEXT NOT NULL DEFAULT '{}',
+  is_explicit_default INTEGER NOT NULL DEFAULT 0 CHECK (is_explicit_default IN (0, 1)),
+  created_at          TEXT NOT NULL,
+  deleted_at          TEXT
+)`,
+			`CREATE UNIQUE INDEX idx_product_llm_model_default
+ON product_llm_model (provider_id, is_explicit_default)
+WHERE is_explicit_default = 1 AND deleted_at IS NULL`,
+			`CREATE INDEX idx_product_llm_model_order
+ON product_llm_model (provider_id, created_at ASC, id ASC)`,
 		},
 	},
 }

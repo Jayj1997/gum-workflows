@@ -15,6 +15,9 @@ export function createBrowserWorkflowClient(application) {
 	const listNodeCatalog = typeof application.listNodeCatalog === "function"
 		? () => application.listNodeCatalog()
 		: async () => [];
+	const getLLMSettings = typeof application.getLLMSettings === "function"
+		? () => application.getLLMSettings()
+		: async () => ({ providers: [], diagnostics: [] });
   return {
     openWorkspace: () => application.openWorkspace(),
     createWorkflow: (input) => application.createWorkflow(input),
@@ -22,6 +25,15 @@ export function createBrowserWorkflowClient(application) {
 		getDraft: (workflowId) => application.getDraft(workflowId),
 		updateDraft: (input) => application.updateDraft(input),
 		listNodeCatalog,
+		getLLMSettings,
+		createLLMProvider: (input) => application.createLLMProvider(input),
+		updateLLMProvider: (input) => application.updateLLMProvider(input),
+		deleteLLMProvider: (providerId) => application.deleteLLMProvider(providerId),
+		setDefaultLLMProvider: (providerId) => application.setDefaultLLMProvider(providerId),
+		createLLMModel: (input) => application.createLLMModel(input),
+		updateLLMModel: (input) => application.updateLLMModel(input),
+		deleteLLMModel: (providerId, modelId) => application.deleteLLMModel(providerId, modelId),
+		setDefaultLLMModel: (providerId, modelId) => application.setDefaultLLMModel(providerId, modelId),
   };
 }
 
@@ -32,6 +44,9 @@ export function createDesktopWorkflowClient(desktopAdapter) {
 	requireMethod(desktopAdapter, "GetDraft", "desktop adapter");
 	requireMethod(desktopAdapter, "UpdateDraft", "desktop adapter");
 	requireMethod(desktopAdapter, "ListNodeCatalog", "desktop adapter");
+	for (const method of ["GetLLMSettings", "CreateLLMProvider", "UpdateLLMProvider", "DeleteLLMProvider", "SetDefaultLLMProvider", "CreateLLMModel", "UpdateLLMModel", "DeleteLLMModel", "SetDefaultLLMModel"]) {
+		requireMethod(desktopAdapter, method, "desktop adapter");
+	}
   return {
     openWorkspace: () => desktopAdapter.OpenWorkspace(),
     createWorkflow: (input) => desktopAdapter.CreateWorkflow(input),
@@ -39,5 +54,14 @@ export function createDesktopWorkflowClient(desktopAdapter) {
 		getDraft: (workflowId) => desktopAdapter.GetDraft(workflowId),
 		updateDraft: (input) => desktopAdapter.UpdateDraft(input),
 		listNodeCatalog: () => desktopAdapter.ListNodeCatalog(),
+		getLLMSettings: () => desktopAdapter.GetLLMSettings(),
+		createLLMProvider: (input) => desktopAdapter.CreateLLMProvider(input),
+		updateLLMProvider: (input) => desktopAdapter.UpdateLLMProvider(input),
+		deleteLLMProvider: (providerId) => desktopAdapter.DeleteLLMProvider(providerId),
+		setDefaultLLMProvider: (providerId) => desktopAdapter.SetDefaultLLMProvider(providerId),
+		createLLMModel: (input) => desktopAdapter.CreateLLMModel(input),
+		updateLLMModel: (input) => desktopAdapter.UpdateLLMModel(input),
+		deleteLLMModel: (providerId, modelId) => desktopAdapter.DeleteLLMModel(providerId, modelId),
+		setDefaultLLMModel: (providerId, modelId) => desktopAdapter.SetDefaultLLMModel(providerId, modelId),
   };
 }

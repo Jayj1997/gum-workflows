@@ -43,6 +43,13 @@ function fieldControl(document, field, value, onChange) {
 	return control;
 }
 
+function generationDefaults(temperature, maxOutputTokens) {
+	const defaults = {};
+	if (temperature !== "") defaults.temperature = Number.parseFloat(temperature);
+	if (maxOutputTokens !== "") defaults.maxOutputTokens = Number.parseInt(maxOutputTokens, 10);
+	return defaults;
+}
+
 function previewLayers(preview) {
 	const componentByNode = new Map((preview?.nodes ?? []).map((node) => [node.id, node.id]));
 	for (const [index, group] of (preview?.groups ?? []).entries()) {
@@ -78,6 +85,7 @@ export function createProductDOMView(elements, statusMessage) {
 		nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm,
 		nodeInputForm, nodeControlForm,
 		previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset,
+		providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKeyRef, llmProviderList, llmDiagnosticList,
 	} = elements;
 	let selectWorkflow = () => {};
 	let draftDirty = () => {};
@@ -89,6 +97,14 @@ export function createProductDOMView(elements, statusMessage) {
 	let editControlDependencies = () => {};
 	let removeNode = () => {};
 	let editDraft = async () => {};
+	let createLLMProvider = () => {};
+	let updateLLMProvider = () => {};
+	let deleteLLMProvider = () => {};
+	let setDefaultLLMProvider = () => {};
+	let createLLMModel = () => {};
+	let updateLLMModel = () => {};
+	let deleteLLMModel = () => {};
+	let setDefaultLLMModel = () => {};
 	let pendingDraftEdit;
 	let activeWorkflowId = "";
 	let activeNodeId = "";
@@ -169,6 +185,21 @@ export function createProductDOMView(elements, statusMessage) {
 			removeNode = handler;
 			removeNodeButton?.addEventListener("click", () => removeNode(activeNodeId));
 		},
+		onCreateLLMProvider(handler) {
+			createLLMProvider = handler;
+			providerForm?.addEventListener("submit", async (event) => {
+				event.preventDefault();
+				await createLLMProvider({ name: providerName.value.trim(), protocol: providerProtocol.value, baseUrl: providerBaseURL.value.trim(), apiKeyRef: providerAPIKeyRef.value.trim() });
+				providerForm.reset();
+			});
+		},
+		onUpdateLLMProvider(handler) { updateLLMProvider = handler; },
+		onDeleteLLMProvider(handler) { deleteLLMProvider = handler; },
+		onSetDefaultLLMProvider(handler) { setDefaultLLMProvider = handler; },
+		onCreateLLMModel(handler) { createLLMModel = handler; },
+		onUpdateLLMModel(handler) { updateLLMModel = handler; },
+		onDeleteLLMModel(handler) { deleteLLMModel = handler; },
+		onSetDefaultLLMModel(handler) { setDefaultLLMModel = handler; },
 		render(state) {
 			title.textContent = state.title;
 			message.textContent = state.message;
@@ -189,6 +220,88 @@ export function createProductDOMView(elements, statusMessage) {
 				item.append(name, identity);
 				return item;
 			}));
+		},
+		renderLLMSettings(settings) {
+			if (!llmProviderList) return;
+			const document = llmProviderList.ownerDocument;
+			function textInput(value, label) {
+				const input = document.createElement("input");
+				input.value = value;
+				input.setAttribute?.("aria-label", label);
+				return input;
+			}
+			llmProviderList.replaceChildren(...settings.providers.map((provider) => {
+				const card = document.createElement("article");
+				card.className = "llm-provider-card";
+				const heading = document.createElement("div");
+				const name = textInput(provider.name, "Provider name");
+				const protocol = document.createElement("select");
+				const protocolOption = document.createElement("option");
+				protocolOption.value = "openai-chat-completions";
+				protocolOption.textContent = "OpenAI-compatible Chat Completions";
+				protocol.append(protocolOption);
+				protocol.value = provider.protocol;
+				const baseURL = textInput(provider.baseUrl, "Base URL");
+				const apiKeyRef = textInput(provider.apiKeyRef, "API Key reference");
+				const save = document.createElement("button");
+				save.type = "button"; save.textContent = "Save Provider";
+				save.addEventListener("click", () => updateLLMProvider({ id: provider.id, name: name.value, protocol: protocol.value, baseUrl: baseURL.value, apiKeyRef: apiKeyRef.value }));
+				const makeDefault = document.createElement("button");
+				makeDefault.type = "button"; makeDefault.textContent = provider.effectiveDefault ? "Effective default" : "Make default";
+				makeDefault.disabled = provider.explicitDefault;
+				makeDefault.addEventListener("click", () => setDefaultLLMProvider(provider.id));
+				const remove = document.createElement("button");
+				remove.type = "button"; remove.className = "danger"; remove.textContent = "Delete Provider";
+				remove.addEventListener("click", () => deleteLLMProvider(provider.id));
+				heading.append(name, protocol, baseURL, apiKeyRef, save, makeDefault, remove);
+
+				const models = document.createElement("div");
+				models.className = "llm-model-list";
+				for (const model of provider.models) {
+					const row = document.createElement("div");
+					const displayName = textInput(model.displayName, "Model display name");
+					const providerModelID = textInput(model.providerModelId, "Provider Model ID");
+					const temperature = textInput(model.generationDefaults?.temperature ?? "", "Default temperature");
+					temperature.type = "number"; temperature.min = "0"; temperature.max = "2"; temperature.step = "any";
+					const maxOutputTokens = textInput(model.generationDefaults?.maxOutputTokens ?? "", "Default max output tokens");
+					maxOutputTokens.type = "number"; maxOutputTokens.min = "1"; maxOutputTokens.step = "1";
+					const saveModel = document.createElement("button");
+					saveModel.type = "button"; saveModel.textContent = "Save Model";
+					saveModel.addEventListener("click", () => updateLLMModel({ id: model.id, providerId: provider.id, displayName: displayName.value, providerModelId: providerModelID.value, generationDefaults: generationDefaults(temperature.value, maxOutputTokens.value) }));
+					const defaultModel = document.createElement("button");
+					defaultModel.type = "button"; defaultModel.textContent = model.effectiveDefault ? "Effective default" : "Make default";
+					defaultModel.disabled = model.explicitDefault;
+					defaultModel.addEventListener("click", () => setDefaultLLMModel(provider.id, model.id));
+					const removeModel = document.createElement("button");
+					removeModel.type = "button"; removeModel.className = "danger"; removeModel.textContent = "Delete Model";
+					removeModel.addEventListener("click", () => deleteLLMModel(provider.id, model.id));
+					row.append(displayName, providerModelID, temperature, maxOutputTokens, saveModel, defaultModel, removeModel);
+					models.append(row);
+				}
+				const addModel = document.createElement("form");
+				const newName = textInput("", "New Model display name");
+				const newProviderModelID = textInput("", "New Provider Model ID");
+				const newTemperature = textInput("", "New default temperature");
+				newTemperature.type = "number"; newTemperature.min = "0"; newTemperature.max = "2"; newTemperature.step = "any";
+				const newMaxOutputTokens = textInput("", "New default max output tokens");
+				newMaxOutputTokens.type = "number"; newMaxOutputTokens.min = "1"; newMaxOutputTokens.step = "1";
+				const add = document.createElement("button");
+				add.type = "submit"; add.textContent = "Add Model";
+				addModel.addEventListener("submit", async (event) => {
+					event.preventDefault();
+					await createLLMModel({ providerId: provider.id, displayName: newName.value, providerModelId: newProviderModelID.value, generationDefaults: generationDefaults(newTemperature.value, newMaxOutputTokens.value) });
+				});
+				addModel.append(newName, newProviderModelID, newTemperature, newMaxOutputTokens, add);
+				card.append(heading, models, addModel);
+				return card;
+			}));
+			if (llmDiagnosticList) {
+				llmDiagnosticList.replaceChildren(...settings.diagnostics.map((diagnostic) => {
+					const item = document.createElement("li");
+					item.textContent = diagnostic.message;
+					return item;
+				}));
+			}
 		},
 		renderNodeCatalog(entries) {
 			if (!nodeCatalogList) return;

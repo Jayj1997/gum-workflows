@@ -32,6 +32,18 @@ export function createProductShell(view, client, options = {}) {
   async function refreshWorkflows() {
     view.renderWorkflows(await client.listWorkflows());
   }
+	async function refreshLLMSettings() {
+		if (!view.renderLLMSettings || !client.getLLMSettings) return;
+		view.renderLLMSettings(await client.getLLMSettings());
+	}
+	async function changeLLMSettings(action) {
+		try {
+			await action();
+			await refreshLLMSettings();
+		} catch (error) {
+			view.render({ status: "error", title: "Gum Workflows", message: errorMessage(error) });
+		}
+	}
 	const createNodeId = options.createNodeId ?? (() => crypto.randomUUID());
 	function editorFocus(fieldPath) {
 		const match = /^nodes\[\d+\]\.(inputs|config)\.([^.\[]+)/.exec(fieldPath ?? "");
@@ -120,7 +132,7 @@ export function createProductShell(view, client, options = {}) {
       message: "Calling the product application…",
     });
     try {
-			const [workspace, catalog] = await Promise.all([client.openWorkspace(), client.listNodeCatalog()]);
+			const [workspace, catalog] = await Promise.all([client.openWorkspace(), client.listNodeCatalog(), refreshLLMSettings()]);
 			nodeCatalog = catalog;
 			view.renderNodeCatalog?.(nodeCatalog);
       await refreshWorkflows();
@@ -155,6 +167,14 @@ export function createProductShell(view, client, options = {}) {
       });
     }
   });
+	view.onCreateLLMProvider?.((input) => changeLLMSettings(() => client.createLLMProvider(input)));
+	view.onUpdateLLMProvider?.((input) => changeLLMSettings(() => client.updateLLMProvider(input)));
+	view.onDeleteLLMProvider?.((providerId) => changeLLMSettings(() => client.deleteLLMProvider(providerId)));
+	view.onSetDefaultLLMProvider?.((providerId) => changeLLMSettings(() => client.setDefaultLLMProvider(providerId)));
+	view.onCreateLLMModel?.((input) => changeLLMSettings(() => client.createLLMModel(input)));
+	view.onUpdateLLMModel?.((input) => changeLLMSettings(() => client.updateLLMModel(input)));
+	view.onDeleteLLMModel?.((providerId, modelId) => changeLLMSettings(() => client.deleteLLMModel(providerId, modelId)));
+	view.onSetDefaultLLMModel?.((providerId, modelId) => changeLLMSettings(() => client.setDefaultLLMModel(providerId, modelId)));
 	view.onSelectWorkflow(async (workflowId) => {
 		const selection = ++selectionSequence;
 		editSequence = 0;

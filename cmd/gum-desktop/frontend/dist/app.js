@@ -29,10 +29,17 @@ const previewGroups = document.querySelector("#preview-groups");
 const previewZoomIn = document.querySelector("#preview-zoom-in");
 const previewZoomOut = document.querySelector("#preview-zoom-out");
 const previewZoomReset = document.querySelector("#preview-zoom-reset");
+const providerForm = document.querySelector("#create-provider");
+const providerName = document.querySelector("#provider-name");
+const providerProtocol = document.querySelector("#provider-protocol");
+const providerBaseURL = document.querySelector("#provider-base-url");
+const providerAPIKeyRef = document.querySelector("#provider-api-key-ref");
+const llmProviderList = document.querySelector("#llm-provider-list");
+const llmDiagnosticList = document.querySelector("#llm-settings-diagnostics");
 
 createProductShell(
   createProductDOMView(
-		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset },
+		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKeyRef, llmProviderList, llmDiagnosticList },
     productStatusMessage,
   ),
   client,

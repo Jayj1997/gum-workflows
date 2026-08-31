@@ -3,10 +3,12 @@ import { createProductDOMView } from "./product-dom-view.js";
 import { createProductShell, productStatusMessage } from "./product-shell.js";
 import { createBuiltinNodeRegistry } from "./node-registry.js";
 import { createWorkflowPreview } from "./workflow-preview.js";
+import { createBrowserLLMSettings } from "./browser-llm-settings.js";
 
 const workflows = [];
 const drafts = new Map();
 const nodeRegistry = createBuiltinNodeRegistry();
+const llmSettings = createBrowserLLMSettings();
 
 function normalize(value) {
 	if (Array.isArray(value)) return value.map(normalize);
@@ -71,6 +73,15 @@ const client = createBrowserWorkflowClient({
 			refreshRequired: conflict,
 		};
 	},
+	async getLLMSettings() { return llmSettings.getSettings(); },
+	async createLLMProvider(input) { return llmSettings.createProvider(input); },
+	async updateLLMProvider(input) { return llmSettings.updateProvider(input); },
+	async deleteLLMProvider(providerId) { llmSettings.deleteProvider(providerId); },
+	async setDefaultLLMProvider(providerId) { return llmSettings.setDefaultProvider(providerId); },
+	async createLLMModel(input) { return llmSettings.createModel(input); },
+	async updateLLMModel(input) { return llmSettings.updateModel(input); },
+	async deleteLLMModel(providerId, modelId) { llmSettings.deleteModel(providerId, modelId); },
+	async setDefaultLLMModel(providerId, modelId) { return llmSettings.setDefaultModel(providerId, modelId); },
 });
 const title = document.querySelector("#title");
 const message = document.querySelector("#message");
@@ -97,10 +108,17 @@ const previewGroups = document.querySelector("#preview-groups");
 const previewZoomIn = document.querySelector("#preview-zoom-in");
 const previewZoomOut = document.querySelector("#preview-zoom-out");
 const previewZoomReset = document.querySelector("#preview-zoom-reset");
+const providerForm = document.querySelector("#create-provider");
+const providerName = document.querySelector("#provider-name");
+const providerProtocol = document.querySelector("#provider-protocol");
+const providerBaseURL = document.querySelector("#provider-base-url");
+const providerAPIKeyRef = document.querySelector("#provider-api-key-ref");
+const llmProviderList = document.querySelector("#llm-provider-list");
+const llmDiagnosticList = document.querySelector("#llm-settings-diagnostics");
 
 createProductShell(
   createProductDOMView(
-		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset },
+		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKeyRef, llmProviderList, llmDiagnosticList },
     productStatusMessage,
   ),
   client,

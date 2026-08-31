@@ -62,6 +62,16 @@ button:disabled { cursor: wait; opacity: .55; }
 .workflow-library li button { justify-self: start; padding: 0; color: #202018; background: transparent; box-shadow: none; font-weight: 700; }
 .workflow-library code { overflow: hidden; color: #777367; font-size: 10px; text-overflow: ellipsis; }
 
+.llm-settings { margin-top: 32px; }
+.llm-settings h2 { margin: 0 0 12px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+.provider-form, .llm-provider-card > div:first-child, .llm-model-list > div, .llm-provider-card > form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.provider-form input, .provider-form select, .llm-provider-card input, .llm-provider-card select { min-width: 0; border: 1px solid rgba(32, 32, 24, .2); border-radius: 10px; padding: 10px 12px; color: inherit; background: #fffdf8; font: inherit; }
+.llm-provider-list { display: grid; gap: 14px; margin-top: 14px; }
+.llm-provider-card { padding: 16px; border: 1px solid rgba(32, 32, 24, .14); border-radius: 16px; background: rgba(255,255,255,.5); }
+.llm-model-list { display: grid; gap: 8px; margin: 14px 0; padding-top: 14px; border-top: 1px solid rgba(32, 32, 24, .1); }
+.llm-settings button { padding: 9px 12px; box-shadow: none; }
+.settings-diagnostics { color: #a33b2b; font-size: 12px; }
+
 .node-authoring { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 32px; }
 .node-authoring h2, .node-editor h2 { margin: 0 0 12px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
 .node-authoring ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }

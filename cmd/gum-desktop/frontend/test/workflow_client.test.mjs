@@ -9,6 +9,7 @@ import { createProductDOMView } from "../dist/product-dom-view.js";
 import { createProductShell, productStatusMessage } from "../dist/product-shell.js";
 import { createBuiltinNodeRegistry, validateConfig } from "../dist/node-registry.js";
 import { createWorkflowPreview } from "../dist/workflow-preview.js";
+import { createBrowserLLMSettings } from "../dist/browser-llm-settings.js";
 
 const expectedView = {
   title: "Gum Workflows",
@@ -24,6 +25,14 @@ const expectedDraft = {
   content: { semanticSchemaVersion: "productWorkflow/v1", nodes: [] },
   lockVersion: 1,
   updatedAt: "2026-08-31T09:00:00Z",
+};
+const expectedSettings = {
+	providers: [{
+		id: "provider-uuid", name: "Primary", protocol: "openai-chat-completions", baseUrl: "https://api.example/v1",
+		apiKeyRef: "keychain://primary", explicitDefault: true, effectiveDefault: true, createdAt: "2026-08-31T09:00:00Z",
+		models: [{ id: "model-uuid", providerId: "provider-uuid", displayName: "Fast", providerModelId: "model-fast", generationDefaults: { temperature: 0.2, maxOutputTokens: 1024 }, explicitDefault: true, effectiveDefault: true, createdAt: "2026-08-31T09:00:00Z" }],
+	}],
+	diagnostics: [],
 };
 const expectedCatalog = [
 	{
@@ -59,6 +68,13 @@ const clientContract = [
 			return { draft: { ...expectedDraft, ...input, lockVersion: 2 }, preview: { nodes: [], edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
 		},
 		async listNodeCatalog() { return expectedCatalog; },
+		async getLLMSettings() { return expectedSettings; },
+		async createLLMProvider(input) { return { ...expectedSettings.providers[0], ...input }; },
+		async updateLLMProvider(input) { return { ...expectedSettings.providers[0], ...input }; },
+		async deleteLLMProvider() {}, async setDefaultLLMProvider() { return expectedSettings; },
+		async createLLMModel(input) { return { ...expectedSettings.providers[0].models[0], ...input }; },
+		async updateLLMModel(input) { return { ...expectedSettings.providers[0].models[0], ...input }; },
+		async deleteLLMModel() {}, async setDefaultLLMModel() { return expectedSettings; },
       }),
   ],
   [
@@ -81,6 +97,13 @@ const clientContract = [
 			return { draft: { ...expectedDraft, ...input, lockVersion: 2 }, preview: { nodes: [], edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
 		},
 		async ListNodeCatalog() { return expectedCatalog; },
+		async GetLLMSettings() { return expectedSettings; },
+		async CreateLLMProvider(input) { return { ...expectedSettings.providers[0], ...input }; },
+		async UpdateLLMProvider(input) { return { ...expectedSettings.providers[0], ...input }; },
+		async DeleteLLMProvider() {}, async SetDefaultLLMProvider() { return expectedSettings; },
+		async CreateLLMModel(input) { return { ...expectedSettings.providers[0].models[0], ...input }; },
+		async UpdateLLMModel(input) { return { ...expectedSettings.providers[0].models[0], ...input }; },
+		async DeleteLLMModel() {}, async SetDefaultLLMModel() { return expectedSettings; },
       }),
   ],
 ];
@@ -94,8 +117,34 @@ for (const [name, createClient] of clientContract) {
 	assert.deepEqual(await client.getDraft(expectedWorkflow.id), expectedDraft);
 	assert.equal((await client.updateDraft({ workflowId: expectedWorkflow.id, expectedLockVersion: 1, content: expectedDraft.content })).draft.lockVersion, 2);
 	assert.deepEqual(await client.listNodeCatalog(), expectedCatalog);
+	assert.deepEqual(await client.getLLMSettings(), expectedSettings);
+	assert.equal((await client.createLLMProvider({ name: "Primary" })).name, "Primary");
+	assert.equal((await client.updateLLMProvider({ id: "provider-uuid", name: "Renamed" })).name, "Renamed");
+	await client.deleteLLMProvider("provider-uuid");
+	assert.deepEqual(await client.setDefaultLLMProvider("provider-uuid"), expectedSettings);
+	assert.equal((await client.createLLMModel({ providerId: "provider-uuid", displayName: "Fast" })).displayName, "Fast");
+	assert.equal((await client.updateLLMModel({ id: "model-uuid", providerId: "provider-uuid", displayName: "Strong" })).displayName, "Strong");
+	await client.deleteLLMModel("provider-uuid", "model-uuid");
+	assert.deepEqual(await client.setDefaultLLMModel("provider-uuid", "model-uuid"), expectedSettings);
   });
 }
+
+test("Browser Mock settings use UUID tie-breaks and truthful mutation defaults", () => {
+	const ids = ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "cccccccc-cccc-4ccc-8ccc-cccccccccccc"];
+	const settings = createBrowserLLMSettings({ newID: () => ids.shift(), now: () => "2026-09-01T00:00:00Z" });
+	const laterProvider = settings.createProvider({ name: "Later UUID", protocol: "openai-chat-completions", baseUrl: "https://later.example/v1", apiKeyRef: "keychain://later" });
+	const earlierProvider = settings.createProvider({ name: "Earlier UUID", protocol: "openai-chat-completions", baseUrl: "https://earlier.example/v1", apiKeyRef: "keychain://earlier" });
+	assert.equal(laterProvider.effectiveDefault, true);
+	assert.equal(earlierProvider.effectiveDefault, true);
+	assert.equal(settings.updateProvider({ ...laterProvider, name: "Later renamed" }).effectiveDefault, false);
+	const laterModel = settings.createModel({ providerId: earlierProvider.id, displayName: "Later UUID", providerModelId: "later", generationDefaults: {} });
+	const earlierModel = settings.createModel({ providerId: earlierProvider.id, displayName: "Earlier UUID", providerModelId: "earlier", generationDefaults: {} });
+	assert.equal(laterModel.effectiveDefault, true);
+	assert.equal(earlierModel.effectiveDefault, true);
+	assert.equal(settings.updateModel({ ...laterModel, displayName: "Later renamed" }).effectiveDefault, false);
+	assert.equal(settings.getSettings().providers[0].id, earlierProvider.id);
+	assert.equal(settings.getSettings().providers[0].models[0].id, earlierModel.id);
+});
 
 test("the Browser Mock registry validates every Gum Config Schema field type", () => {
 	assert.deepEqual(createBuiltinNodeRegistry().catalog().map((entry) => entry.definition.id), ["human-chat", "llm-chat"]);
@@ -190,6 +239,47 @@ test("a user authors Node Instances and config through the registered Catalog", 
 	assert.equal(updates.at(-1).content.nodes[0].displayName, "Writer");
 	await removeNode("node-uuid");
 	assert.deepEqual(updates.at(-1).content.nodes, []);
+});
+
+test("a user manages Provider and Model Slots through the shared product shell", async () => {
+	let openWorkspace, createProvider, updateProvider, deleteProvider, setDefaultProvider;
+	let createModel, updateModel, deleteModel, setDefaultModel;
+	const calls = [];
+	const rendered = [];
+	const view = {
+		onOpenWorkspace(handler) { openWorkspace = handler; }, onCreateWorkflow() {}, onSelectWorkflow() {}, onDraftDirty() {}, onEditDraft() {},
+		onCreateLLMProvider(handler) { createProvider = handler; }, onUpdateLLMProvider(handler) { updateProvider = handler; },
+		onDeleteLLMProvider(handler) { deleteProvider = handler; }, onSetDefaultLLMProvider(handler) { setDefaultProvider = handler; },
+		onCreateLLMModel(handler) { createModel = handler; }, onUpdateLLMModel(handler) { updateModel = handler; },
+		onDeleteLLMModel(handler) { deleteModel = handler; }, onSetDefaultLLMModel(handler) { setDefaultModel = handler; },
+		render() {}, renderWorkflows() {}, renderNodeCatalog() {}, renderLLMSettings(settings) { rendered.push(structuredClone(settings)); },
+	};
+	const settings = structuredClone(expectedSettings);
+	const client = createBrowserWorkflowClient({
+		async openWorkspace() { return expectedView; }, async listWorkflows() { return []; }, async listNodeCatalog() { return []; },
+		async createWorkflow() {}, async getDraft() {}, async updateDraft() {}, async getLLMSettings() { calls.push("list"); return settings; },
+		async createLLMProvider(input) { calls.push(["create-provider", input]); }, async updateLLMProvider(input) { calls.push(["update-provider", input]); },
+		async deleteLLMProvider(id) { calls.push(["delete-provider", id]); }, async setDefaultLLMProvider(id) { calls.push(["default-provider", id]); },
+		async createLLMModel(input) { calls.push(["create-model", input]); }, async updateLLMModel(input) { calls.push(["update-model", input]); },
+		async deleteLLMModel(providerId, id) { calls.push(["delete-model", providerId, id]); },
+		async setDefaultLLMModel(providerId, id) { calls.push(["default-model", providerId, id]); },
+	});
+	createProductShell(view, client);
+	await openWorkspace();
+	await createProvider({ name: "Primary", protocol: "openai-chat-completions", baseUrl: "https://api.example/v1", apiKeyRef: "keychain://primary" });
+	await updateProvider({ ...settings.providers[0], name: "Renamed" });
+	await setDefaultProvider("provider-uuid");
+	await createModel({ providerId: "provider-uuid", displayName: "Fast", providerModelId: "model-fast" });
+	await updateModel({ ...settings.providers[0].models[0], providerModelId: "model-fast-v2" });
+	await setDefaultModel("provider-uuid", "model-uuid");
+	await deleteModel("provider-uuid", "model-uuid");
+	await deleteProvider("provider-uuid");
+
+	assert.deepEqual(calls.filter((call) => Array.isArray(call)).map((call) => call[0]), [
+		"create-provider", "update-provider", "default-provider", "create-model", "update-model", "default-model", "delete-model", "delete-provider",
+	]);
+	assert.equal(rendered.length, 9);
+	assert.deepEqual(rendered.at(-1), settings);
 });
 
 test("input bindings and Control Dependencies use separate authoring actions", async () => {
@@ -671,6 +761,59 @@ test("the Node editor renders distinct Input Binding and Control Dependency cont
 
 	assert.deepEqual(bindings, [{ nodeId: "answer", input: "conversation", from: "prompt.conversation" }]);
 	assert.deepEqual(dependencies, [{ nodeId: "answer", nodeIds: ["prompt"] }]);
+});
+
+test("the DOM settings view renders editable Provider and Model controls", async () => {
+	const document = {
+		createElement(tag) {
+			return {
+				tag, children: [], listeners: {}, value: "", disabled: false,
+				append(...children) { this.children.push(...children); },
+				addEventListener(event, handler) { this.listeners[event] = handler; },
+				setAttribute() {},
+			};
+		},
+	};
+	const container = () => ({ ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } });
+	const providerList = container();
+	const diagnosticList = container();
+	const calls = [];
+	const view = createProductDOMView({
+		title: {}, message: {}, status: { dataset: {} }, button: { addEventListener() {} }, form: { addEventListener() {} }, nameInput: {},
+		workflowList: container(), draftEditor: { addEventListener() {} }, draftStatus: {}, diagnosticList: container(),
+		llmProviderList: providerList, llmDiagnosticList: diagnosticList,
+	}, productStatusMessage);
+	view.onUpdateLLMProvider((input) => calls.push(["provider", input]));
+	view.onSetDefaultLLMProvider((id) => calls.push(["provider-default", id]));
+	view.onDeleteLLMProvider((id) => calls.push(["provider-delete", id]));
+	view.onCreateLLMModel((input) => calls.push(["model-create", input]));
+	view.onUpdateLLMModel((input) => calls.push(["model", input]));
+	view.onSetDefaultLLMModel((providerId, id) => calls.push(["model-default", providerId, id]));
+	view.onDeleteLLMModel((providerId, id) => calls.push(["model-delete", providerId, id]));
+	view.renderLLMSettings(expectedSettings);
+
+	const card = providerList.items[0];
+	const providerControls = card.children[0].children;
+	providerControls[0].value = "Renamed";
+	await providerControls[4].listeners.click();
+	await providerControls[5].listeners.click();
+	const modelControls = card.children[1].children[0].children;
+	modelControls[1].value = "model-fast-v2";
+	modelControls[2].value = "0.5";
+	modelControls[3].value = "2048";
+	await modelControls[4].listeners.click();
+	const addModelForm = card.children[2];
+	addModelForm.children[0].value = "Strong";
+	addModelForm.children[1].value = "model-strong";
+	addModelForm.children[2].value = "0.7";
+	addModelForm.children[3].value = "4096";
+	await addModelForm.listeners.submit({ preventDefault() {} });
+
+	assert.deepEqual(calls.map((call) => call[0]), ["provider", "provider-default", "model", "model-create"]);
+	assert.equal(calls[0][1].id, "provider-uuid");
+	assert.equal(calls[2][1].providerModelId, "model-fast-v2");
+	assert.deepEqual(calls[2][1].generationDefaults, { temperature: 0.5, maxOutputTokens: 2048 });
+	assert.equal(diagnosticList.items.length, 0);
 });
 
 test("the read-only Preview separates Edge kinds and keeps view preferences outside autosave", () => {

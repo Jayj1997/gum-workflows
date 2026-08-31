@@ -1,6 +1,6 @@
 # Gum-Workflows Domain Model
 
-本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 的 SQLite identity、Draft autosave、Node Catalog、Config Schema 表单、Input Binding 与只读 Preview 切片。术语以根目录 `CONTEXT.md` 为权威；Workflow Revision、Run、真实 LLM Client、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
+本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 的 SQLite identity、Draft autosave、Node Catalog、Config Schema 表单、Input Binding、只读 Preview 与 LLM Provider/Model 设置切片。术语以根目录 `CONTEXT.md` 为权威；Workflow Revision、Run、真实 LLM Client、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
 
 ## 0. Product Workflow identity
 
@@ -15,6 +15,14 @@ Product Workflow 与 workflow/v1 的 `workflow` / `node_instance` 定义表共�
 14 后产品使用独立 `product/nodecatalog.Registry` 显式注册 Definition 与 Executor，不修改历史 `nodeDefinition/v1`。首批 Catalog 为 `human-chat` 和 `llm-chat`；用户添加时生成独立 Node Instance UUID，并分别保存 Definition identity、Executor version、显示名称与 config。显示名称可变，不能代替 Node identity。
 
 Gum Config Schema 是小型产品领域合同，支持 string、markdown、integer、number、boolean 与 enum。字段可声明 required、default、min/max、enum values 与 sensitive；Presentation Hint 的 label、help、editor 只影响表单展示。Go Draft Validator 与 Desktop 通用表单消费同一 Schema，非法 config 以 `nodes[i].config.<field>` 路径返回 Diagnostic。`llm-chat` 当前声明 instructions、temperature 与 max output tokens；这些只是创作合同，真实模型调用仍未实现。
+
+## 0.1 Product LLM settings
+
+产品 LLM 设置只以 `product.db` 为事实来源，不读取或兼容 workflow/v1 的用户级 `llm.yaml`。Provider 保存稳定 Gum UUID、显示名称、协议、Base URL、API Key Secret 引用、创建时间、显式 default 与软删除状态；Model Slot 保存全局稳定 Gum Model UUID、所属 Provider、显示名称、可编辑 Provider Model ID、可选 temperature/max output tokens 生成默认值、创建时间、显式 default 与软删除状态。API Key 字段只接受 URI 形式的 Secret 引用，SQLite schema 不提供明文 Secret 列。
+
+Provider 与每个 Provider 下的 Model 各自最多一个显式 default。Resolver 只考虑未删除项：优先显式 default，否则按 `(created_at ASC, UUID ASC)` 取第一个；删除显式 default 后立即按同一规则产生新的有效 default。没有 Provider 或有效 Provider 没有 Model 时返回结构化设置 Diagnostic。重命名 Provider、修改 Base URL 或 Provider Model ID 不改变 Gum UUID。
+
+Desktop 与 Browser Mock 经同一 WorkflowClient 和 Product Application 用例创建、编辑、删除并设置 default。当前设置不调用 `/models`，不维护 Capability、position、enable/disable 或自动 Provider failover。Model Preference 写回 Draft、Revision/Run Snapshot、Keychain Secret Adapter 与真实协议请求属于后续票。
 
 首批产品 Catalog 同时声明 `human-chat.conversation: Conversation` output，以及 `llm-chat.conversation: Conversation` input/output。Input Binding 使用 `inputs.<input>.from: <node-id>.<output>` 形成 Data Edge；Control Dependency 使用独立 `dependsOn` 控件形成 Control Edge。只读 Preview 由 Draft 派生，不暴露渲染或布局库结构；自动网格坐标、缩放、节点折叠和最近选择保留在 UI，不写入 Draft 语义内容。
 
@@ -181,7 +189,7 @@ Workflow 没有自动 Succeeded 终态。全图静止时仍保持 Running，等�
 
 CLI 可用 `GUM_WORKFLOWS_DATA_ROOT` 覆盖位置；未覆盖时使用操作系统的用户级应用数据目录。路径解析本身不创建目录；ScriptNode 执行时才创建该 Node Run 私有的 bundle、logs 与临时 tool-output，Adapter 消费正式产物后清理 tool-output。Project Definition 中的 repository 相对 Workflow 文件解析为规范化绝对路径，该目录直接作为 Agent 与 Automation 共享的 In-place Project Workspace；Runtime 不把项目复制到 Local Data Root，也不在项目内写 Gum 日志或结果。
 
-SQLite 使用 WAL、busy_timeout、foreign keys 与 `PRAGMA user_version` 顺序迁移。Product 侧当前保存独立的 Product Workflow identity；workflow/v1 定义侧保存 Node Type、Node Definition、Node Executor、Workflow 与 Node Instance；运行侧保存 Workflow Run 与逐 Node Run 历史，一行对应一个 round，inputs/outputs 只序列化 `ArtifactRef`，diagnostics 保存非敏感执行事实。Quality Check Result 本体仍由 Artifact Store 保存，历史通过输出 Ref 定位。
+SQLite 使用 WAL、busy_timeout、foreign keys 与 `PRAGMA user_version` 顺序迁移。Product 侧当前保存独立的 Product Workflow identity、唯一 Draft 与 Provider/Model Slot 设置；workflow/v1 定义侧保存 Node Type、Node Definition、Node Executor、Workflow 与 Node Instance；运行侧保存 Workflow Run 与逐 Node Run 历史，一行对应一个 round，inputs/outputs 只序列化 `ArtifactRef`，diagnostics 保存非敏感执行事实。Quality Check Result 本体仍由 Artifact Store 保存，历史通过输出 Ref 定位。
 
 `history.Store` 实现 `execution.RunRecorder`。Engine 在与 state.json 相同的状态点提交完整快照；Record 使用 upsert 保持重放幂等。`validate` 只在数据库已经存在时 read-only 检查 Executor 解析，不建库、不迁移；`history` 同样 read-only 打开且无库时返回空态。新 Run 不在用户项目内创建或更新 `.workflow`，新旧位置不双写。开发期旧项目数据可通过显式调用 `history.MigrateLegacy` 一次性迁入 Local Data Root；普通 `run`、`validate` 与 `history` 不会自动扫描 legacy 目录。
 
