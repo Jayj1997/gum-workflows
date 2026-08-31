@@ -31,6 +31,11 @@ venv/
 dist/
 build/
 
+# Checked-in dependency-free desktop assets; Wails bindings remain generated.
+!cmd/gum-desktop/frontend/dist/
+!cmd/gum-desktop/frontend/dist/**
+cmd/gum-desktop/frontend/generated/
+
 # Node
 node_modules/
 npm-debug.log*

@@ -1,0 +1,76 @@
+:root {
+  color: #202018;
+  background: #f5f3ed;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+
+body { margin: 0; min-width: 640px; min-height: 100vh; }
+
+button { font: inherit; }
+
+.shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-rows: 72px 1fr;
+  background:
+    radial-gradient(circle at 16% 8%, rgba(229, 160, 57, 0.18), transparent 28rem),
+    #f5f3ed;
+}
+
+.topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 42px;
+  border-bottom: 1px solid rgba(32, 32, 24, 0.14);
+}
+
+.wordmark { font: 800 18px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .18em; }
+.phase { color: #6c695e; font-size: 13px; }
+
+.hero { align-self: center; max-width: 720px; padding: 64px clamp(48px, 8vw, 112px); }
+.eyebrow { margin: 0 0 22px; color: #9b5d11; font: 700 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .16em; }
+h1 { margin: 0; max-width: 8ch; font-size: clamp(56px, 8vw, 104px); font-weight: 650; line-height: .88; letter-spacing: -.075em; }
+.message { min-height: 3em; max-width: 34rem; margin: 32px 0; color: #555247; font-size: 18px; line-height: 1.6; }
+
+button {
+  border: 0;
+  border-radius: 999px;
+  padding: 14px 22px;
+  color: #fffdf6;
+  background: #202018;
+  box-shadow: 0 8px 24px rgba(32, 32, 24, .16);
+  cursor: pointer;
+  transition: transform 140ms ease, opacity 140ms ease;
+}
+button:hover { transform: translateY(-1px); }
+button:disabled { cursor: wait; opacity: .55; }
+
+.status { margin: 18px 0 0; color: #777367; font-size: 12px; }
+.status[data-state="ready"] { color: #2e7250; }
+.status[data-state="error"] { color: #a33b2b; }
+
+.boundary {
+  margin: 28px 28px 28px 0;
+  padding: 28px;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+  border-radius: 24px;
+  color: #f7f3e9;
+  background: #26251f;
+}
+.boundary p { margin: 0; padding: 18px; border: 1px solid rgba(255,255,255,.16); border-radius: 14px; }
+.boundary span { color: #d8a04b; font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: center; text-transform: uppercase; letter-spacing: .08em; }
+
+@media (max-width: 760px) {
+  .shell { grid-template-columns: 1fr; }
+  .boundary { display: none; }
+}
