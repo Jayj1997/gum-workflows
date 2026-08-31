@@ -21,10 +21,18 @@ const nodeEditorStatus = document.querySelector("#node-editor-status");
 const nodeName = document.querySelector("#node-name");
 const removeNodeButton = document.querySelector("#remove-node");
 const nodeConfigForm = document.querySelector("#node-config-form");
+const nodeInputForm = document.querySelector("#node-input-form");
+const nodeControlForm = document.querySelector("#node-control-form");
+const previewCanvas = document.querySelector("#preview-canvas");
+const previewEdges = document.querySelector("#preview-edges");
+const previewGroups = document.querySelector("#preview-groups");
+const previewZoomIn = document.querySelector("#preview-zoom-in");
+const previewZoomOut = document.querySelector("#preview-zoom-out");
+const previewZoomReset = document.querySelector("#preview-zoom-reset");
 
 createProductShell(
   createProductDOMView(
-		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm },
+		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset },
     productStatusMessage,
   ),
   client,

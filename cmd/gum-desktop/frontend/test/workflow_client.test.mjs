@@ -8,6 +8,7 @@ import {
 import { createProductDOMView } from "../dist/product-dom-view.js";
 import { createProductShell, productStatusMessage } from "../dist/product-shell.js";
 import { createBuiltinNodeRegistry, validateConfig } from "../dist/node-registry.js";
+import { createWorkflowPreview } from "../dist/workflow-preview.js";
 
 const expectedView = {
   title: "Gum Workflows",
@@ -110,6 +111,31 @@ test("the Browser Mock registry validates every Gum Config Schema field type", (
 	assert.deepEqual(issues.map((item) => item.field), ["text", "markdown", "integer", "number", "boolean", "enum", "extra"]);
 });
 
+test("the Browser Mock derives the same typed Data and Control Preview", () => {
+	const registry = createBuiltinNodeRegistry();
+	const preview = createWorkflowPreview({
+		semanticSchemaVersion: "productWorkflow/v1",
+		nodes: [
+			{ id: "prompt", definition: "human-chat", executor: "v1", displayName: "Prompt", config: {}, dependsOn: ["answer"] },
+			{ id: "answer", definition: "llm-chat", executor: "v1", displayName: "Answer", config: {}, inputs: { conversation: { from: "prompt.conversation" } } },
+		],
+	}, registry);
+	assert.deepEqual(preview.edges.map((edge) => edge.kind), ["data", "control"]);
+	assert.deepEqual(preview.groups, [{ nodeIds: ["answer", "prompt"] }]);
+	assert.deepEqual(preview.diagnostics, []);
+
+	const incomplete = createWorkflowPreview({
+		semanticSchemaVersion: "productWorkflow/v1",
+		nodes: [
+			{ id: "prompt", definition: "human-chat", config: {} },
+			{ id: "future", definition: "future-node", config: {}, inputs: { conversation: { from: "prompt.conversation" } } },
+		],
+	}, registry);
+	assert.equal(incomplete.edges.length, 1);
+	assert.equal(incomplete.edges[0].targetNodeId, "future");
+	assert.deepEqual(incomplete.diagnostics.map((item) => item.code), ["unknown-node-definition"]);
+});
+
 test("a user authors Node Instances and config through the registered Catalog", async () => {
 	let openWorkspace;
 	let selectWorkflow;
@@ -164,6 +190,65 @@ test("a user authors Node Instances and config through the registered Catalog", 
 	assert.equal(updates.at(-1).content.nodes[0].displayName, "Writer");
 	await removeNode("node-uuid");
 	assert.deepEqual(updates.at(-1).content.nodes, []);
+});
+
+test("input bindings and Control Dependencies use separate authoring actions", async () => {
+	let openWorkspace;
+	let selectWorkflow;
+	let selectNode;
+	let bindNodeInput;
+	let editControlDependencies;
+	const updates = [];
+	const renderedEditors = [];
+	const catalog = [
+		{
+			definition: { id: "human-chat", displayName: "Human chat", kind: "human", inputs: {}, outputs: { conversation: { type: "Conversation" } }, config: { fields: [] } },
+			executor: { definitionId: "human-chat", version: "v1" },
+		},
+		{
+			definition: { id: "llm-chat", displayName: "LLM chat", kind: "agent", inputs: { conversation: { type: "Conversation" } }, outputs: { conversation: { type: "Conversation" } }, config: { fields: [] } },
+			executor: { definitionId: "llm-chat", version: "v1" },
+		},
+	];
+	let draft = {
+		...expectedDraft,
+		content: { semanticSchemaVersion: "productWorkflow/v1", nodes: [
+			{ id: "prompt", definition: "human-chat", executor: "v1", displayName: "Prompt", config: {} },
+			{ id: "answer", definition: "llm-chat", executor: "v1", displayName: "Answer", config: {} },
+		] },
+	};
+	const view = {
+		onOpenWorkspace(handler) { openWorkspace = handler; }, onCreateWorkflow() {},
+		onSelectWorkflow(handler) { selectWorkflow = handler; }, onDraftDirty() {}, onEditDraft() {},
+		onAddNode() {}, onSelectNode(handler) { selectNode = handler; }, onRenameNode() {}, onEditNodeConfig() {}, onRemoveNode() {},
+		onBindNodeInput(handler) { bindNodeInput = handler; },
+		onEditControlDependencies(handler) { editControlDependencies = handler; },
+		render() {}, renderWorkflows() {}, renderDraft() {}, renderDraftLoading() {}, renderNodeCatalog() {},
+		renderNodeEditor(state) { renderedEditors.push(structuredClone(state)); },
+	};
+	const client = createBrowserWorkflowClient({
+		async openWorkspace() { return expectedView; }, async createWorkflow() { return expectedWorkflow; },
+		async listWorkflows() { return [expectedWorkflow]; }, async listNodeCatalog() { return catalog; },
+		async getDraft() { return structuredClone(draft); },
+		async updateDraft(input) {
+			updates.push(structuredClone(input));
+			draft = { ...draft, content: structuredClone(input.content), lockVersion: draft.lockVersion + 1 };
+			return { draft: structuredClone(draft), preview: { nodes: [], edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
+		},
+	});
+	createProductShell(view, client);
+	await openWorkspace();
+	await selectWorkflow(expectedWorkflow.id);
+	selectNode("answer");
+	assert.deepEqual(renderedEditors.at(-1).inputSources, [{ reference: "prompt.conversation", type: "Conversation", displayName: "Prompt · conversation" }]);
+	selectNode("answer", "nodes[1].inputs.conversation");
+	assert.deepEqual(renderedEditors.at(-1).focus, { section: "inputs", field: "conversation" });
+
+	await bindNodeInput({ nodeId: "answer", input: "conversation", from: "prompt.conversation" });
+	await editControlDependencies({ nodeId: "answer", nodeIds: ["prompt"] });
+
+	assert.deepEqual(updates.at(-2).content.nodes[1].inputs, { conversation: { from: "prompt.conversation" } });
+	assert.deepEqual(updates.at(-1).content.nodes[1].dependsOn, ["prompt"]);
 });
 
 test("structured Node edits flush pending Draft text before mutating the latest content", async () => {
@@ -544,6 +629,112 @@ test("desktop and browser entries share one DOM view adapter", () => {
 	assert.equal(button.disabled, false);
 	assert.equal(draftStatus.textContent, "Draft loaded.");
 	assert.equal(draftStatus.textContent.includes("token"), false);
+});
+
+test("the Node editor renders distinct Input Binding and Control Dependency controls", async () => {
+	const document = {
+		createElement(tag) {
+			return {
+				tag, children: [], listeners: {}, value: "", checked: false,
+				append(...children) { this.children.push(...children); },
+				addEventListener(event, handler) { this.listeners[event] = handler; },
+			};
+		},
+	};
+	const container = () => ({ ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } });
+	const inputForm = container();
+	const controlForm = container();
+	const bindings = [];
+	const dependencies = [];
+	const view = createProductDOMView({
+		title: { textContent: "" }, message: { textContent: "" }, status: { textContent: "", dataset: {} },
+		button: { addEventListener() {} }, form: { addEventListener() {} }, nameInput: {}, workflowList: container(),
+		draftEditor: { addEventListener() {} }, draftStatus: {}, diagnosticList: container(),
+		nodeEditor: { hidden: true }, nodeEditorStatus: {}, nodeName: { addEventListener() {} }, removeNodeButton: { addEventListener() {} },
+		nodeConfigForm: container(), nodeInputForm: inputForm, nodeControlForm: controlForm,
+	}, productStatusMessage);
+	view.onBindNodeInput((binding) => bindings.push(binding));
+	view.onEditControlDependencies((change) => dependencies.push(change));
+	view.renderNodeEditor({
+		node: { id: "answer", definition: "llm-chat", executor: "v1", displayName: "Answer", config: {}, inputs: {}, dependsOn: [] },
+		fields: [], inputs: { conversation: { type: "Conversation" } },
+		inputSources: [{ reference: "prompt.conversation", type: "Conversation", displayName: "Prompt · conversation" }],
+		controlNodes: [{ id: "prompt", displayName: "Prompt" }],
+	});
+
+	const inputSelect = inputForm.items[0].children[1];
+	inputSelect.value = "prompt.conversation";
+	await inputSelect.listeners.change();
+	const controlCheckbox = controlForm.items[0].children[0];
+	controlCheckbox.checked = true;
+	await controlCheckbox.listeners.change();
+
+	assert.deepEqual(bindings, [{ nodeId: "answer", input: "conversation", from: "prompt.conversation" }]);
+	assert.deepEqual(dependencies, [{ nodeId: "answer", nodeIds: ["prompt"] }]);
+});
+
+test("the read-only Preview separates Edge kinds and keeps view preferences outside autosave", () => {
+	const document = {
+		createElement(tag) {
+			return {
+				tag, children: [], listeners: {}, dataset: {}, style: {}, open: true,
+				append(...children) { this.children.push(...children); },
+				addEventListener(event, handler) { this.listeners[event] = handler; },
+			};
+		},
+	};
+	const container = () => ({ ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } });
+	const previewCanvas = container();
+	previewCanvas.style = {};
+	const previewEdges = container();
+	const previewGroups = container();
+	const zoomIn = { listeners: {}, addEventListener(event, handler) { this.listeners[event] = handler; } };
+	const zoomOut = { listeners: {}, addEventListener(event, handler) { this.listeners[event] = handler; } };
+	const zoomReset = { listeners: {}, addEventListener(event, handler) { this.listeners[event] = handler; } };
+	const submitted = [];
+	const selectedNodes = [];
+	const diagnosticList = container();
+	const view = createProductDOMView({
+		title: {}, message: {}, status: { dataset: {} }, button: { addEventListener() {} }, form: { addEventListener() {} }, nameInput: {},
+		workflowList: container(), draftEditor: { addEventListener() {} }, draftStatus: {}, diagnosticList,
+		previewCanvas, previewEdges, previewGroups, previewZoomIn: zoomIn, previewZoomOut: zoomOut, previewZoomReset: zoomReset,
+	}, productStatusMessage);
+	view.onEditDraft((edit) => submitted.push(edit));
+	view.onSelectNode((nodeId, fieldPath) => selectedNodes.push([nodeId, fieldPath]));
+	view.renderDraft({
+		draft: { ...expectedDraft, content: { semanticSchemaVersion: "productWorkflow/v1", nodes: [
+			{ id: "zeta" }, { id: "prompt" }, { id: "answer" }, { id: "alpha" }, { id: "review" },
+		] } },
+		preview: {
+			nodes: [
+				{ id: "zeta", definitionId: "human-chat", displayName: "Zeta", kind: "human" },
+				{ id: "prompt", definitionId: "human-chat", displayName: "Prompt", kind: "human" },
+				{ id: "answer", definitionId: "llm-chat", displayName: "Answer", kind: "agent" },
+				{ id: "alpha", definitionId: "human-chat", displayName: "Alpha", kind: "human" },
+				{ id: "review", definitionId: "human-chat", displayName: "Review", kind: "human" },
+			],
+			edges: [
+				{ kind: "data", sourceNodeId: "prompt", sourcePort: "conversation", targetNodeId: "answer", targetPort: "conversation", artifactType: "Conversation" },
+				{ kind: "control", sourceNodeId: "answer", targetNodeId: "review" },
+			],
+			groups: [], diagnostics: [{ code: "missing-input-binding", severity: "error", path: "nodes[2].inputs.conversation", message: "required input is not bound" }],
+		},
+	});
+
+	assert.equal(previewCanvas.items.length, 5);
+	assert.deepEqual(previewCanvas.items.map((item) => item.children[0].textContent), ["Alpha", "Prompt", "Zeta", "Answer", "Review"]);
+	assert.deepEqual(previewCanvas.items.map((item) => item.style.gridColumn), ["1", "1", "1", "2", "3"]);
+	assert.deepEqual(previewEdges.items.map((item) => item.dataset.kind), ["data", "control"]);
+	diagnosticList.items[0].children[0].listeners.click();
+	previewCanvas.items[3].children[0].listeners.click();
+	assert.deepEqual(selectedNodes, [["answer", "nodes[2].inputs.conversation"], ["answer", undefined]]);
+	previewEdges.items[1].children[0].listeners.click();
+	assert.equal(previewEdges.items[1].dataset.selected, "true");
+	zoomIn.listeners.click();
+	assert.equal(previewCanvas.style.transform, "scale(1.1)");
+	previewCanvas.items[0].open = false;
+	previewCanvas.items[0].listeners.toggle();
+	assert.deepEqual(submitted, []);
 });
 
 test("the DOM editor debounces input and submits the latest captured content", async () => {

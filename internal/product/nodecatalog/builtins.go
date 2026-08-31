@@ -8,10 +8,12 @@ func NewBuiltinRegistry() (*Registry, error) {
 	definitions := []Definition{
 		{
 			ID: "human-chat", DisplayName: "Human chat", Description: "Collect a human message for a Conversation", Kind: NodeHuman,
+			Inputs: map[string]Port{}, Outputs: map[string]Port{"conversation": {Type: "Conversation"}},
 			Config: ConfigSchema{Fields: []ConfigField{}},
 		},
 		{
 			ID: "llm-chat", DisplayName: "LLM chat", Description: "Append one model response to a Conversation", Kind: NodeAgent,
+			Inputs: map[string]Port{"conversation": {Type: "Conversation"}}, Outputs: map[string]Port{"conversation": {Type: "Conversation"}},
 			Config: ConfigSchema{Fields: []ConfigField{
 				{
 					Name: "instructions", Type: FieldMarkdown,

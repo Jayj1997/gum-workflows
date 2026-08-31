@@ -75,6 +75,37 @@ button:disabled { cursor: wait; opacity: .55; }
 .node-editor input, .node-editor textarea, .node-editor select { width: 100%; border: 1px solid rgba(32, 32, 24, .2); border-radius: 10px; padding: 10px 12px; color: inherit; background: #fffdf8; font: inherit; }
 .node-config-form small { color: #777367; font-weight: 400; line-height: 1.4; }
 button.danger { padding: 8px 12px; color: #8f2d22; background: #f3dfd9; box-shadow: none; }
+.binding-editor { margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(32, 32, 24, .1); }
+.binding-editor h3 { margin: 0 0 10px; color: #777367; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.binding-editor > div { display: grid; gap: 8px; }
+.binding-editor label { display: grid; grid-template-columns: minmax(130px, .7fr) 1fr; align-items: center; gap: 10px; color: #555247; font-size: 12px; }
+.binding-editor select { width: 100%; border: 1px solid rgba(32, 32, 24, .2); border-radius: 10px; padding: 9px 11px; color: inherit; background: #fffdf8; }
+.binding-editor input[type="checkbox"] { width: 16px; height: 16px; }
+
+.workflow-preview { margin-top: 32px; padding: 20px; border: 1px solid rgba(32, 32, 24, .14); border-radius: 16px; background: rgba(255,255,255,.5); }
+.preview-heading { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
+.preview-heading h2 { margin: 0; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+.preview-heading p { margin: 5px 0 14px; color: #777367; font-size: 11px; }
+.preview-toolbar { display: flex; gap: 5px; }
+.preview-toolbar button { min-width: 36px; padding: 7px 10px; box-shadow: none; }
+.preview-viewport { overflow: auto; min-height: 150px; padding: 18px; border-radius: 12px; background: #eeece4; }
+.preview-canvas { display: grid; grid-auto-columns: minmax(180px, 1fr); gap: 14px; width: 100%; transition: transform 120ms ease; }
+.preview-canvas details { padding: 14px; border: 1px solid rgba(32, 32, 24, .16); border-radius: 12px; background: #fffdf8; }
+.preview-canvas details[data-kind="human"] { border-top: 4px solid #b36a16; }
+.preview-canvas details[data-kind="agent"] { border-top: 4px solid #356b6d; }
+.preview-canvas summary { cursor: pointer; font-weight: 700; }
+.preview-canvas small { display: block; overflow: hidden; margin-top: 10px; color: #777367; font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; }
+.preview-legend { display: flex; gap: 14px; margin-top: 14px; color: #777367; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.preview-legend span::before { content: ""; display: inline-block; width: 18px; margin-right: 6px; border-top: 3px solid; vertical-align: middle; }
+.preview-legend .data::before { border-color: #356b6d; }
+.preview-legend .control::before { border-color: #b36a16; border-top-style: dashed; }
+.preview-edges, .preview-groups { display: grid; gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; }
+.preview-edge, .preview-groups li { padding: 8px 10px; border-radius: 8px; color: #555247; background: rgba(255,255,255,.7); font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.preview-edge button { width: 100%; padding: 0; border-radius: 0; color: inherit; background: transparent; box-shadow: none; font: inherit; text-align: left; }
+.preview-edge[data-selected="true"] { outline: 2px solid rgba(53, 107, 109, .35); }
+.preview-edge-data { border-left: 4px solid #356b6d; }
+.preview-edge-control { border-left: 4px dashed #b36a16; }
+.preview-groups li { color: #7b3f17; background: #f4e4cf; }
 
 .draft-editor { margin-top: 32px; }
 .draft-editor h2 { margin: 0 0 8px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
@@ -82,6 +113,7 @@ button.danger { padding: 8px 12px; color: #8f2d22; background: #f3dfd9; box-shad
 .draft-editor textarea { width: 100%; min-height: 220px; padding: 16px; border: 1px solid rgba(32, 32, 24, .2); border-radius: 14px; color: #202018; background: rgba(255,255,255,.58); font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
 .draft-editor textarea:disabled { opacity: .55; }
 .draft-editor ul { padding-left: 20px; }
+.diagnostic-link { padding: 0; border-radius: 0; color: #a33b2b; background: transparent; box-shadow: none; font: inherit; text-align: left; }
 
 .status { margin: 18px 0 0; color: #777367; font-size: 12px; }
 .status[data-state="ready"] { color: #2e7250; }

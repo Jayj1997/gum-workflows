@@ -1,6 +1,6 @@
 # Gum-Workflows Domain Model
 
-本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 的 SQLite identity、Draft autosave、Node Catalog 与 Config Schema 表单切片。术语以根目录 `CONTEXT.md` 为权威；端口连接、Workflow Revision、真实 LLM Client、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
+本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 的 SQLite identity、Draft autosave、Node Catalog、Config Schema 表单、Input Binding 与只读 Preview 切片。术语以根目录 `CONTEXT.md` 为权威；Workflow Revision、Run、真实 LLM Client、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
 
 ## 0. Product Workflow identity
 
@@ -10,11 +10,13 @@ Product Workflow 与 workflow/v1 的 `workflow` / `node_instance` 定义表共�
 
 每个 Product Workflow 在 `product_workflow_draft` 中恰有一行当前 Draft。新建 Workflow 与初始 Draft 在同一事务写入；旧 product schema 升级时为既有 Workflow 回填初始 Draft。Draft 保存规范化的语义 JSON 与内部 `lock_version`：内容等价时 autosave 为 no-op，保留时间与 token；内容变化时以 UI 看到的 expected token 做 CAS，更新同一行并递增 token。冲突不覆盖内容，Application 返回数据库最新 Draft 并要求 UI 刷新。
 
-非法语义 Draft 允许持久化。Application 同时返回 renderer-independent `WorkflowPreview` 结果形态与聚合 Diagnostics；当前已诊断 semantic schema version、空 nodes、未知 Definition 与具体 Node config 字段，Data/Control Edge 和完整图投影由后续票实现。Browser Mock 和 Desktop Adapter 通过同一 WorkflowClient 加载与 autosave；autosave 不创建 Revision 或 Draft 历史副本。
+非法语义 Draft 允许持久化。Application 同时返回 renderer-independent `WorkflowPreview` 与聚合 Diagnostics：Preview 包含所有可识别 Node、Data/Control Edge 和循环组；缺失 required Input、未知端口或来源、Artifact 类型不兼容等问题定位到具体 Node/字段，且第一个错误不会遮蔽其余图结构。Browser Mock 和 Desktop Adapter 通过同一 WorkflowClient 加载与 autosave；autosave 不创建 Revision 或 Draft 历史副本。
 
 14 后产品使用独立 `product/nodecatalog.Registry` 显式注册 Definition 与 Executor，不修改历史 `nodeDefinition/v1`。首批 Catalog 为 `human-chat` 和 `llm-chat`；用户添加时生成独立 Node Instance UUID，并分别保存 Definition identity、Executor version、显示名称与 config。显示名称可变，不能代替 Node identity。
 
 Gum Config Schema 是小型产品领域合同，支持 string、markdown、integer、number、boolean 与 enum。字段可声明 required、default、min/max、enum values 与 sensitive；Presentation Hint 的 label、help、editor 只影响表单展示。Go Draft Validator 与 Desktop 通用表单消费同一 Schema，非法 config 以 `nodes[i].config.<field>` 路径返回 Diagnostic。`llm-chat` 当前声明 instructions、temperature 与 max output tokens；这些只是创作合同，真实模型调用仍未实现。
+
+首批产品 Catalog 同时声明 `human-chat.conversation: Conversation` output，以及 `llm-chat.conversation: Conversation` input/output。Input Binding 使用 `inputs.<input>.from: <node-id>.<output>` 形成 Data Edge；Control Dependency 使用独立 `dependsOn` 控件形成 Control Edge。只读 Preview 由 Draft 派生，不暴露渲染或布局库结构；自动网格坐标、缩放、节点折叠和最近选择保留在 UI，不写入 Draft 语义内容。
 
 ## 1. 定义、实例与运行
 

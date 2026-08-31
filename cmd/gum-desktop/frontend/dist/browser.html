@@ -44,6 +44,24 @@
 			<label for="node-name">Display name</label>
 			<input id="node-name" />
 			<div id="node-config-form" class="node-config-form"></div>
+			<section class="binding-editor" aria-labelledby="node-inputs-title">
+				<h3 id="node-inputs-title">Input Bindings</h3>
+				<div id="node-input-form"></div>
+			</section>
+			<section class="binding-editor" aria-labelledby="node-controls-title">
+				<h3 id="node-controls-title">Control Dependencies</h3>
+				<div id="node-control-form"></div>
+			</section>
+		</section>
+		<section class="workflow-preview" aria-labelledby="workflow-preview-title">
+			<div class="preview-heading">
+				<div><h2 id="workflow-preview-title">Workflow Preview</h2><p>Read-only structure derived from the current Draft.</p></div>
+				<div class="preview-toolbar" aria-label="Preview zoom"><button id="preview-zoom-out" type="button">−</button><button id="preview-zoom-reset" type="button">100%</button><button id="preview-zoom-in" type="button">+</button></div>
+			</div>
+			<div class="preview-viewport"><div id="preview-canvas" class="preview-canvas"></div></div>
+			<div class="preview-legend"><span class="data">Data Edge</span><span class="control">Control Dependency</span></div>
+			<ul id="preview-edges" class="preview-edges" aria-label="Workflow edges"></ul>
+			<ul id="preview-groups" class="preview-groups" aria-label="Workflow cycle groups"></ul>
 		</section>
 		<section class="draft-editor" aria-labelledby="draft-editor-title">
 			<h2 id="draft-editor-title">Workflow Draft</h2>

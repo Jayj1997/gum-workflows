@@ -19,11 +19,19 @@ const (
 
 // Definition is the product Node business contract shown in the Catalog.
 type Definition struct {
-	ID          string       `json:"id"`
-	DisplayName string       `json:"displayName"`
-	Description string       `json:"description"`
-	Kind        NodeKind     `json:"kind"`
-	Config      ConfigSchema `json:"config"`
+	ID          string          `json:"id"`
+	DisplayName string          `json:"displayName"`
+	Description string          `json:"description"`
+	Kind        NodeKind        `json:"kind"`
+	Inputs      map[string]Port `json:"inputs"`
+	Outputs     map[string]Port `json:"outputs"`
+	Config      ConfigSchema    `json:"config"`
+}
+
+// Port is one typed Artifact input or output in a product Node contract.
+type Port struct {
+	Type     string `json:"type"`
+	Optional bool   `json:"optional,omitempty"`
 }
 
 // Executor identifies one executable version of a product Node Definition.

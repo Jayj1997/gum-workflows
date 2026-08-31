@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/google/uuid"
@@ -232,6 +233,169 @@ func TestApplicationSavesInvalidDraftWithCompletePreviewDiagnostics(t *testing.T
 	}
 }
 
+func TestApplicationPreviewShowsConversationDataBinding(t *testing.T) {
+	ctx := context.Background()
+	store, err := history.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	if err != nil {
+		t.Fatalf("open product database: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	application := newTestApplication(t, store)
+	workflow, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "Conversation"})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+
+	result, err := application.UpdateDraft(ctx, product.UpdateDraftInput{
+		WorkflowID:          workflow.ID,
+		ExpectedLockVersion: 1,
+		Content: map[string]any{
+			"semanticSchemaVersion": "productWorkflow/v1",
+			"nodes": []any{
+				map[string]any{"id": "prompt", "definition": "human-chat", "executor": "v1", "displayName": "Prompt", "config": map[string]any{}},
+				map[string]any{
+					"id": "answer", "definition": "llm-chat", "executor": "v1", "displayName": "Answer", "config": map[string]any{},
+					"inputs": map[string]any{"conversation": map[string]any{"from": "prompt.conversation"}},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("save bound draft: %v", err)
+	}
+
+	if len(result.Preview.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", result.Preview.Diagnostics)
+	}
+	if len(result.Preview.Edges) != 1 {
+		t.Fatalf("edges = %#v, want one Data Edge", result.Preview.Edges)
+	}
+	want := product.PreviewEdge{
+		Kind: "data", SourceNodeID: "prompt", SourcePort: "conversation",
+		TargetNodeID: "answer", TargetPort: "conversation", ArtifactType: "Conversation",
+	}
+	if !reflect.DeepEqual(result.Preview.Edges[0], want) {
+		t.Fatalf("Data Edge = %#v, want %#v", result.Preview.Edges[0], want)
+	}
+}
+
+func TestApplicationPreviewAggregatesInputBindingDiagnosticsWithoutHidingGraph(t *testing.T) {
+	ctx := context.Background()
+	store, err := history.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	if err != nil {
+		t.Fatalf("open product database: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	registry, err := nodecatalog.NewBuiltinRegistry()
+	if err != nil {
+		t.Fatalf("load product Node Catalog: %v", err)
+	}
+	if err := registry.RegisterDefinition(nodecatalog.Definition{
+		ID: "text-source", DisplayName: "Text source", Kind: nodecatalog.NodeHuman,
+		Inputs: map[string]nodecatalog.Port{}, Outputs: map[string]nodecatalog.Port{"text": {Type: "Text"}},
+		Config: nodecatalog.ConfigSchema{Fields: []nodecatalog.ConfigField{}},
+	}); err != nil {
+		t.Fatalf("register text source: %v", err)
+	}
+	if err := registry.RegisterExecutor(nodecatalog.Executor{DefinitionID: "text-source", Version: "v1"}); err != nil {
+		t.Fatalf("register text source executor: %v", err)
+	}
+	application := product.NewApplication(store, registry)
+	workflow, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "Incomplete bindings"})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+
+	node := func(id, definition string, inputs map[string]any) map[string]any {
+		return map[string]any{
+			"id": id, "definition": definition, "executor": "v1", "displayName": id,
+			"config": map[string]any{}, "inputs": inputs,
+		}
+	}
+	result, err := application.UpdateDraft(ctx, product.UpdateDraftInput{
+		WorkflowID: workflow.ID, ExpectedLockVersion: 1,
+		Content: map[string]any{
+			"semanticSchemaVersion": "productWorkflow/v1",
+			"nodes": []any{
+				node("prompt", "human-chat", nil),
+				node("text", "text-source", nil),
+				node("missing", "llm-chat", nil),
+				node("unknown-output", "llm-chat", map[string]any{"conversation": map[string]any{"from": "prompt.missing"}}),
+				node("unknown-input", "llm-chat", map[string]any{
+					"conversation": map[string]any{"from": "prompt.conversation"},
+					"prompt":       map[string]any{"from": "prompt.conversation"},
+				}),
+				node("incompatible", "llm-chat", map[string]any{"conversation": map[string]any{"from": "text.text"}}),
+				node("future", "future-node", map[string]any{"conversation": map[string]any{"from": "prompt.conversation"}}),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("save incomplete bindings: %v", err)
+	}
+
+	wantCodes := []string{"incompatible-input-type", "missing-input-binding", "unknown-input-port", "unknown-node-definition", "unknown-output-port"}
+	gotCodes := make([]string, 0, len(result.Preview.Diagnostics))
+	for _, diagnostic := range result.Preview.Diagnostics {
+		gotCodes = append(gotCodes, diagnostic.Code)
+	}
+	sort.Strings(gotCodes)
+	if !reflect.DeepEqual(gotCodes, wantCodes) {
+		t.Fatalf("diagnostic codes = %#v, want %#v; diagnostics = %#v", gotCodes, wantCodes, result.Preview.Diagnostics)
+	}
+	if len(result.Preview.Nodes) != 7 {
+		t.Fatalf("preview nodes = %#v, want all seven recognizable Nodes", result.Preview.Nodes)
+	}
+	if len(result.Preview.Edges) != 5 {
+		t.Fatalf("preview edges = %#v, want every recognizable binding", result.Preview.Edges)
+	}
+}
+
+func TestApplicationPreviewSeparatesControlDependenciesAndCycleGroups(t *testing.T) {
+	ctx := context.Background()
+	store, err := history.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	if err != nil {
+		t.Fatalf("open product database: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	application := newTestApplication(t, store)
+	workflow, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "Review loop"})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+
+	result, err := application.UpdateDraft(ctx, product.UpdateDraftInput{
+		WorkflowID: workflow.ID, ExpectedLockVersion: 1,
+		Content: map[string]any{
+			"semanticSchemaVersion": "productWorkflow/v1",
+			"nodes": []any{
+				map[string]any{
+					"id": "prompt", "definition": "human-chat", "executor": "v1", "displayName": "Prompt", "config": map[string]any{},
+					"dependsOn": []any{"answer"},
+				},
+				map[string]any{
+					"id": "answer", "definition": "llm-chat", "executor": "v1", "displayName": "Answer", "config": map[string]any{},
+					"inputs": map[string]any{"conversation": map[string]any{"from": "prompt.conversation"}},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("save cyclic draft: %v", err)
+	}
+
+	wantEdges := []product.PreviewEdge{
+		{Kind: "data", SourceNodeID: "prompt", SourcePort: "conversation", TargetNodeID: "answer", TargetPort: "conversation", ArtifactType: "Conversation"},
+		{Kind: "control", SourceNodeID: "answer", TargetNodeID: "prompt"},
+	}
+	if !reflect.DeepEqual(result.Preview.Edges, wantEdges) {
+		t.Fatalf("edges = %#v, want %#v", result.Preview.Edges, wantEdges)
+	}
+	if !reflect.DeepEqual(result.Preview.Groups, []product.PreviewGroup{{NodeIDs: []string{"answer", "prompt"}}}) {
+		t.Fatalf("cycle groups = %#v", result.Preview.Groups)
+	}
+}
+
 func TestApplicationDoesNotListWorkflowV1Imports(t *testing.T) {
 	ctx := context.Background()
 	store, err := history.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
@@ -311,6 +475,7 @@ func TestApplicationCatalogAndConfigDiagnosticsComeFromRegisteredDefinitions(t *
 		"nodes[0].config.temperature",
 		"nodes[0].config.max_output_tokens",
 		"nodes[0].config.unknown",
+		"nodes[0].inputs.conversation",
 	}
 	if len(result.Preview.Diagnostics) != len(wantPaths) {
 		t.Fatalf("diagnostics = %#v", result.Preview.Diagnostics)

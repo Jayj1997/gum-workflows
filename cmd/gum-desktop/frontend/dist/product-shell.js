@@ -33,11 +33,35 @@ export function createProductShell(view, client, options = {}) {
     view.renderWorkflows(await client.listWorkflows());
   }
 	const createNodeId = options.createNodeId ?? (() => crypto.randomUUID());
-	function renderSelectedNode() {
+	function editorFocus(fieldPath) {
+		const match = /^nodes\[\d+\]\.(inputs|config)\.([^.\[]+)/.exec(fieldPath ?? "");
+		return match ? { section: match[1], field: match[2] } : undefined;
+	}
+	function renderSelectedNode(fieldPath) {
 		if (!view.renderNodeEditor) return;
 		const node = currentDraft?.content?.nodes?.find((candidate) => candidate.id === selectedNodeId);
 		const entry = nodeCatalog.find((candidate) => candidate.definition.id === node?.definition);
-		view.renderNodeEditor(node && entry ? { node, fields: entry.definition.config.fields } : undefined);
+		if (!node || !entry) {
+			view.renderNodeEditor(undefined);
+			return;
+		}
+		const otherNodes = (currentDraft.content.nodes ?? []).filter((candidate) => candidate.id !== node.id);
+		const inputSources = otherNodes.flatMap((candidate) => {
+			const source = nodeCatalog.find((item) => item.definition.id === candidate.definition)?.definition;
+			return Object.entries(source?.outputs ?? {}).map(([port, contract]) => ({
+				reference: `${candidate.id}.${port}`,
+				type: contract.type,
+				displayName: `${candidate.displayName || candidate.id} · ${port}`,
+			}));
+		});
+		view.renderNodeEditor({
+			node,
+			fields: entry.definition.config.fields,
+			inputs: entry.definition.inputs ?? {},
+			inputSources,
+			controlNodes: otherNodes.map((candidate) => ({ id: candidate.id, displayName: candidate.displayName || candidate.id })),
+			focus: editorFocus(fieldPath),
+		});
 	}
 	async function queueDraftEdit(editRequest) {
 		if (!currentDraft) return;
@@ -171,9 +195,9 @@ export function createProductShell(view, client, options = {}) {
 			config,
 		}));
 	});
-	view.onSelectNode?.((nodeId) => {
+	view.onSelectNode?.((nodeId, fieldPath) => {
 		selectedNodeId = nodeId;
-		renderSelectedNode();
+		renderSelectedNode(fieldPath);
 	});
 	view.onRenameNode?.(async ({ nodeId, displayName }) => {
 		await editNodes((nodes) => {
@@ -188,6 +212,21 @@ export function createProductShell(view, client, options = {}) {
 			if (!node.config || typeof node.config !== "object") node.config = {};
 			if (remove) delete node.config[field];
 			else node.config[field] = value;
+		});
+	});
+	view.onBindNodeInput?.(async ({ nodeId, input, from }) => {
+		await editNodes((nodes) => {
+			const node = nodes.find((candidate) => candidate.id === nodeId);
+			if (!node) return;
+			if (!node.inputs || typeof node.inputs !== "object" || Array.isArray(node.inputs)) node.inputs = {};
+			if (from) node.inputs[input] = { from };
+			else delete node.inputs[input];
+		});
+	});
+	view.onEditControlDependencies?.(async ({ nodeId, nodeIds }) => {
+		await editNodes((nodes) => {
+			const node = nodes.find((candidate) => candidate.id === nodeId);
+			if (node) node.dependsOn = [...new Set(nodeIds)].sort();
 		});
 	});
 	view.onRemoveNode?.(async (nodeId) => {

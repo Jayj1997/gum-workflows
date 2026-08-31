@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -55,10 +56,33 @@ type Diagnostic struct {
 
 // WorkflowPreview is the renderer-independent structure derived from a Draft.
 type WorkflowPreview struct {
-	Nodes       []any        `json:"nodes"`
-	Edges       []any        `json:"edges"`
-	Groups      []any        `json:"groups"`
-	Diagnostics []Diagnostic `json:"diagnostics"`
+	Nodes       []PreviewNode  `json:"nodes"`
+	Edges       []PreviewEdge  `json:"edges"`
+	Groups      []PreviewGroup `json:"groups"`
+	Diagnostics []Diagnostic   `json:"diagnostics"`
+}
+
+// PreviewNode is a renderer-independent Node projection.
+type PreviewNode struct {
+	ID           string `json:"id"`
+	DefinitionID string `json:"definitionId"`
+	DisplayName  string `json:"displayName"`
+	Kind         string `json:"kind,omitempty"`
+}
+
+// PreviewEdge is a typed Data Edge or untyped Control Edge.
+type PreviewEdge struct {
+	Kind         string `json:"kind"`
+	SourceNodeID string `json:"sourceNodeId"`
+	SourcePort   string `json:"sourcePort,omitempty"`
+	TargetNodeID string `json:"targetNodeId"`
+	TargetPort   string `json:"targetPort,omitempty"`
+	ArtifactType string `json:"artifactType,omitempty"`
+}
+
+// PreviewGroup identifies one cyclic set without exposing layout-library data.
+type PreviewGroup struct {
+	NodeIDs []string `json:"nodeIds"`
 }
 
 // DraftUpdateView returns autosave state and the complete latest Draft projection.
@@ -186,7 +210,7 @@ func draftView(draft productworkflow.Draft) (DraftView, error) {
 }
 
 func (a *Application) previewDraft(content map[string]any) WorkflowPreview {
-	preview := WorkflowPreview{Nodes: []any{}, Edges: []any{}, Groups: []any{}, Diagnostics: []Diagnostic{}}
+	preview := WorkflowPreview{Nodes: []PreviewNode{}, Edges: []PreviewEdge{}, Groups: []PreviewGroup{}, Diagnostics: []Diagnostic{}}
 	if content["semanticSchemaVersion"] != "productWorkflow/v1" {
 		preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
 			Code: "invalid-semantic-schema-version", Severity: "error", Path: "semanticSchemaVersion",
@@ -194,14 +218,27 @@ func (a *Application) previewDraft(content map[string]any) WorkflowPreview {
 		})
 	}
 	nodes, ok := content["nodes"].([]any)
-	if !ok || len(nodes) == 0 {
+	if !ok {
+		preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+			Code: "workflow-needs-node", Severity: "error", Path: "nodes",
+			Message: "workflow nodes must be a non-empty list",
+		})
+		return preview
+	}
+	if len(nodes) == 0 {
 		preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
 			Code: "workflow-needs-node", Severity: "error", Path: "nodes",
 			Message: "workflow must contain at least one node",
 		})
-		return preview
 	}
-	preview.Nodes = append(preview.Nodes, nodes...)
+	type nodeRecord struct {
+		index      int
+		content    map[string]any
+		definition nodecatalog.Definition
+		known      bool
+	}
+	records := make([]nodeRecord, 0, len(nodes))
+	nodesByID := make(map[string]nodeRecord, len(nodes))
 	for index, value := range nodes {
 		node, ok := value.(map[string]any)
 		if !ok {
@@ -211,12 +248,34 @@ func (a *Application) previewDraft(content map[string]any) WorkflowPreview {
 			continue
 		}
 		definitionID, _ := node["definition"].(string)
+		nodeID, _ := node["id"].(string)
+		displayName, _ := node["displayName"].(string)
+		previewNode := PreviewNode{ID: nodeID, DefinitionID: definitionID, DisplayName: displayName}
 		definition, found := a.catalog.Definition(definitionID)
 		if !found {
+			preview.Nodes = append(preview.Nodes, previewNode)
 			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
 				Code: "unknown-node-definition", Severity: "error", Path: fmt.Sprintf("nodes[%d].definition", index),
 				Message: fmt.Sprintf("node definition %q is not in the Catalog", definitionID),
 			})
+		} else {
+			previewNode.Kind = string(definition.Kind)
+			preview.Nodes = append(preview.Nodes, previewNode)
+		}
+		record := nodeRecord{index: index, content: node, definition: definition, known: found}
+		records = append(records, record)
+		if strings.TrimSpace(nodeID) == "" {
+			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+				Code: "invalid-node-id", Severity: "error", Path: fmt.Sprintf("nodes[%d].id", index), Message: "node ID must not be empty",
+			})
+		} else if _, duplicate := nodesByID[nodeID]; duplicate {
+			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+				Code: "duplicate-node-id", Severity: "error", Path: fmt.Sprintf("nodes[%d].id", index), Message: fmt.Sprintf("node ID %q is already used", nodeID),
+			})
+		} else {
+			nodesByID[nodeID] = record
+		}
+		if !found {
 			continue
 		}
 		config, ok := node["config"].(map[string]any)
@@ -227,7 +286,7 @@ func (a *Application) previewDraft(content map[string]any) WorkflowPreview {
 				preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
 					Code: "invalid-node-config", Severity: "error", Path: fmt.Sprintf("nodes[%d].config", index), Message: "config must be an object",
 				})
-				continue
+				config = map[string]any{}
 			}
 		}
 		for _, issue := range definition.Config.Validate(config) {
@@ -237,7 +296,221 @@ func (a *Application) previewDraft(content map[string]any) WorkflowPreview {
 			})
 		}
 	}
+	for _, target := range records {
+		targetID, _ := target.content["id"].(string)
+		inputs := map[string]any{}
+		if value, exists := target.content["inputs"]; exists && value != nil {
+			var valid bool
+			inputs, valid = value.(map[string]any)
+			if !valid {
+				preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+					Code: "invalid-inputs", Severity: "error", Path: fmt.Sprintf("nodes[%d].inputs", target.index), Message: "inputs must be an object",
+				})
+				inputs = map[string]any{}
+			}
+		}
+		inputNames := sortedKeys(inputs)
+		if target.known {
+			for inputName, port := range target.definition.Inputs {
+				if _, bound := inputs[inputName]; !bound && !port.Optional {
+					preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+						Code: "missing-input-binding", Severity: "error", Path: fmt.Sprintf("nodes[%d].inputs.%s", target.index, inputName),
+						Message: fmt.Sprintf("required input %q is not bound", inputName),
+					})
+				}
+			}
+		}
+		for _, inputName := range inputNames {
+			bindingValue := inputs[inputName]
+			inputPort, inputFound := target.definition.Inputs[inputName]
+			if target.known && !inputFound {
+				preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+					Code: "unknown-input-port", Severity: "error", Path: fmt.Sprintf("nodes[%d].inputs.%s", target.index, inputName),
+					Message: fmt.Sprintf("input port %q is not declared by Node Definition %q", inputName, target.definition.ID),
+				})
+			}
+			binding, valid := bindingValue.(map[string]any)
+			if !valid {
+				preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+					Code: "invalid-input-binding", Severity: "error", Path: fmt.Sprintf("nodes[%d].inputs.%s", target.index, inputName), Message: "input binding must be an object",
+				})
+				continue
+			}
+			from, _ := binding["from"].(string)
+			sourceID, outputName, valid := parsePortReference(from)
+			if !valid {
+				preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+					Code: "invalid-input-binding", Severity: "error", Path: fmt.Sprintf("nodes[%d].inputs.%s.from", target.index, inputName), Message: "binding must use <node-id>.<output-port>",
+				})
+				continue
+			}
+			source, exists := nodesByID[sourceID]
+			if !exists {
+				preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+					Code: "unknown-input-source", Severity: "error", Path: fmt.Sprintf("nodes[%d].inputs.%s.from", target.index, inputName), Message: fmt.Sprintf("source node %q does not exist", sourceID),
+				})
+				continue
+			}
+			outputPort, outputFound := source.definition.Outputs[outputName]
+			artifactType := ""
+			if outputFound {
+				artifactType = outputPort.Type
+			}
+			preview.Edges = append(preview.Edges, PreviewEdge{
+				Kind: "data", SourceNodeID: sourceID, SourcePort: outputName,
+				TargetNodeID: targetID, TargetPort: inputName, ArtifactType: artifactType,
+			})
+			if !source.known || !outputFound {
+				preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+					Code: "unknown-output-port", Severity: "error", Path: fmt.Sprintf("nodes[%d].inputs.%s.from", target.index, inputName),
+					Message: fmt.Sprintf("output port %q is not declared by source Node %q", outputName, sourceID),
+				})
+				continue
+			}
+			if inputFound && inputPort.Type != outputPort.Type {
+				preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+					Code: "incompatible-input-type", Severity: "error", Path: fmt.Sprintf("nodes[%d].inputs.%s", target.index, inputName),
+					Message: fmt.Sprintf("input type %s is incompatible with %s.%s type %s", inputPort.Type, sourceID, outputName, outputPort.Type),
+				})
+			}
+		}
+	}
+	for _, target := range records {
+		targetID, _ := target.content["id"].(string)
+		value, exists := target.content["dependsOn"]
+		if !exists || value == nil {
+			continue
+		}
+		dependencies, valid := stringList(value)
+		if !valid {
+			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+				Code: "invalid-control-dependencies", Severity: "error", Path: fmt.Sprintf("nodes[%d].dependsOn", target.index), Message: "control dependencies must be a list of Node IDs",
+			})
+			continue
+		}
+		for dependencyIndex, sourceID := range dependencies {
+			if _, found := nodesByID[sourceID]; !found {
+				preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+					Code: "unknown-control-dependency", Severity: "error", Path: fmt.Sprintf("nodes[%d].dependsOn[%d]", target.index, dependencyIndex), Message: fmt.Sprintf("control dependency node %q does not exist", sourceID),
+				})
+				continue
+			}
+			preview.Edges = append(preview.Edges, PreviewEdge{Kind: "control", SourceNodeID: sourceID, TargetNodeID: targetID})
+		}
+	}
+	nodeIDs := make(map[string]struct{}, len(nodesByID))
+	for nodeID := range nodesByID {
+		nodeIDs[nodeID] = struct{}{}
+	}
+	preview.Groups = cycleGroups(nodeIDs, preview.Edges)
 	return preview
+}
+
+func sortedKeys(values map[string]any) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func parsePortReference(reference string) (string, string, bool) {
+	source, output, found := strings.Cut(reference, ".")
+	return source, output, found && source != "" && output != "" && !strings.Contains(output, ".")
+}
+
+func stringList(value any) ([]string, bool) {
+	switch values := value.(type) {
+	case []string:
+		return append([]string(nil), values...), true
+	case []any:
+		result := make([]string, 0, len(values))
+		for _, value := range values {
+			text, ok := value.(string)
+			if !ok || strings.TrimSpace(text) == "" {
+				return nil, false
+			}
+			result = append(result, text)
+		}
+		return result, true
+	default:
+		return nil, false
+	}
+}
+
+func cycleGroups(nodes map[string]struct{}, edges []PreviewEdge) []PreviewGroup {
+	adjacency := make(map[string][]string, len(nodes))
+	selfEdge := make(map[string]bool)
+	for id := range nodes {
+		adjacency[id] = []string{}
+	}
+	for _, edge := range edges {
+		if _, sourceExists := nodes[edge.SourceNodeID]; !sourceExists {
+			continue
+		}
+		if _, targetExists := nodes[edge.TargetNodeID]; !targetExists {
+			continue
+		}
+		adjacency[edge.SourceNodeID] = append(adjacency[edge.SourceNodeID], edge.TargetNodeID)
+		if edge.SourceNodeID == edge.TargetNodeID {
+			selfEdge[edge.SourceNodeID] = true
+		}
+	}
+	for id := range adjacency {
+		sort.Strings(adjacency[id])
+	}
+	ids := make([]string, 0, len(nodes))
+	for id := range nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	index := 0
+	indices := map[string]int{}
+	lowlinks := map[string]int{}
+	onStack := map[string]bool{}
+	stack := make([]string, 0, len(nodes))
+	groups := make([]PreviewGroup, 0)
+	var visit func(string)
+	visit = func(nodeID string) {
+		indices[nodeID] = index
+		lowlinks[nodeID] = index
+		index++
+		stack = append(stack, nodeID)
+		onStack[nodeID] = true
+		for _, next := range adjacency[nodeID] {
+			if _, seen := indices[next]; !seen {
+				visit(next)
+				lowlinks[nodeID] = min(lowlinks[nodeID], lowlinks[next])
+			} else if onStack[next] {
+				lowlinks[nodeID] = min(lowlinks[nodeID], indices[next])
+			}
+		}
+		if lowlinks[nodeID] != indices[nodeID] {
+			return
+		}
+		component := []string{}
+		for {
+			last := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			onStack[last] = false
+			component = append(component, last)
+			if last == nodeID {
+				break
+			}
+		}
+		if len(component) > 1 || selfEdge[nodeID] {
+			sort.Strings(component)
+			groups = append(groups, PreviewGroup{NodeIDs: component})
+		}
+	}
+	for _, id := range ids {
+		if _, seen := indices[id]; !seen {
+			visit(id)
+		}
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i].NodeIDs[0] < groups[j].NodeIDs[0] })
+	return groups
 }
 
 func workflowView(workflow productworkflow.Workflow) WorkflowView {

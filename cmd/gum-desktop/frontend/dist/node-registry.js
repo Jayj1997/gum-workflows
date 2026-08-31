@@ -64,9 +64,10 @@ export function createNodeRegistry() {
 export function createBuiltinNodeRegistry() {
 	const registry = createNodeRegistry();
 	for (const definition of [
-		{ id: "human-chat", displayName: "Human chat", description: "Collect a human message for a Conversation", kind: "human", config: { fields: [] } },
+		{ id: "human-chat", displayName: "Human chat", description: "Collect a human message for a Conversation", kind: "human", inputs: {}, outputs: { conversation: { type: "Conversation" } }, config: { fields: [] } },
 		{
 			id: "llm-chat", displayName: "LLM chat", description: "Append one model response to a Conversation", kind: "agent",
+			inputs: { conversation: { type: "Conversation" } }, outputs: { conversation: { type: "Conversation" } },
 			config: { fields: [
 				{ name: "instructions", type: "markdown", required: false, hasDefault: false, sensitive: false, presentation: { label: "Instructions", help: "Guidance sent separately from the Conversation", editor: "markdown" } },
 				{ name: "temperature", type: "number", required: false, hasDefault: false, min: 0, max: 2, sensitive: false, presentation: { label: "Temperature", help: "Sampling temperature from 0 to 2", editor: "number" } },
