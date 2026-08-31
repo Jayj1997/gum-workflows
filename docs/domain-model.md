@@ -1,6 +1,6 @@
 # Gum-Workflows Domain Model
 
-本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 的 SQLite identity、Draft autosave、Node Catalog、Config Schema 表单、Input Binding、只读 Preview 与 LLM Provider/Model 设置切片。术语以根目录 `CONTEXT.md` 为权威；Workflow Revision、Run、真实 LLM Client、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
+本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 01–07 的 SQLite identity、Draft、创作/Preview、LLM 设置与 P9 fake StartRun。术语以根目录 `CONTEXT.md` 为权威；真实 LLM、人工输入、分层 Run history、Interrupted、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
 
 ## 0. Product Workflow identity
 
@@ -22,7 +22,15 @@ Gum Config Schema 是小型产品领域合同，支持 string、markdown、integ
 
 Provider 与每个 Provider 下的 Model 各自最多一个显式 default。Resolver 只考虑未删除项：优先显式 default，否则按 `(created_at ASC, UUID ASC)` 取第一个；删除显式 default 后立即按同一规则产生新的有效 default。没有 Provider 或有效 Provider 没有 Model 时返回结构化设置 Diagnostic。重命名 Provider、修改 Base URL 或 Provider Model ID 不改变 Gum UUID。
 
-Desktop 与 Browser Mock 经同一 WorkflowClient 和 Product Application 用例创建、编辑、删除并设置 default。当前设置不调用 `/models`，不维护 Capability、position、enable/disable 或自动 Provider failover。Model Preference 写回 Draft、Revision/Run Snapshot、Keychain Secret Adapter 与真实协议请求属于后续票。
+Desktop 与 Browser Mock 经同一 WorkflowClient 和 Product Application 用例创建、编辑、删除并设置 default。当前设置不调用 `/models`，不维护 Capability、position、enable/disable 或自动 Provider failover。StartRun 对空 Model Preference 按双层 default 物化 Gum Model UUID；Keychain Secret Adapter 与真实协议请求属于后续票。
+
+## 0.2 P9 StartRun、Revision 与 fake Artifact
+
+UI 点击 Run 时先 flush 待保存编辑，再把当前 Draft 的 expected `lock_version` 交给 Product Application。Application 先校验 token、Preview Diagnostics 与 LLM 设置；空 Model Preference 解析为稳定 Gum Model UUID并写回 Draft。旧 token、非法 Draft、缺少 default 或 Artifact 写入失败都不会创建可见 Run，也不会留下 Model UUID 半物化。
+
+物化后的执行语义先规范化：Node 顺序、Control Dependency 集合与 map 顺序不影响 SHA-256，Workflow/Node 展示文本、Presentation/View 状态不进入哈希。SQLite 以 `(workflow_id, semantic_hash)` 复用 immutable Revision；每次成功 StartRun 仍创建独立 Run UUID。Run Snapshot 固定 Revision 与各 Agent Node 的 Provider/Model 解析结果，但不包含 API Key 引用或明文。
+
+P9 fake executor 只跑当前 tracer 拓扑：`human-chat(source)` 产生一条 user message，`llm-chat` 追加 deterministic assistant message。两次 Node Run、ArtifactRef 与元数据在同一 SQLite 事务发布，Conversation 本体保存在 Local Data Root 的 `runs/<run-id>/artifacts/`。Desktop 与 Browser Mock 通过同一 WorkflowClient 展示本次 Run、Node Run 与消息；分层历史查询属于后续票。
 
 首批产品 Catalog 同时声明 `human-chat.conversation: Conversation` output，以及 `llm-chat.conversation: Conversation` input/output。Input Binding 使用 `inputs.<input>.from: <node-id>.<output>` 形成 Data Edge；Control Dependency 使用独立 `dependsOn` 控件形成 Control Edge。只读 Preview 由 Draft 派生，不暴露渲染或布局库结构；自动网格坐标、缩放、节点折叠和最近选择保留在 UI，不写入 Draft 语义内容。
 
@@ -189,7 +197,7 @@ Workflow 没有自动 Succeeded 终态。全图静止时仍保持 Running，等�
 
 CLI 可用 `GUM_WORKFLOWS_DATA_ROOT` 覆盖位置；未覆盖时使用操作系统的用户级应用数据目录。路径解析本身不创建目录；ScriptNode 执行时才创建该 Node Run 私有的 bundle、logs 与临时 tool-output，Adapter 消费正式产物后清理 tool-output。Project Definition 中的 repository 相对 Workflow 文件解析为规范化绝对路径，该目录直接作为 Agent 与 Automation 共享的 In-place Project Workspace；Runtime 不把项目复制到 Local Data Root，也不在项目内写 Gum 日志或结果。
 
-SQLite 使用 WAL、busy_timeout、foreign keys 与 `PRAGMA user_version` 顺序迁移。Product 侧当前保存独立的 Product Workflow identity、唯一 Draft 与 Provider/Model Slot 设置；workflow/v1 定义侧保存 Node Type、Node Definition、Node Executor、Workflow 与 Node Instance；运行侧保存 Workflow Run 与逐 Node Run 历史，一行对应一个 round，inputs/outputs 只序列化 `ArtifactRef`，diagnostics 保存非敏感执行事实。Quality Check Result 本体仍由 Artifact Store 保存，历史通过输出 Ref 定位。
+SQLite 使用 WAL、busy_timeout、foreign keys 与 `PRAGMA user_version` 顺序迁移。Product 侧保存独立 Workflow identity、唯一 Draft、Provider/Model Slot、immutable Revision、Run Snapshot、Run/Node Run 与 Artifact 元数据；Product Conversation 和 workflow/v1 的 Quality Check Result 本体都由 filesystem Artifact Store 保存，数据库只保存引用。workflow/v1 定义与运行历史继续使用原有独立表，不与 Product Workflow 共享 identity。
 
 `history.Store` 实现 `execution.RunRecorder`。Engine 在与 state.json 相同的状态点提交完整快照；Record 使用 upsert 保持重放幂等。`validate` 只在数据库已经存在时 read-only 检查 Executor 解析，不建库、不迁移；`history` 同样 read-only 打开且无库时返回空态。新 Run 不在用户项目内创建或更新 `.workflow`，新旧位置不双写。开发期旧项目数据可通过显式调用 `history.MigrateLegacy` 一次性迁入 Local Data Root；普通 `run`、`validate` 与 `history` 不会自动扫描 legacy 目录。
 

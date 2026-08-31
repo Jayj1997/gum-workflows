@@ -10,6 +10,7 @@ import { createProductShell, productStatusMessage } from "../dist/product-shell.
 import { createBuiltinNodeRegistry, validateConfig } from "../dist/node-registry.js";
 import { createWorkflowPreview } from "../dist/workflow-preview.js";
 import { createBrowserLLMSettings } from "../dist/browser-llm-settings.js";
+import { productRevisionKey } from "../dist/browser-run.js";
 
 const expectedView = {
   title: "Gum Workflows",
@@ -25,6 +26,14 @@ const expectedDraft = {
   content: { semanticSchemaVersion: "productWorkflow/v1", nodes: [] },
   lockVersion: 1,
   updatedAt: "2026-08-31T09:00:00Z",
+};
+const expectedRun = {
+	id: "run-uuid", revisionId: "revision-uuid", status: "succeeded", draft: expectedDraft,
+	nodeRuns: [
+		{ id: "human-run", nodeId: "prompt", nodeDefinition: "human-chat", nodeExecutor: "v1", status: "succeeded" },
+		{ id: "agent-run", nodeId: "answer", nodeDefinition: "llm-chat", nodeExecutor: "v1", status: "succeeded" },
+	],
+	artifacts: [{ id: "artifact-uuid", nodeId: "answer", port: "conversation", type: "Conversation", version: "2", uri: "2.json", messages: [{ role: "user", text: "Hello" }, { role: "assistant", text: "Fake response" }] }],
 };
 const expectedSettings = {
 	providers: [{
@@ -67,6 +76,7 @@ const clientContract = [
 		async updateDraft(input) {
 			return { draft: { ...expectedDraft, ...input, lockVersion: 2 }, preview: { nodes: [], edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
 		},
+		async startRun() { return expectedRun; },
 		async listNodeCatalog() { return expectedCatalog; },
 		async getLLMSettings() { return expectedSettings; },
 		async createLLMProvider(input) { return { ...expectedSettings.providers[0], ...input }; },
@@ -96,6 +106,7 @@ const clientContract = [
 		async UpdateDraft(input) {
 			return { draft: { ...expectedDraft, ...input, lockVersion: 2 }, preview: { nodes: [], edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
 		},
+		async StartRun() { return expectedRun; },
 		async ListNodeCatalog() { return expectedCatalog; },
 		async GetLLMSettings() { return expectedSettings; },
 		async CreateLLMProvider(input) { return { ...expectedSettings.providers[0], ...input }; },
@@ -116,6 +127,7 @@ for (const [name, createClient] of clientContract) {
 	assert.deepEqual(await client.listWorkflows(), [expectedWorkflow]);
 	assert.deepEqual(await client.getDraft(expectedWorkflow.id), expectedDraft);
 	assert.equal((await client.updateDraft({ workflowId: expectedWorkflow.id, expectedLockVersion: 1, content: expectedDraft.content })).draft.lockVersion, 2);
+	assert.deepEqual(await client.startRun({ workflowId: expectedWorkflow.id, expectedLockVersion: 1 }), expectedRun);
 	assert.deepEqual(await client.listNodeCatalog(), expectedCatalog);
 	assert.deepEqual(await client.getLLMSettings(), expectedSettings);
 	assert.equal((await client.createLLMProvider({ name: "Primary" })).name, "Primary");
@@ -128,6 +140,38 @@ for (const [name, createClient] of clientContract) {
 	assert.deepEqual(await client.setDefaultLLMModel("provider-uuid", "model-uuid"), expectedSettings);
   });
 }
+
+test("Run flushes pending autosave and uses the latest Draft lock token", async () => {
+	let selectWorkflow, startRun;
+	let draft = structuredClone(expectedDraft);
+	const calls = [];
+	const renderedRuns = [];
+	const view = {
+		onOpenWorkspace() {}, onCreateWorkflow() {}, onSelectWorkflow(handler) { selectWorkflow = handler; },
+		onDraftDirty() {}, onEditDraft() {}, onStartRun(handler) { startRun = handler; },
+		async flushDraftEdit() {
+			calls.push("flush");
+			draft = { ...draft, lockVersion: 2 };
+			return { draft };
+		},
+		render() {}, renderDraft() {}, renderDraftLoading() {}, renderNodeEditor() {},
+		renderRun(run) { renderedRuns.push(structuredClone(run)); },
+	};
+	const client = createBrowserWorkflowClient({
+		async openWorkspace() { return expectedView; }, async createWorkflow() {}, async listWorkflows() { return []; },
+		async getDraft() { return structuredClone(draft); }, async updateDraft() {},
+		async startRun(input) {
+			calls.push(["start", input.expectedLockVersion]);
+			return { ...structuredClone(expectedRun), draft: structuredClone(draft) };
+		},
+	});
+	createProductShell(view, client);
+	await selectWorkflow(expectedWorkflow.id);
+	await startRun();
+
+	assert.deepEqual(calls, ["flush", ["start", 2]]);
+	assert.equal(renderedRuns.at(-1).artifacts[0].messages[1].text, "Fake response");
+});
 
 test("Browser Mock settings use UUID tie-breaks and truthful mutation defaults", () => {
 	const ids = ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "cccccccc-cccc-4ccc-8ccc-cccccccccccc"];
@@ -144,6 +188,24 @@ test("Browser Mock settings use UUID tie-breaks and truthful mutation defaults",
 	assert.equal(settings.updateModel({ ...laterModel, displayName: "Later renamed" }).effectiveDefault, false);
 	assert.equal(settings.getSettings().providers[0].id, earlierProvider.id);
 	assert.equal(settings.getSettings().providers[0].models[0].id, earlierModel.id);
+});
+
+test("Browser Mock Revision identity ignores presentation and unordered storage", () => {
+	const left = {
+		semanticSchemaVersion: "productWorkflow/v1", displayName: "Left", view: { zoom: 1 },
+		nodes: [
+			{ id: "b", definition: "llm-chat", executor: "v1", displayName: "Writer", presentation: { x: 10 }, dependsOn: ["z", "a"], config: {} },
+			{ id: "a", definition: "human-chat", executor: "v1", displayName: "Prompt", config: {} },
+		],
+	};
+	const right = {
+		nodes: [
+			{ config: {}, displayName: "Renamed prompt", executor: "v1", definition: "human-chat", id: "a" },
+			{ config: {}, dependsOn: ["a", "z"], presentation: { x: 999 }, displayName: "Renamed writer", executor: "v1", definition: "llm-chat", id: "b" },
+		],
+		view: { zoom: 2 }, displayName: "Right", semanticSchemaVersion: "productWorkflow/v1",
+	};
+	assert.equal(productRevisionKey(left), productRevisionKey(right));
 });
 
 test("the Browser Mock registry validates every Gum Config Schema field type", () => {
@@ -719,6 +781,32 @@ test("desktop and browser entries share one DOM view adapter", () => {
 	assert.equal(button.disabled, false);
 	assert.equal(draftStatus.textContent, "Draft loaded.");
 	assert.equal(draftStatus.textContent.includes("token"), false);
+});
+
+test("the DOM Run action renders successful Node Runs and Conversation messages", async () => {
+	const document = {
+		createElement(tag) {
+			return { tag, children: [], textContent: "", append(...children) { this.children.push(...children); } };
+		},
+	};
+	const runButton = { listeners: {}, disabled: false, addEventListener(event, handler) { this.listeners[event] = handler; } };
+	const runStatus = { textContent: "" };
+	const artifactList = { ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } };
+	const nodeRunList = { ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } };
+	const view = createProductDOMView({
+		title: {}, message: {}, status: { dataset: {} }, button: { addEventListener() {} }, form: { addEventListener() {} }, nameInput: {},
+		workflowList: { replaceChildren() {} }, draftEditor: { addEventListener() {} }, draftStatus: {}, diagnosticList: { replaceChildren() {} },
+		runButton, runStatus, artifactList, nodeRunList,
+	}, productStatusMessage);
+	let started = false;
+	view.onStartRun(() => { started = true; });
+	await runButton.listeners.click();
+	view.renderRun(expectedRun);
+
+	assert.equal(started, true);
+	assert.equal(runStatus.textContent, "Run succeeded · revision revision-uuid");
+	assert.deepEqual(nodeRunList.items.map((item) => item.textContent), ["prompt · human-chat@v1 · succeeded", "answer · llm-chat@v1 · succeeded"]);
+	assert.equal(artifactList.items[0].children[1].children[1].textContent, "assistant: Fake response");
 });
 
 test("the Node editor renders distinct Input Binding and Control Dependency controls", async () => {

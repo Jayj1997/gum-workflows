@@ -2,6 +2,9 @@ package product_test
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -13,7 +16,353 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/product"
 	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
 	productworkflow "github.com/Jayj1997/gum-workflows/internal/product/workflow"
+	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
 )
+
+func TestApplicationStartsFakeConversationRunFromVisibleDraft(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	paths, err := runtimepath.New(filepath.Join(root, "product.db"), filepath.Join(root, "runs"))
+	if err != nil {
+		t.Fatalf("create runtime paths: %v", err)
+	}
+	store, err := history.Open(ctx, paths.Database())
+	if err != nil {
+		t.Fatalf("open product database: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	registry, err := nodecatalog.NewBuiltinRegistry()
+	if err != nil {
+		t.Fatalf("load product Node Catalog: %v", err)
+	}
+	application := product.NewApplication(store, registry, product.WithRunPaths(paths))
+
+	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{
+		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKeyRef: "env://TEST_API_KEY",
+	})
+	if err != nil {
+		t.Fatalf("create Provider: %v", err)
+	}
+	model, err := application.CreateLLMModel(ctx, product.CreateLLMModelInput{
+		ProviderID: provider.ID, DisplayName: "Fake model", ProviderModelID: "fake-model",
+		GenerationDefaults: productworkflow.GenerationDefaults{Temperature: float64Pointer(0.2), MaxOutputTokens: intPointer(32)},
+	})
+	if err != nil {
+		t.Fatalf("create Model: %v", err)
+	}
+	workflow, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "Conversation"})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	saved, err := application.UpdateDraft(ctx, product.UpdateDraftInput{
+		WorkflowID: workflow.ID, ExpectedLockVersion: 1,
+		Content: map[string]any{
+			"semanticSchemaVersion": "productWorkflow/v1",
+			"project":               map[string]any{"repository": "/workspace/example"},
+			"nodes": []any{
+				map[string]any{"id": "prompt", "definition": "human-chat", "executor": "v1", "displayName": "Prompt", "config": map[string]any{}},
+				map[string]any{
+					"id": "answer", "definition": "llm-chat", "executor": "v1", "displayName": "Answer", "config": map[string]any{"temperature": 0.8, "max_output_tokens": 64},
+					"inputs": map[string]any{"conversation": map[string]any{"from": "prompt.conversation"}},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("save tracer Draft: %v", err)
+	}
+
+	run, err := application.StartRun(ctx, product.StartRunInput{
+		WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion,
+	})
+	if err != nil {
+		t.Fatalf("start fake Run: %v", err)
+	}
+
+	if run.Status != "succeeded" || run.ID == "" || run.RevisionID == "" {
+		t.Fatalf("Run = %#v, want successful identities", run)
+	}
+	if run.Draft.LockVersion != saved.Draft.LockVersion+1 {
+		t.Fatalf("materialized lock version = %d, want %d", run.Draft.LockVersion, saved.Draft.LockVersion+1)
+	}
+	nodes := run.Draft.Content["nodes"].([]any)
+	preference := nodes[1].(map[string]any)["llm"].(map[string]any)
+	if preference["modelUuid"] != model.ID {
+		t.Fatalf("materialized Model UUID = %#v, want %q", preference["modelUuid"], model.ID)
+	}
+	if len(run.NodeRuns) != 2 || run.NodeRuns[0].Status != "succeeded" || run.NodeRuns[1].Status != "succeeded" {
+		t.Fatalf("Node Runs = %#v, want two successful rounds", run.NodeRuns)
+	}
+	if len(run.Snapshot.Executors) != 2 || run.Snapshot.Executors[1].NodeID != "answer" || run.Snapshot.Executors[1].Version != "v1" {
+		t.Fatalf("Run Snapshot Executors = %#v", run.Snapshot.Executors)
+	}
+	if len(run.Snapshot.LLMSelections) != 1 || run.Snapshot.LLMSelections[0].Temperature == nil || *run.Snapshot.LLMSelections[0].Temperature != 0.8 || run.Snapshot.LLMSelections[0].MaxOutputTokens == nil || *run.Snapshot.LLMSelections[0].MaxOutputTokens != 64 {
+		t.Fatalf("Run Snapshot LLM selections = %#v, want effective Node config", run.Snapshot.LLMSelections)
+	}
+	if run.Snapshot.Project["repository"] != "/workspace/example" {
+		t.Fatalf("Run Snapshot Project = %#v", run.Snapshot.Project)
+	}
+	if len(run.Artifacts) != 2 {
+		t.Fatalf("Artifacts = %#v, want source and assistant Conversation versions", run.Artifacts)
+	}
+	conversation := run.Artifacts[1]
+	if conversation.Type != "Conversation" || len(conversation.Messages) != 2 || conversation.Messages[0].Role != "user" || conversation.Messages[1].Role != "assistant" {
+		t.Fatalf("Conversation Artifact = %#v", conversation)
+	}
+	if _, err := os.Stat(filepath.Join(paths.ArtifactsDir(run.ID), conversation.URI)); err != nil {
+		t.Fatalf("persisted Conversation Artifact: %v", err)
+	}
+}
+
+func TestApplicationFakeRunConsumesTheAuthoredConversationDataEdge(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	paths, err := runtimepath.New(filepath.Join(root, "product.db"), filepath.Join(root, "runs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := history.Open(ctx, paths.Database())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	application := newTestApplicationWithRuns(t, store, paths)
+	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKeyRef: "env://TEST_API_KEY"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := application.CreateLLMModel(ctx, product.CreateLLMModelInput{ProviderID: provider.ID, DisplayName: "Fake", ProviderModelID: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+	workflow, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "Conversation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := application.UpdateDraft(ctx, product.UpdateDraftInput{WorkflowID: workflow.ID, ExpectedLockVersion: 1, Content: map[string]any{
+		"semanticSchemaVersion": "productWorkflow/v1",
+		"nodes": []any{
+			map[string]any{"id": "unused", "definition": "human-chat", "executor": "v1", "displayName": "Unused", "config": map[string]any{}},
+			map[string]any{"id": "prompt", "definition": "human-chat", "executor": "v1", "displayName": "Prompt", "config": map[string]any{}},
+			map[string]any{"id": "answer", "definition": "llm-chat", "executor": "v1", "displayName": "Answer", "config": map[string]any{}, "inputs": map[string]any{"conversation": map[string]any{"from": "prompt.conversation"}}},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.NodeRuns[0].NodeID != "prompt" || run.Artifacts[0].NodeID != "prompt" {
+		t.Fatalf("fake source = Node Run %q Artifact %q, want authored source prompt", run.NodeRuns[0].NodeID, run.Artifacts[0].NodeID)
+	}
+}
+
+func float64Pointer(value float64) *float64 { return &value }
+func intPointer(value int) *int             { return &value }
+
+func TestApplicationStartRunRejectsStaleDraftWithoutMaterializingModel(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	paths, err := runtimepath.New(filepath.Join(root, "product.db"), filepath.Join(root, "runs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := history.Open(ctx, paths.Database())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	application := newTestApplicationWithRuns(t, store, paths)
+	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKeyRef: "env://TEST_API_KEY"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := application.CreateLLMModel(ctx, product.CreateLLMModelInput{ProviderID: provider.ID, DisplayName: "Fake", ProviderModelID: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+	workflow, draft := saveTracerDraft(t, ctx, application)
+	newerContent := cloneMap(t, draft.Draft.Content)
+	newerContent["project"] = map[string]any{"repository": "/workspace/newer"}
+	newer, err := application.UpdateDraft(ctx, product.UpdateDraftInput{WorkflowID: workflow.ID, ExpectedLockVersion: draft.Draft.LockVersion, Content: newerContent})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: draft.Draft.LockVersion}); err == nil {
+		t.Fatal("start stale Draft = nil error, want conflict")
+	}
+	latest, err := application.GetDraft(ctx, workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.LockVersion != newer.Draft.LockVersion {
+		t.Fatalf("Draft lock version = %d, want %d", latest.LockVersion, newer.Draft.LockVersion)
+	}
+	nodes := latest.Content["nodes"].([]any)
+	if _, materialized := nodes[1].(map[string]any)["llm"]; materialized {
+		t.Fatalf("stale StartRun materialized Model UUID: %#v", nodes[1])
+	}
+	if _, err := os.Stat(paths.RunsDir()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale StartRun runs directory error = %v, want not exist", err)
+	}
+}
+
+func TestApplicationStartRunWithoutDefaultLeavesDraftAndRunsUntouched(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	paths, err := runtimepath.New(filepath.Join(root, "product.db"), filepath.Join(root, "runs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := history.Open(ctx, paths.Database())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	application := newTestApplicationWithRuns(t, store, paths)
+	workflow, saved := saveTracerDraft(t, ctx, application)
+
+	if _, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion}); err == nil {
+		t.Fatal("start Run without default = nil error, want settings diagnostic")
+	}
+	latest, err := application.GetDraft(ctx, workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.LockVersion != saved.Draft.LockVersion || !reflect.DeepEqual(latest.Content, saved.Draft.Content) {
+		t.Fatalf("failed StartRun changed Draft = %#v, want %#v", latest, saved.Draft)
+	}
+	if _, err := os.Stat(paths.RunsDir()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed StartRun runs directory error = %v, want not exist", err)
+	}
+}
+
+func TestApplicationRepeatedStartRunReusesRevisionAndCreatesNewRun(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	paths, err := runtimepath.New(filepath.Join(root, "product.db"), filepath.Join(root, "runs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := history.Open(ctx, paths.Database())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	application := newTestApplicationWithRuns(t, store, paths)
+	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKeyRef: "env://TEST_API_KEY"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := application.CreateLLMModel(ctx, product.CreateLLMModelInput{ProviderID: provider.ID, DisplayName: "Fake", ProviderModelID: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+	workflow, saved := saveTracerDraft(t, ctx, application)
+	first, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: first.Draft.LockVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.RevisionID != first.RevisionID {
+		t.Fatalf("Revision IDs = %q and %q, want reuse", first.RevisionID, second.RevisionID)
+	}
+	if second.ID == first.ID {
+		t.Fatalf("Run ID = %q reused", second.ID)
+	}
+	if second.Draft.LockVersion != first.Draft.LockVersion {
+		t.Fatalf("second Run changed Draft lock version from %d to %d", first.Draft.LockVersion, second.Draft.LockVersion)
+	}
+	for _, runID := range []string{first.ID, second.ID} {
+		if _, err := os.Stat(paths.ArtifactsDir(runID)); err != nil {
+			t.Fatalf("Run %s Artifact directory: %v", runID, err)
+		}
+	}
+}
+
+func TestApplicationArtifactFailureDoesNotMaterializeDraft(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runsPath := filepath.Join(root, "runs-is-a-file")
+	if err := os.WriteFile(runsPath, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := runtimepath.New(filepath.Join(root, "product.db"), runsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := history.Open(ctx, paths.Database())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	application := newTestApplicationWithRuns(t, store, paths)
+	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKeyRef: "env://TEST_API_KEY"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := application.CreateLLMModel(ctx, product.CreateLLMModelInput{ProviderID: provider.ID, DisplayName: "Fake", ProviderModelID: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+	workflow, saved := saveTracerDraft(t, ctx, application)
+	if _, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion}); err == nil {
+		t.Fatal("start Run with invalid Artifact root = nil error")
+	}
+	latest, err := application.GetDraft(ctx, workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.LockVersion != saved.Draft.LockVersion || !reflect.DeepEqual(latest.Content, saved.Draft.Content) {
+		t.Fatalf("Artifact failure changed Draft = %#v, want %#v", latest, saved.Draft)
+	}
+}
+
+func newTestApplicationWithRuns(t *testing.T, store *history.Store, paths runtimepath.Paths) *product.Application {
+	t.Helper()
+	registry, err := nodecatalog.NewBuiltinRegistry()
+	if err != nil {
+		t.Fatalf("load product Node Catalog: %v", err)
+	}
+	return product.NewApplication(store, registry, product.WithRunPaths(paths))
+}
+
+func saveTracerDraft(t *testing.T, ctx context.Context, application *product.Application) (product.WorkflowView, product.DraftUpdateView) {
+	t.Helper()
+	workflow, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "Conversation"})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	saved, err := application.UpdateDraft(ctx, product.UpdateDraftInput{
+		WorkflowID: workflow.ID, ExpectedLockVersion: 1,
+		Content: map[string]any{
+			"semanticSchemaVersion": "productWorkflow/v1",
+			"nodes": []any{
+				map[string]any{"id": "prompt", "definition": "human-chat", "executor": "v1", "displayName": "Prompt", "config": map[string]any{}},
+				map[string]any{"id": "answer", "definition": "llm-chat", "executor": "v1", "displayName": "Answer", "config": map[string]any{}, "inputs": map[string]any{"conversation": map[string]any{"from": "prompt.conversation"}}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("save tracer Draft: %v", err)
+	}
+	return workflow, saved
+}
+
+func cloneMap(t *testing.T, value map[string]any) map[string]any {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clone map[string]any
+	if err := json.Unmarshal(data, &clone); err != nil {
+		t.Fatal(err)
+	}
+	return clone
+}
 
 func TestApplicationManagesProviderModelSettingsAndResolvesDefaults(t *testing.T) {
 	ctx := context.Background()

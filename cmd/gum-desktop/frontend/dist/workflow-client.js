@@ -18,12 +18,16 @@ export function createBrowserWorkflowClient(application) {
 	const getLLMSettings = typeof application.getLLMSettings === "function"
 		? () => application.getLLMSettings()
 		: async () => ({ providers: [], diagnostics: [] });
+	const startRun = typeof application.startRun === "function"
+		? (input) => application.startRun(input)
+		: async () => { throw new Error("browser application must provide startRun()"); };
   return {
     openWorkspace: () => application.openWorkspace(),
     createWorkflow: (input) => application.createWorkflow(input),
     listWorkflows: () => application.listWorkflows(),
 		getDraft: (workflowId) => application.getDraft(workflowId),
 		updateDraft: (input) => application.updateDraft(input),
+		startRun,
 		listNodeCatalog,
 		getLLMSettings,
 		createLLMProvider: (input) => application.createLLMProvider(input),
@@ -44,6 +48,7 @@ export function createDesktopWorkflowClient(desktopAdapter) {
 	requireMethod(desktopAdapter, "GetDraft", "desktop adapter");
 	requireMethod(desktopAdapter, "UpdateDraft", "desktop adapter");
 	requireMethod(desktopAdapter, "ListNodeCatalog", "desktop adapter");
+	requireMethod(desktopAdapter, "StartRun", "desktop adapter");
 	for (const method of ["GetLLMSettings", "CreateLLMProvider", "UpdateLLMProvider", "DeleteLLMProvider", "SetDefaultLLMProvider", "CreateLLMModel", "UpdateLLMModel", "DeleteLLMModel", "SetDefaultLLMModel"]) {
 		requireMethod(desktopAdapter, method, "desktop adapter");
 	}
@@ -53,6 +58,7 @@ export function createDesktopWorkflowClient(desktopAdapter) {
     listWorkflows: () => desktopAdapter.ListWorkflows(),
 		getDraft: (workflowId) => desktopAdapter.GetDraft(workflowId),
 		updateDraft: (input) => desktopAdapter.UpdateDraft(input),
+		startRun: (input) => desktopAdapter.StartRun(input),
 		listNodeCatalog: () => desktopAdapter.ListNodeCatalog(),
 		getLLMSettings: () => desktopAdapter.GetLLMSettings(),
 		createLLMProvider: (input) => desktopAdapter.CreateLLMProvider(input),

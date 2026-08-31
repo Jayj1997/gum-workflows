@@ -85,7 +85,8 @@ export function createProductDOMView(elements, statusMessage) {
 		nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm,
 		nodeInputForm, nodeControlForm,
 		previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset,
-		providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKeyRef, llmProviderList, llmDiagnosticList,
+			providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKeyRef, llmProviderList, llmDiagnosticList,
+			runButton, runStatus, nodeRunList, artifactList,
 	} = elements;
 	let selectWorkflow = () => {};
 	let draftDirty = () => {};
@@ -104,7 +105,8 @@ export function createProductDOMView(elements, statusMessage) {
 	let createLLMModel = () => {};
 	let updateLLMModel = () => {};
 	let deleteLLMModel = () => {};
-	let setDefaultLLMModel = () => {};
+		let setDefaultLLMModel = () => {};
+		let startRun = () => {};
 	let pendingDraftEdit;
 	let activeWorkflowId = "";
 	let activeNodeId = "";
@@ -199,7 +201,11 @@ export function createProductDOMView(elements, statusMessage) {
 		onCreateLLMModel(handler) { createLLMModel = handler; },
 		onUpdateLLMModel(handler) { updateLLMModel = handler; },
 		onDeleteLLMModel(handler) { deleteLLMModel = handler; },
-		onSetDefaultLLMModel(handler) { setDefaultLLMModel = handler; },
+			onSetDefaultLLMModel(handler) { setDefaultLLMModel = handler; },
+			onStartRun(handler) {
+				startRun = handler;
+				runButton?.addEventListener("click", () => startRun());
+			},
 		render(state) {
 			title.textContent = state.title;
 			message.textContent = state.message;
@@ -303,7 +309,7 @@ export function createProductDOMView(elements, statusMessage) {
 				}));
 			}
 		},
-		renderNodeCatalog(entries) {
+			renderNodeCatalog(entries) {
 			if (!nodeCatalogList) return;
 			const document = nodeCatalogList.ownerDocument;
 			nodeCatalogList.replaceChildren(...entries.map((entry) => {
@@ -317,7 +323,34 @@ export function createProductDOMView(elements, statusMessage) {
 				item.append(control, detail);
 				return item;
 			}));
-		},
+			},
+			renderRun(run) {
+				if (runStatus) runStatus.textContent = `Run ${run.status} · revision ${run.revisionId}`;
+				if (nodeRunList) {
+					const document = nodeRunList.ownerDocument;
+					nodeRunList.replaceChildren(...run.nodeRuns.map((nodeRun) => {
+						const item = document.createElement("li");
+						item.textContent = `${nodeRun.nodeId} · ${nodeRun.nodeDefinition}@${nodeRun.nodeExecutor} · ${nodeRun.status}`;
+						return item;
+					}));
+				}
+				if (artifactList) {
+					const document = artifactList.ownerDocument;
+					artifactList.replaceChildren(...run.artifacts.map((artifact) => {
+						const item = document.createElement("li");
+						const heading = document.createElement("strong");
+						const messages = document.createElement("ol");
+						heading.textContent = `${artifact.nodeId}.${artifact.port} · ${artifact.type} v${artifact.version}`;
+						messages.append(...(artifact.messages ?? []).map((message) => {
+							const row = document.createElement("li");
+							row.textContent = `${message.role}: ${message.text}`;
+							return row;
+						}));
+						item.append(heading, messages);
+						return item;
+					}));
+				}
+			},
 		renderDraftLoading() {
 			clearTimeout(autosaveTimer);
 			activeWorkflowId = "";

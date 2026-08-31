@@ -4,11 +4,13 @@ import { createProductShell, productStatusMessage } from "./product-shell.js";
 import { createBuiltinNodeRegistry } from "./node-registry.js";
 import { createWorkflowPreview } from "./workflow-preview.js";
 import { createBrowserLLMSettings } from "./browser-llm-settings.js";
+import { productRevisionKey } from "./browser-run.js";
 
 const workflows = [];
 const drafts = new Map();
 const nodeRegistry = createBuiltinNodeRegistry();
 const llmSettings = createBrowserLLMSettings();
+const revisions = new Map();
 
 function normalize(value) {
 	if (Array.isArray(value)) return value.map(normalize);
@@ -73,6 +75,61 @@ const client = createBrowserWorkflowClient({
 			refreshRequired: conflict,
 		};
 	},
+	async startRun(input) {
+		const current = drafts.get(input.workflowId);
+		if (!current || current.lockVersion !== input.expectedLockVersion) throw new Error("Draft lock version conflict; refresh before running");
+		const preview = createWorkflowPreview(current.content, nodeRegistry);
+		if (preview.diagnostics.length > 0) throw new Error("Draft has diagnostics; fix the highlighted fields before running");
+		const settings = llmSettings.getSettings();
+		const defaultProvider = settings.providers.find((provider) => provider.effectiveDefault);
+		const defaultModel = defaultProvider?.models.find((model) => model.effectiveDefault);
+		const materialized = structuredClone(current.content);
+		const selections = [];
+		for (const node of materialized.nodes) {
+			if (node.definition !== "llm-chat") continue;
+			const selected = node.llm?.modelUuid;
+			const provider = selected
+				? settings.providers.find((candidate) => candidate.models.some((model) => model.id === selected))
+				: defaultProvider;
+			const model = selected ? provider?.models.find((candidate) => candidate.id === selected) : defaultModel;
+			if (!provider || !model) throw new Error(`Node ${node.id} has no available Model Slot`);
+			node.llm = { modelUuid: model.id };
+			selections.push({
+				nodeId: node.id, providerId: provider.id, providerName: provider.name, protocol: provider.protocol,
+				baseUrl: provider.baseUrl, modelUuid: model.id, providerModelId: model.providerModelId,
+				temperature: node.config?.temperature ?? model.generationDefaults?.temperature,
+				maxOutputTokens: node.config?.max_output_tokens ?? model.generationDefaults?.maxOutputTokens,
+			});
+		}
+		if (!sameContent(current.content, materialized)) {
+			current.content = materialized;
+			current.lockVersion += 1;
+			current.updatedAt = new Date().toISOString();
+		}
+		const key = productRevisionKey(materialized);
+		const revisionId = revisions.get(key) ?? crypto.randomUUID();
+		revisions.set(key, revisionId);
+		const runId = crypto.randomUUID();
+		const agents = materialized.nodes.filter((node) => node.definition === "llm-chat");
+		if (agents.length !== 1) throw new Error("Fake executor supports exactly one LLM chat Node");
+		const agent = agents[0];
+		const sourceId = agent.inputs?.conversation?.from?.split(".")[0];
+		const human = materialized.nodes.find((node) => node.id === sourceId && node.definition === "human-chat");
+		if (!human || agent.inputs.conversation.from !== `${human.id}.conversation`) throw new Error("Fake executor requires the authored human-chat Conversation Data Edge");
+		const messages = [{ role: "user", text: "Hello from the P9 fake executor." }, { role: "assistant", text: "Fake model response." }];
+		const draft = structuredClone(current);
+		draft.preview = createWorkflowPreview(draft.content, nodeRegistry);
+		return {
+			id: runId, revisionId, status: "succeeded", draft,
+			snapshot: {
+				executors: materialized.nodes.map((node) => ({ nodeId: node.id, definitionId: node.definition, version: node.executor })),
+				llmSelections: selections,
+				...(materialized.project ? { project: structuredClone(materialized.project) } : {}),
+			},
+			nodeRuns: [human, agent].map((node) => ({ id: crypto.randomUUID(), nodeId: node.id, nodeDefinition: node.definition, nodeExecutor: node.executor, status: "succeeded" })),
+			artifacts: [{ id: crypto.randomUUID(), nodeId: agent.id, port: "conversation", type: "Conversation", version: "2", uri: "2.json", messages }],
+		};
+	},
 	async getLLMSettings() { return llmSettings.getSettings(); },
 	async createLLMProvider(input) { return llmSettings.createProvider(input); },
 	async updateLLMProvider(input) { return llmSettings.updateProvider(input); },
@@ -115,10 +172,14 @@ const providerBaseURL = document.querySelector("#provider-base-url");
 const providerAPIKeyRef = document.querySelector("#provider-api-key-ref");
 const llmProviderList = document.querySelector("#llm-provider-list");
 const llmDiagnosticList = document.querySelector("#llm-settings-diagnostics");
+const runButton = document.querySelector("#start-run");
+const runStatus = document.querySelector("#run-status");
+const nodeRunList = document.querySelector("#node-run-list");
+const artifactList = document.querySelector("#artifact-list");
 
 createProductShell(
   createProductDOMView(
-		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKeyRef, llmProviderList, llmDiagnosticList },
+		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKeyRef, llmProviderList, llmDiagnosticList, runButton, runStatus, nodeRunList, artifactList },
     productStatusMessage,
   ),
   client,

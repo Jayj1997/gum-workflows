@@ -34,7 +34,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	adapter := newDesktopAdapter(product.NewApplication(store, catalog))
+	adapter := newDesktopAdapter(product.NewApplication(store, catalog, product.WithRunPaths(paths)))
 	if err := wails.Run(&options.App{
 		Title:     "Gum Workflows",
 		Width:     1080,

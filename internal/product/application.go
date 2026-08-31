@@ -12,6 +12,7 @@ import (
 
 	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
 	productworkflow "github.com/Jayj1997/gum-workflows/internal/product/workflow"
+	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
 )
 
 // WorkspaceView is the product shell state returned to a UI adapter.
@@ -38,6 +39,7 @@ type WorkflowApplication interface {
 	DeleteLLMModel(ctx context.Context, providerID, modelID string) error
 	SetDefaultLLMModel(ctx context.Context, providerID, modelID string) (LLMSettingsView, error)
 	ResolveDefaultLLMModel(ctx context.Context) (ResolvedLLMModelView, error)
+	StartRun(ctx context.Context, input StartRunInput) (RunView, error)
 }
 
 // DraftView is the current mutable Product Workflow definition returned to UI adapters.
@@ -121,13 +123,28 @@ type Application struct {
 	repository  productworkflow.Repository
 	llmSettings productworkflow.LLMSettingsRepository
 	catalog     *nodecatalog.Registry
+	runPaths    runtimepath.Paths
+	runRepo     productworkflow.RunRepository
+}
+
+// ApplicationOption configures optional product runtime dependencies.
+type ApplicationOption func(*Application)
+
+// WithRunPaths configures the Local Data Root layout used by Product Runs.
+func WithRunPaths(paths runtimepath.Paths) ApplicationOption {
+	return func(application *Application) { application.runPaths = paths }
 }
 
 // NewApplication creates the Product Application with injected persistence and
 // the explicitly assembled product Node Definition/Executor registry.
-func NewApplication(repository productworkflow.Repository, catalog *nodecatalog.Registry) *Application {
+func NewApplication(repository productworkflow.Repository, catalog *nodecatalog.Registry, options ...ApplicationOption) *Application {
 	settings, _ := repository.(productworkflow.LLMSettingsRepository)
-	return &Application{repository: repository, llmSettings: settings, catalog: catalog}
+	runs, _ := repository.(productworkflow.RunRepository)
+	application := &Application{repository: repository, llmSettings: settings, runRepo: runs, catalog: catalog}
+	for _, option := range options {
+		option(application)
+	}
+	return application
 }
 
 // ListNodeCatalog returns addable Nodes from the registered Definitions and Executors.

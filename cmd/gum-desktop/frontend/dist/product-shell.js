@@ -198,6 +198,24 @@ export function createProductShell(view, client, options = {}) {
 		if (currentDraft?.workflowId === workflowId) editSequence = Math.max(editSequence, revision);
 	});
 	view.onEditDraft(queueDraftEdit);
+	view.onStartRun?.(async () => {
+		if (!currentDraft || refreshRequired) return;
+		try {
+			const flushed = await view.flushDraftEdit?.();
+			if (flushed?.draft) currentDraft = flushed.draft;
+			await saveQueue;
+			if (!currentDraft || refreshRequired) return;
+			const result = await client.startRun({
+				workflowId: currentDraft.workflowId,
+				expectedLockVersion: currentDraft.lockVersion,
+			});
+			currentDraft = result.draft;
+			view.renderDraft?.({ draft: currentDraft, preview: currentDraft.preview });
+			view.renderRun?.(result);
+		} catch (error) {
+			view.render({ status: "error", title: "Gum Workflows", message: errorMessage(error) });
+		}
+	});
 	view.onAddNode?.(async (definitionId) => {
 		const entry = nodeCatalog.find((candidate) => candidate.definition.id === definitionId);
 		if (!entry) throw new Error(`Node Definition ${definitionId} is not in the Catalog`);

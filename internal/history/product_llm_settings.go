@@ -209,6 +209,27 @@ func (s *Store) ResolveDefaultLLMModel(ctx context.Context) (productworkflow.Res
 	return resolved, nil
 }
 
+// ResolveLLMModel resolves one active Gum Model UUID and its active Provider.
+func (s *Store) ResolveLLMModel(ctx context.Context, modelID string) (productworkflow.ResolvedLLMModel, error) {
+	var providerID string
+	if err := s.db.QueryRowContext(ctx, `
+SELECT provider_id FROM product_llm_model WHERE id = ? AND deleted_at IS NULL`, modelID).Scan(&providerID); err != nil {
+		if err == sql.ErrNoRows {
+			return productworkflow.ResolvedLLMModel{}, fmt.Errorf("llm model %s: not found", modelID)
+		}
+		return productworkflow.ResolvedLLMModel{}, fmt.Errorf("resolve LLM Model %s: %w", modelID, err)
+	}
+	provider, err := s.getLLMProvider(ctx, providerID)
+	if err != nil {
+		return productworkflow.ResolvedLLMModel{}, err
+	}
+	model, err := s.getLLMModel(ctx, providerID, modelID)
+	if err != nil {
+		return productworkflow.ResolvedLLMModel{}, err
+	}
+	return productworkflow.ResolvedLLMModel{Provider: provider, Model: model}, nil
+}
+
 func (s *Store) getLLMProvider(ctx context.Context, providerID string) (productworkflow.LLMProvider, error) {
 	provider, err := scanLLMProvider(s.db.QueryRowContext(ctx, `
 SELECT id, name, protocol, base_url, api_key_ref, is_explicit_default, created_at,

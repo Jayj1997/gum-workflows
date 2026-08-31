@@ -60,4 +60,5 @@ type LLMSettingsRepository interface {
 	SetDefaultLLMModel(ctx context.Context, providerID, modelID string) error
 	GetLLMSettings(ctx context.Context) (LLMSettings, error)
 	ResolveDefaultLLMModel(ctx context.Context) (ResolvedLLMModel, error)
+	ResolveLLMModel(ctx context.Context, modelID string) (ResolvedLLMModel, error)
 }

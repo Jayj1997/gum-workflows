@@ -117,6 +117,14 @@ button.danger { padding: 8px 12px; color: #8f2d22; background: #f3dfd9; box-shad
 .preview-edge-control { border-left: 4px dashed #b36a16; }
 .preview-groups li { color: #7b3f17; background: #f4e4cf; }
 
+.run-results { margin-top: 32px; padding: 20px; border: 1px solid rgba(32, 32, 24, .14); border-radius: 16px; background: rgba(255,255,255,.5); }
+.run-results > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.run-results h2, .run-results h3 { margin: 0; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+.run-results h3 { margin-top: 20px; color: #777367; font-size: 10px; }
+.run-results p, .run-results li { color: #555247; font-size: 12px; line-height: 1.5; }
+.run-results > ol { display: grid; gap: 8px; padding-left: 22px; }
+.run-results ol ol { margin-top: 8px; padding-left: 20px; }
+
 .draft-editor { margin-top: 32px; }
 .draft-editor h2 { margin: 0 0 8px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
 .draft-editor p, .draft-editor li { color: #777367; font-size: 12px; line-height: 1.5; }

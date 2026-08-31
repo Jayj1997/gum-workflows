@@ -33,6 +33,9 @@ const ProductWorkflowDraftSchemaVersion = 6
 // ProductLLMSettingsSchemaVersion adds SQLite-backed Provider and Model Slots.
 const ProductLLMSettingsSchemaVersion = 7
 
+// ProductWorkflowRunSchemaVersion adds immutable Revisions and P9 fake Run history.
+const ProductWorkflowRunSchemaVersion = 8
+
 // 新增迁移只允许 append（不改写历史迁移），保证已迁移的库向前兼容。
 var migrations = []migration{
 	{
@@ -199,6 +202,55 @@ ON product_llm_model (provider_id, is_explicit_default)
 WHERE is_explicit_default = 1 AND deleted_at IS NULL`,
 			`CREATE INDEX idx_product_llm_model_order
 ON product_llm_model (provider_id, created_at ASC, id ASC)`,
+		},
+	},
+	{
+		version: ProductWorkflowRunSchemaVersion,
+		stmts: []string{
+			`CREATE TABLE product_workflow_revision (
+  id            TEXT PRIMARY KEY,
+  workflow_id   TEXT NOT NULL REFERENCES product_workflow(id) ON DELETE CASCADE,
+  semantic_hash TEXT NOT NULL,
+  content_json  TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  UNIQUE (workflow_id, semantic_hash)
+)`,
+			`CREATE TABLE product_workflow_run (
+  id            TEXT PRIMARY KEY,
+  workflow_id   TEXT NOT NULL REFERENCES product_workflow(id),
+  revision_id   TEXT NOT NULL REFERENCES product_workflow_revision(id),
+  status        TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  started_at    TEXT NOT NULL,
+  finished_at   TEXT NOT NULL
+)`,
+			`CREATE INDEX idx_product_workflow_run_revision
+ON product_workflow_run (revision_id, started_at ASC, id ASC)`,
+			`CREATE TABLE product_workflow_node_run (
+  id              TEXT PRIMARY KEY,
+  run_id          TEXT NOT NULL REFERENCES product_workflow_run(id) ON DELETE CASCADE,
+  node_id         TEXT NOT NULL,
+  node_definition TEXT NOT NULL,
+  node_executor   TEXT NOT NULL,
+  status          TEXT NOT NULL,
+  inputs_json     TEXT NOT NULL,
+  outputs_json    TEXT NOT NULL,
+  started_at      TEXT NOT NULL,
+  finished_at     TEXT NOT NULL,
+  UNIQUE (run_id, node_id)
+)`,
+			`CREATE TABLE product_workflow_artifact (
+  id          TEXT PRIMARY KEY,
+  run_id      TEXT NOT NULL REFERENCES product_workflow_run(id) ON DELETE CASCADE,
+  node_run_id TEXT NOT NULL REFERENCES product_workflow_node_run(id) ON DELETE CASCADE,
+  node_id     TEXT NOT NULL,
+  port        TEXT NOT NULL,
+  artifact_type TEXT NOT NULL,
+  version     TEXT NOT NULL,
+  uri         TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  UNIQUE (run_id, node_id, port, version)
+)`,
 		},
 	},
 }

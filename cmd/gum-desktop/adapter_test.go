@@ -22,6 +22,8 @@ type applicationStub struct {
 	draft        product.DraftView
 	update       product.DraftUpdateView
 	updateInput  product.UpdateDraftInput
+	startInput   product.StartRunInput
+	run          product.RunView
 	catalog      []nodecatalog.Entry
 }
 
@@ -48,6 +50,11 @@ func (s *applicationStub) GetDraft(context.Context, string) (product.DraftView, 
 func (s *applicationStub) UpdateDraft(_ context.Context, input product.UpdateDraftInput) (product.DraftUpdateView, error) {
 	s.updateInput = input
 	return s.update, s.err
+}
+
+func (s *applicationStub) StartRun(_ context.Context, input product.StartRunInput) (product.RunView, error) {
+	s.startInput = input
+	return s.run, s.err
 }
 
 func (s *applicationStub) ListNodeCatalog(context.Context) ([]nodecatalog.Entry, error) {
@@ -164,6 +171,22 @@ func TestDesktopAdapterLoadsAndAutosavesDraftThroughWorkflowApplication(t *testi
 	}
 	if !reflect.DeepEqual(loaded, draft) || !reflect.DeepEqual(saved, update) || !reflect.DeepEqual(application.updateInput, input) {
 		t.Fatalf("loaded/saved/input = %#v/%#v/%#v", loaded, saved, application.updateInput)
+	}
+}
+
+func TestDesktopAdapterStartsRunThroughWorkflowApplication(t *testing.T) {
+	t.Parallel()
+
+	want := product.RunView{ID: "run-id", RevisionID: "revision-id", Status: "succeeded"}
+	application := &applicationStub{run: want}
+	adapter := newDesktopAdapter(application)
+	input := product.StartRunInput{WorkflowID: "workflow-id", ExpectedLockVersion: 7}
+	got, err := adapter.StartRun(input)
+	if err != nil {
+		t.Fatalf("start Run: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(application.startInput, input) {
+		t.Fatalf("Run/input = %#v/%#v, want %#v/%#v", got, application.startInput, want, input)
 	}
 }
 

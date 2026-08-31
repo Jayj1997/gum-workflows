@@ -19,7 +19,9 @@ const (
 	KindTestReport         Kind = "TestReport"
 	KindApprovalResult     Kind = "ApprovalResult"
 	KindQualityCheckResult Kind = "QualityCheckResult"
-	KindLog                Kind = "Log"
+	// KindConversation is the canonical Product Workflow chat history Artifact.
+	KindConversation Kind = "Conversation"
+	KindLog          Kind = "Log"
 )
 
 // Artifact 是数据本体。大型数据（如源码）不应放进 Data，

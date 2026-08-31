@@ -50,6 +50,11 @@ func (a *DesktopAdapter) UpdateDraft(input product.UpdateDraftInput) (product.Dr
 	return a.application.UpdateDraft(a.ctx, input)
 }
 
+// StartRun forwards the visible Draft token through WorkflowApplication.
+func (a *DesktopAdapter) StartRun(input product.StartRunInput) (product.RunView, error) {
+	return a.application.StartRun(a.ctx, input)
+}
+
 // ListNodeCatalog forwards the registered product Node Catalog.
 func (a *DesktopAdapter) ListNodeCatalog() ([]nodecatalog.Entry, error) {
 	return a.application.ListNodeCatalog(a.ctx)

@@ -120,6 +120,110 @@ FROM product_workflow_draft
 WHERE workflow_id = ?`, workflowID), workflowID)
 }
 
+// StartProductWorkflowRun atomically materializes the visible Draft, reuses or
+// creates its immutable Revision, and persists one completed P9 fake Run.
+func (s *Store) StartProductWorkflowRun(ctx context.Context, request productworkflow.StartRunRequest) (productworkflow.StartRunResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return productworkflow.StartRunResult{}, fmt.Errorf("begin start product workflow Run %s: %w", request.Run.ID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	draft, err := scanProductWorkflowDraft(tx.QueryRowContext(ctx, `
+SELECT workflow_id, content_json, lock_version, updated_at
+FROM product_workflow_draft WHERE workflow_id = ?`, request.WorkflowID), request.WorkflowID)
+	if err != nil {
+		return productworkflow.StartRunResult{}, err
+	}
+	if draft.LockVersion != request.ExpectedLockVersion {
+		return productworkflow.StartRunResult{}, fmt.Errorf("start product workflow Run: Draft lock version conflict: expected %d, current %d", request.ExpectedLockVersion, draft.LockVersion)
+	}
+	normalized, err := productworkflow.NormalizeDraftContent(request.DraftContent)
+	if err != nil {
+		return productworkflow.StartRunResult{}, fmt.Errorf("normalize start Run Draft: %w", err)
+	}
+	stored, err := productworkflow.NormalizeDraftContent(draft.Content)
+	if err != nil {
+		return productworkflow.StartRunResult{}, fmt.Errorf("normalize stored start Run Draft: %w", err)
+	}
+	if !bytes.Equal(stored, normalized) {
+		draft.Content = normalized
+		draft.LockVersion++
+		draft.UpdatedAt = time.Now().UTC()
+		if _, err := tx.ExecContext(ctx, `
+UPDATE product_workflow_draft
+SET content_json = ?, lock_version = ?, updated_at = ?
+WHERE workflow_id = ? AND lock_version = ?`, string(draft.Content), draft.LockVersion, draft.UpdatedAt.Format(time.RFC3339Nano), request.WorkflowID, request.ExpectedLockVersion); err != nil {
+			return productworkflow.StartRunResult{}, fmt.Errorf("materialize product workflow Draft %s: %w", request.WorkflowID, err)
+		}
+	}
+
+	revision := request.Revision
+	var createdAt, revisionContent string
+	err = tx.QueryRowContext(ctx, `
+SELECT id, content_json, created_at
+FROM product_workflow_revision
+WHERE workflow_id = ? AND semantic_hash = ?`, request.WorkflowID, revision.SemanticHash).Scan(&revision.ID, &revisionContent, &createdAt)
+	if err == sql.ErrNoRows {
+		_, err = tx.ExecContext(ctx, `
+INSERT INTO product_workflow_revision (id, workflow_id, semantic_hash, content_json, created_at)
+VALUES (?, ?, ?, ?, ?)`, revision.ID, request.WorkflowID, revision.SemanticHash, string(revision.Content), revision.CreatedAt.Format(time.RFC3339Nano))
+		if err != nil {
+			return productworkflow.StartRunResult{}, fmt.Errorf("create product workflow Revision: %w", err)
+		}
+	} else if err != nil {
+		return productworkflow.StartRunResult{}, fmt.Errorf("find product workflow Revision: %w", err)
+	} else {
+		revision.WorkflowID = request.WorkflowID
+		revision.Content = []byte(revisionContent)
+		revision.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+		if err != nil {
+			return productworkflow.StartRunResult{}, fmt.Errorf("parse product workflow Revision created_at: %w", err)
+		}
+	}
+
+	run := request.Run
+	run.RevisionID = revision.ID
+	run.Snapshot.RevisionID = revision.ID
+	snapshotJSON, err := json.Marshal(run.Snapshot)
+	if err != nil {
+		return productworkflow.StartRunResult{}, fmt.Errorf("encode product workflow Run Snapshot: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO product_workflow_run (id, workflow_id, revision_id, status, snapshot_json, started_at, finished_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)`, run.ID, request.WorkflowID, run.RevisionID, run.Status, string(snapshotJSON), run.StartedAt.Format(time.RFC3339Nano), run.FinishedAt.Format(time.RFC3339Nano)); err != nil {
+		return productworkflow.StartRunResult{}, fmt.Errorf("create product workflow Run: %w", err)
+	}
+	for _, nodeRun := range request.NodeRuns {
+		inputsJSON, err := json.Marshal(nodeRun.Inputs)
+		if err != nil {
+			return productworkflow.StartRunResult{}, fmt.Errorf("encode product Node Run %s inputs: %w", nodeRun.ID, err)
+		}
+		outputsJSON, err := json.Marshal(nodeRun.Outputs)
+		if err != nil {
+			return productworkflow.StartRunResult{}, fmt.Errorf("encode product Node Run %s outputs: %w", nodeRun.ID, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO product_workflow_node_run
+  (id, run_id, node_id, node_definition, node_executor, status, inputs_json, outputs_json, started_at, finished_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nodeRun.ID, run.ID, nodeRun.NodeID, nodeRun.NodeDefinition, nodeRun.NodeExecutor, nodeRun.Status, string(inputsJSON), string(outputsJSON), nodeRun.StartedAt.Format(time.RFC3339Nano), nodeRun.FinishedAt.Format(time.RFC3339Nano)); err != nil {
+			return productworkflow.StartRunResult{}, fmt.Errorf("create product Node Run %s: %w", nodeRun.ID, err)
+		}
+	}
+	for _, item := range request.Artifacts {
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO product_workflow_artifact
+  (id, run_id, node_run_id, node_id, port, artifact_type, version, uri, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, item.ID, run.ID, item.NodeRunID, item.NodeID, item.Port, item.Type, item.Version, item.URI, item.CreatedAt.Format(time.RFC3339Nano)); err != nil {
+			return productworkflow.StartRunResult{}, fmt.Errorf("create product Artifact %s: %w", item.ID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return productworkflow.StartRunResult{}, fmt.Errorf("commit product workflow Run %s: %w", run.ID, err)
+	}
+	return productworkflow.StartRunResult{Draft: draft, Revision: revision, Run: run}, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }

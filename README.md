@@ -8,15 +8,14 @@ Workflow 通过 Node 的 Input / Output Contract 组合工作过程，Node 之�
 
 项目遵循“现实工作流优先”：Agent 直接修改用户项目，Automation 在同一份工作状态上执行检查；Gum 负责组合、调度、结果留存和诊断，不默认复制项目、创建内部代码 Revision 或接管代码恢复。
 
-当前 YAML、CLI 与 Mock Agent 主要服务 Runtime 开发、验证和演示。macOS 产品壳已经可以通过通用 Application seam 在 SQLite 中创建 Product Workflow、自动保存唯一可变 Draft，从 Catalog 添加与配置首批 Node Instance，用端口绑定与只读 Preview 表达实际图结构，并管理用户级 LLM Provider 与 Model Slot；运行和真实 LLM 闭环仍按后续票逐步交付。
+当前 YAML、CLI 与 Mock Agent 主要服务 Runtime 开发、验证和演示。macOS 产品壳已经可以通过通用 Application seam 在 SQLite 中创作 Product Workflow、管理用户级 LLM Provider / Model Slot，并用 deterministic fake executor 完成一次持久化 Product Run 与 Conversation 结果查看；真实 LLM 闭环仍按后续票逐步交付。
 
 ## 项目规划
 
 基础 Runtime、平台核心和首个 14 后产品模块已经完成。后续产品化按 [`Gum-Workflows 产品化阶段设计计划`](<plans/Gum-Workflows 产品化阶段：本地 GUI、Node 能力与 LLM Config 设计计划.md>) 推进，主要方向包括：
 
-- 在已完成的 SQLite Product Workflow identity 与 Draft autosave 上建立 immutable Revision 与 Run Snapshot；
 - 在已完成的 SQLite Provider / Model 设置上接入 Keychain，并实现真实 OpenAI-compatible LLM Client 与 `llm-chat` Agent Node；
-- 扩展当前 macOS 产品壳的 Revision、Run 与 Artifact 结果查看，并在后续支持 Windows；
+- 扩展当前 macOS 产品壳的 Revision/Run 分层历史浏览，并在后续支持 Windows；
 - 完善 Artifact 预览、来源追踪、多版本比较和人工替换；
 - 设计结构化 Run Event，以及 Resume、Retry、Rerun、Fork 和崩溃恢复；
 - 在领域模型稳定后，再规划 Workflow 导入导出、Pack、AI 修改 Workflow 和云同步。
@@ -26,6 +25,20 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 任何新模块都需要先形成设计文档和开发票，再修改实现。模块完成后的 README 与进度文档同步方法见 [`README 更新规范`](<plans/README 更新规范：模块完成后的进度同步.md>)。
 
 ## 项目当前进展
+
+### Product Workflow fake StartRun 与 Conversation Artifact — 已完成
+
+该切片完成 P9 Product Tracer：用户从真实 macOS UI 运行当前可见 Draft，经同一 Product Application 与 WorkflowClient 形成 immutable Revision、独立 Run、Node Run 和可查看的 Conversation Artifact。
+
+主要交付：
+
+- Run 动作先 flush autosave，再携带最新 expected `lock_version`；旧 token、非法 Draft 或缺少默认 Provider/Model 时不写入 Draft、Revision 或 Run；
+- 空 LLM Preference 在 StartRun preflight 中按双层 default 物化 Gum Model UUID，随后按规范化执行语义创建或复用 Revision；相同语义重复运行复用 Revision，但每次生成新 Run；
+- Run Snapshot 固定 Revision 与 Resolved LLM Selection，不保存 API Key；启动后不再回写 Draft 或 Revision；
+- deterministic fake `human-chat(source) -> llm-chat` 产生两次成功 Node Run 和 filesystem-backed Conversation Artifact，Desktop 与 Browser Mock 共用 Run/结果 UI；
+- SQLite 写链与 Artifact 发布失败会回滚或清理，不留下用户可见半状态。当前仍不包含真实 LLM、人工输入、分层历史 UI、Interrupted 或 Resume。
+
+详细范围见 [product-workflow spec](.scratch/product-workflow/spec.md) 和 [issue 07](.scratch/product-workflow/issues/07-fake-start-run-revision-artifact.md)。
 
 ### Product Workflow LLM Provider / Model 设置 — 已完成
 
@@ -95,7 +108,7 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 - Browser Mock 与 Desktop Adapter 共享同一 WorkflowClient 创建/列表合同，UI 不直接访问 SQLite；
 - schema migration 可重复打开，并验证升级后旧定义与 Run history 保持可读。
 
-该切片只完成 Workflow identity、创建和列表；Draft autosave、Node Catalog 与只读结构 Preview 已由后续模块交付，Revision、Run 与真实 LLM 仍属后续票。详细范围见 [product-workflow spec](.scratch/product-workflow/spec.md) 和 [issue 02](.scratch/product-workflow/issues/02-sqlite-workflow-list-create.md)。
+该切片只完成 Workflow identity、创建和列表；Draft、Catalog、Preview 以及 fake Revision/Run 已由后续模块交付，真实 LLM 仍属后续票。详细范围见 [product-workflow spec](.scratch/product-workflow/spec.md) 和 [issue 02](.scratch/product-workflow/issues/02-sqlite-workflow-list-create.md)。
 
 ### code-quality-automation — 已完成
 
@@ -138,7 +151,7 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 - 四个内置 Code Quality Check 当前只支持 Darwin / Linux，Windows 原生、PowerShell 与 WSL 后端尚未实现；
 - Host Execution Environment 继承用户的 PATH、Go 配置、缓存、工具链与网络策略，适合受信任项目，但不是安全沙箱，也不提供容器、CPU / 内存隔离或自动 timeout；
 - Static 只代表 `go vet`，Coverage 只报告本次 full-scope 测试的 statement coverage，Race 只报告本次是否观察到 race；
-- macOS GUI 当前支持 Product Workflow 创建、列表、通用 Draft autosave、`human-chat` / `llm-chat` Node 创作和 Schema 表单、端口连接与只读结构 Preview，以及 SQLite Provider / Model Slot 设置；Keychain Secret Adapter、Revision、Run、真实 LLM Client、Artifact 产品体验和运行恢复仍属于后续规划。
+- macOS GUI 当前支持 Product Workflow 创建、Draft autosave、通用 Node/端口创作、只读 Preview、SQLite Provider / Model Slot 设置，以及 deterministic fake StartRun、Revision、Run/Node Run 与本次 Conversation Artifact 查看；Keychain、真实 LLM、人工输入、分层历史浏览和运行恢复仍属于后续规划。
 
 ## 使用与文档
 
