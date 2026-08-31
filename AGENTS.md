@@ -21,19 +21,26 @@
 
 `.scratch/platform-core/spec.md` 与 `.scratch/platform-core/issues/` 中编号 01–14 的票是已完成的平台核心历史记录；以下内容只属于 14 完成后的新设计，不得倒灌或改变 01–14 的范围。
 
-- **本地 GUI 是主要创作入口**：Workflow 的新建、节点声明、连接与配置、优化均通过 UI 完成。画布是只读的结构预览：节点按 Data/Control Edge 自动排列，可选择节点打开配置；不以拖拽节点、手工拉线或画布坐标表达执行语义。目标平台为 macOS 与 Windows。
-- **本地事实来源**：14 之后以 SQLite 中的 Workflow / Draft / immutable Revision 为编辑与版本模型；每次 Run 固定 Revision、Executor、模型与配置快照。YAML 保留为调试和将来的可移植交换格式。导入/导出在产品形态接近稳定 v1 前暂不规划，AI 创建或修改 Workflow 同样后置。
-- **Artifact 体验**：Artifact 是一等 UI 对象；按类型提供 Markdown、源码/diff、图片、结构化文档、测试报告及外部资源等预览，并支持查看来源节点、Node Run 轮次与多版本比较。
-- **先打磨 Node 能力**：暂不规划内置 Workflow 库。14 后优先实现一个简单但真实的 AI 对话 Agent Node，用它验证真实 LLM 调用、文本/多模态输入、对话历史、输出 Artifact、配置描述、能力声明、错误、观测和 UI 展示。
-- **LLM Config 后续升级**：LLM Config 是独立的用户级复用配置，包含协议、Base URL、API Key 引用、模型目录与默认模型；Agent Node 只选择 Config 和可选 Model。支持 OpenAI-compatible Chat Completions 与 Anthropic Messages，正确组装含 system/developer 指令、user/assistant 历史和多模态 content parts 的多轮请求。LLM Config 可从服务端发现模型，也允许手工声明；发现结果须标准化并保留原始响应，手工配置可补充或覆盖服务端未提供的能力信息，不得依据模型名称猜测能力。
-- **运行控制待新设计**：在 14 后统一设计结构化运行事件，以及 Resume、Retry、Rerun、Fork 和人工替换 Artifact 的精确语义；这些能力服务 GUI 实时状态、调试、崩溃恢复与未来同步。
+- **本地 GUI 是主要创作入口**：Workflow 的新建、节点声明、连接与配置、优化均通过 UI 完成。画布是只读的结构预览：节点按 Data/Control Edge 自动排列，可选择节点打开配置；不以拖拽节点、手工拉线或画布坐标表达执行语义。首个闭环平台为 macOS；Windows 是明确待办和长期目标，不属于 P9–P12 验收。
+- **本地事实来源**：14 之后的产品 Workflow 只以 SQLite 中的 Workflow / Draft / immutable Revision 为编辑与运行事实来源；Draft 自动保存，不引入独立 Publish 动作，用户点击 Run 时按规范化语义内容创建或复用 immutable Revision，并固定 Executor、模型与配置快照。现有 YAML CLI 只属于已完成的平台核心历史入口，不作为产品 Workflow 的兼容入口，也不得在运行时隐式创建或复用产品 Workflow / Revision。YAML 只保留为未来可能的导出格式；产品 v1 形态未确定前不设计导入、导出或二者之间的转换。
+- **Artifact 体验分阶段**：跑通 SQLite Workflow 的创建、配置、运行和基本结果查看是当前第一要务。多类型高级预览、版本比较、人工替换、历史复用以及外部可变资源的重建保证均后置，不能成为首个产品闭环的前置条件。
+- **先打磨 Node 能力**：暂不规划内置 Workflow 库。14 后优先实现一个简单但真实的 AI 对话 Agent Node，用它验证真实 LLM 调用、对话历史、输出 Artifact、配置描述、错误、观测和 UI 展示。目标多轮模型使用 `human-chat -> llm-chat -> human-chat`：Human Chat Entry Node 是唯一可在没有必需输入时自举的人工门，每次人工提交追加 user message；`llm-chat` 接收并追加 assistant message 后把 Conversation 反馈给人工门，反馈只使其等待下一次人工事件，不会自动产出新一轮。P9 先用 fake executor 跑通 Product Tracer；P10 才是 `human-chat(source) -> llm-chat` 的首个真实 OpenAI text 闭环；P12 再升级入口验证、Human Executor input、WaitingHuman 与显式 Conversation 回边，不引入 triggering/context 两类 Input。
+- **LLM Provider / Model**：用户级设置采用 `Provider -> Models`：Provider 保存协议、Base URL 和 API Key 引用；Model 是用户配置槽，拥有全局稳定的 Gum Model UUID 和可编辑的 Provider Model ID。UUID 标识配置槽，不声称底层模型不可变；编辑 Provider Model ID 会影响未来 Run，历史 Run Snapshot 保留旧值。Provider 与其 Model 都支持显式 default；未设置时从未删除项中按 `(created_at ASC, UUID ASC)` 取第一个，不引入 position/排序功能。Agent Node 的 LLM Preference 记录 Gum Model UUID。Node 未选择模型时，StartRun preflight 按双层 default 解析并先把 UUID 写回 Draft，再创建/复用 Revision；实际 Workflow Run 仍不回写定义。只要 UUID 仍存在，default 及连接内容变化都不改变选择。UUID 被删除时不 fallback：Draft/Preview 表单报错，StartRun 不创建 Run，用户必须重新选择模型；历史 Run 由 Run Snapshot 继续展示当时 Provider/Model。删除 Provider/Model 允许执行但应提示受影响 Workflow。当前范围不实现 `/models`、enable/disable 或自动 Provider failover。
+- **首个真实产品闭环**：P10 必须经过真实的薄 Desktop UI 与通用 Application seam，允许用户从 SQLite 创建 Workflow、添加 `human-chat(source)` 和 `llm-chat`、绑定端口、配置 LLM、Run、输入文本并查看 Conversation Artifact；不得用硬编码聊天 UI 代替。P10 只实现 OpenAI-compatible Chat Completions、非流式 text input -> text output 和 macOS，但从第一天使用 ChatMessage / ContentPart 与可扩展 ProtocolAdapter。P9 可使用 fake executor，但必须经过同一真实 UI、SQLite 和通用创作 seam。Streaming、Anthropic Messages、image input 和 Windows 支持列入 P9–P12 之后的明确待办。
+- **纵向交付顺序**：P9 是经过真实 macOS UI、SQLite 和通用创作 seam 的 fake Product Tracer；P10 接入 Keychain、真实 OpenAI-compatible 非流式 text 与正式 Conversation Artifact，形成首个真实闭环；P11 加固 migration、Interrupted、历史查询、悬空 Model UUID 诊断、脱敏和 macOS 安装升级；P12 才升级 Human Chat Entry、WaitingHuman 与显式多轮回边。Streaming、Anthropic Messages、image 和 Windows 分别进入待办，不再按“领域层 -> 协议层 -> UI 层”横向交付。
+- **运行控制后置**：当前产品化设计先跑通 Workflow，不把 Rerun、Fork、Manual Artifact 或完整崩溃恢复作为首个闭环范围。未来设计必须保持以下已确认边界：Paused / Interrupted 可用同一 Run ID Resume；Interaction Error 不终结 Run，可在同一 Run Retry；Failed（Structural Error）与 Stopped 是终态，只能以新 Run 继续；UnknownOutcome 是 Node Run 结果且不得自动重放。具体事件、持久化和 UI 动作仍需另行设计。
+- **模型能力由用户负责**：Gum 不探测、推断、维护或匹配 Model 的 image/tools/streaming 等 Capability。Agent Node 只通过 `requires: llm` 声明需要 LLM，输入输出是否合法由 Node/Artifact Contract 决定。用户为 Node 选择某个 Gum Model UUID，即确认该模型适合此任务；如果实际请求包含模型不支持的模态或特性，仍按所选协议发送，Provider 拒绝时记录并展示 Provider/Structural Error，由用户更换模型解决。
+- **首个闭环的持久化与错误边界**：持久化 Workflow、Draft、Revision、Run Snapshot、Node Run、正式 Artifact 与错误；LLM Content Delta 只作为进程内临时 UI 信号。首版不做 append-only Event Log、重放或恢复；启动时发现未结束 Run，标记为可查看但当前不可恢复的 Interrupted，且不自动重放。Draft、端口、已绑定 Model UUID、默认 Provider/Model 与 Secret 引用在创建 Run 前校验；Run 创建后的认证、网络、限流、服务不可用、协议损坏或 Provider 拒绝请求均为 Structural Error 并终结 Run，只有 Provider 已成功返回但业务输出不符合 Node Contract 才是 Interaction Error，不引入自动重试。
+- **Revision 语义哈希**：纳入 schema version、Node Instance identity、Definition/Executor 选择、Node config、input bindings、dependsOn、Project binding、Node 记录的 Gum Model UUID 和其他执行语义字段；排除 Workflow/Node 展示文案、Presentation Hint、时间戳、视图偏好和布局坐标。Provider 的可变连接内容、默认 Provider/Model 和 Resolved LLM Selection 不进入 Revision，而在 StartRun 时解析进 Run Snapshot；Secret 永不进入二者。无语义顺序的集合在哈希前规范化。
+- **Node Config Schema 与 Draft 并发**：Config Schema 使用 Gum 自有的小型类型模型，首版字段为 string/markdown/integer/number/boolean/enum，Contract 持有 required/default/范围/敏感性，Presentation Hint 持有 label/help/editor；不暴露 JSON Schema、CUE AST 或前端表单库结构。Draft 是唯一可变当前态，autosave 不创建 Revision 或历史副本；规范化语义内容无变化时 no-op，有变化时更新同一 Draft 行并递增内部 `lock_version`。UpdateDraft 携带 expected lock_version 做 SQLite compare-and-swap。首版只支持单窗口编辑，冲突时刷新，不做字段级 merge；UI view preference 独立存储。
+- **StartRun 与 Revision 去重**：StartRun 必须携带 UI 当前看到的 `expected_lock_version`；UI 点击 Run 前先 flush 有变化的 autosave。token 不匹配时不得物化 Model UUID、创建 Revision 或创建 Run。空 Model Preference 的 UUID 物化会更新 Draft lock_version；随后按规范化语义哈希创建或复用 immutable Revision。相同内容重复 Run 复用同一 Revision，但每次都创建新的 Run。
 - **代码工作流原地运行**：14 后产品态中，Project Definition 指向的用户项目目录就是 Project Workspace；Agent 修改实时生效，Automation 在同一目录执行。Gum 自身的数据库、日志、tool-output 和 Result 位于 Local Data Root，不为 Run/Node 复制项目或承担代码恢复。
 
 实现上述任一方向前，先形成 14 后的新设计文档与开发票；不要直接扩展现有 workflow/v1 或平台核心设计。
 
-## 硬性设计约束（任何代码变更不得违反）
+## platform-core workflow/v1 硬性设计约束
 
-这些约束来自设计计划，是架构层面的决定，不是建议：
+这些约束来自已完成的 01–14 设计计划，是 workflow/v1 与现有 YAML CLI 的历史架构决定。维护或修改 platform-core/workflow-v1 时不得违反；14 后 SQLite Product Workflow 的显式升级以本文件上一节和新的产品设计票为准，不得把新语义倒灌回 workflow/v1，也不得用本节阻止已经批准的产品模型：
 
 1. **数据依赖优先**：`inputs.<name>.from: <node-id>.<output>` 隐式产生 Data Edge。`dependsOn` 仅表示 Control Edge（显式执行顺序约束），永远不是表达数据依赖的方式。
 2. **Workflow 与 Node 解耦**：Workflow YAML 只声明组合；Node 通过 Registry 注册。同一个 Node Type 可被多次实例化（Node ID 与 Node Type 分离）。

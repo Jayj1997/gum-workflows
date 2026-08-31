@@ -1,10 +1,14 @@
-# Gum-Workflows 产品化阶段：本地 GUI、Node 能力与 LLM Config 设计计划
+# Gum-Workflows 产品化阶段：本地 GUI、Node 能力与 LLM Provider / Model 设计计划
 
 > 状态：14 后设计计划（2026-08-27；产品方向已确认，实施细节在各阶段开工前逐项评审）。
 >
 > 前置条件：`.scratch/platform-core/spec.md` 与 `.scratch/platform-core/issues/` 中 01–14 全部完成并验收。
 >
-> 当前进度：platform-core 与 code-quality-automation 已完成；Local Data Root、In-place Project Workspace、Workflow Context Binding、ScriptNode 和首批四个 Go Code Quality Check 已落地。本文其余 GUI、Draft/Revision、真实 LLM、Artifact 产品体验与运行恢复仍为后续规划。
+> 当前进度：platform-core 与 code-quality-automation 已完成；Local Data Root、In-place Project Workspace、Workflow Context Binding、ScriptNode 和首批四个 Go Code Quality Check 已落地。当前产品化设计的第一要务是跑通完全基于 SQLite 的 Workflow 创建、配置、运行和基本结果查看；GUI、Draft/Revision、真实 LLM 与这一闭环直接需要的能力仍待实现，高级 Artifact 体验与运行恢复后置。
+>
+> 实施切片：最终多轮领域模型是 `human-chat -> llm-chat -> human-chat`；首个可执行切片先完成单轮 `human-chat(source) -> llm-chat`，下一切片再加入 Human Chat Entry 语义升级与 Conversation 回边。
+>
+> 首个产品切片边界：必须经过真实的薄 macOS Desktop UI 与通用 Application seam；只实现 OpenAI-compatible Chat Completions、非流式 text input -> text output 和用户手工声明的 Model ID，但使用正式的 ChatMessage / ContentPart、ProtocolAdapter、SQLite Workflow、Revision、Run Snapshot 与 Artifact，不得以 fake-only 或硬编码聊天页面替代。Streaming 与 Windows 支持进入明确待办；当前产品化范围不实现 `/models` 服务端发现。
 >
 > 范围隔离：本文只规划 14 之后的新阶段，不修改、不替代、不向前倒灌 01–14 的范围、顺序与验收标准。本文涉及的新定义字段、运行控制或持久化模型，实施前必须按新版本或显式升级设计落地，不得静默扩展现有 workflow/v1。
 
@@ -17,8 +21,8 @@ Gum-Workflows 从 01–14 完成后的 Workflow Runtime，继续发展为面向�
 产品目标：
 
 1. **简易创作**：用户通过本地 GUI 新建 Workflow、声明 Node Instance、配置端口绑定和运行参数；无需手写 YAML，也不依赖拖拽式低代码画布。
-2. **本地优先**：Workflow 定义、LLM Config、运行历史与 Artifact 默认保存在用户本地；代码工作流直接使用用户项目目录作为 In-place Project Workspace。云端与多设备同步属于后续演进，但本地数据模型须为其预留稳定身份、版本和迁移能力。
-3. **可观察、可调试、可恢复**：用户能理解 Workflow 为什么按当前结构运行，能查看每次 Node Run 的输入输出和错误，并能在 Agent 出现预期外行为时通过人工、半自动或自动方式继续。
+2. **本地优先**：Workflow 定义、LLM Provider / Model、运行历史与 Artifact 默认保存在用户本地；代码工作流直接使用用户项目目录作为 In-place Project Workspace。云端与多设备同步属于后续演进，但本地数据模型须为其预留稳定身份、版本和迁移能力。
+3. **可观察、可调试**：用户能理解 Workflow 为什么按当前结构运行，能查看每次 Node Run 的输入输出和错误。Rerun、Fork 和崩溃恢复不作为首个产品闭环的前置条件。
 4. **Node 优先**：产品化初期先打磨 Node Definition、Node Executor、真实 Agent Node、Artifact 和调试能力，不急于建设内置 Workflow 库。
 5. **结构即语义**：Workflow 的执行语义来自 Node Contract、Data Edge 与 Control Edge；画布坐标、视觉排列和 UI 操作不是执行语义。
 
@@ -30,7 +34,7 @@ Gum-Workflows 从 01–14 完成后的 Workflow Runtime，继续发展为面向�
 - 以 YAML 为主要用户界面的配置工具；
 - 对生成式模型输出作完全确定性承诺的任务调度器。
 
-Gum-Workflows 对“可重复运行”的承诺是：输入、Workflow Revision、Node Executor、LLM Selection、有效参数、Artifact、错误和人工干预均可追溯；运行可在明确位置重试、重算、分叉或恢复。
+首个产品闭环只承诺：一次 Run 固定 Workflow Revision、Node Executor、Resolved LLM Selection 和有效参数，并能追踪本次执行的输入、输出、错误与人工交互。重算、分叉、历史外部资源重建和崩溃恢复的产品承诺后置。
 
 ---
 
@@ -39,23 +43,26 @@ Gum-Workflows 对“可重复运行”的承诺是：输入、Workflow Revision�
 ### 2.1 本阶段纳入设计
 
 - SQLite 中的 Workflow / Draft / immutable Revision / Run Snapshot。
-- 面向 UI、CLI 和未来其他 Adapter 的 Application 模块。
-- macOS 与 Windows 本地桌面 GUI。
+- 面向 Desktop UI 和未来产品 Adapter 的 Application 模块。
+- 首个闭环的 macOS 本地桌面 GUI；Windows 支持列入待办。
 - 通过 UI 新建、声明、配置和优化 Workflow。
 - 自动排列、只读选择的 Workflow 结构预览。
-- Node Config Schema、能力要求、运行属性和 UI Hint。
-- 独立、用户级、可复用的 LLM Config 模块。
-- OpenAI-compatible Chat Completions 与 Anthropic Messages 协议 Adapter。
-- 正确的单轮、多轮和多模态请求组装。
-- 服务端模型发现与手工模型配置。
+- Node Config Schema、运行资源 Requirements、运行属性和 UI Hint。
+- 独立、用户级的 LLM Provider / Model 模块。
+- OpenAI-compatible Chat Completions 协议 Adapter。
+- 正确的单轮和多轮 text 请求组装。
+- 用户手工模型配置；当前范围不实现 `/models` 服务端发现。
 - 一个简单但真实的 `llm-chat` Agent Node。
-- 多类型 Artifact 预览、来源追踪和版本比较。
-- 结构化 Run Event，以及 Resume / Retry / Rerun / Fork / Manual Artifact 的语义。
-- 为上述能力服务的本地测试、迁移和跨平台打包基础。
+- 跑通 Workflow 所需的基本 Artifact 结果查看与运行状态观测。
+- 为上述能力服务的本地测试、迁移和 macOS 打包基础。
 
 ### 2.2 明确后置
 
-- Workflow 导入/导出：保留 YAML 为可移植格式的方向，但在产品接近稳定 v1 前不规划命令、冲突策略或 Pack 格式。
+- Workflow 导入/导出：YAML 只作为未来可能的导出格式；产品 v1 形态未确定前不设计导入、导出、冲突策略或 Pack 格式。
+- 现有 YAML CLI 与 SQLite 产品 Workflow 的兼容、隐式导入或身份映射。
+- Rerun、Fork、Manual Artifact、历史 Artifact 复用和完整崩溃恢复。
+- 多类型高级 Artifact Previewer、版本比较和外部可变资源重建保证。
+- Streaming、Anthropic Messages、image input 与 Windows 产品支持（明确待办，不作为首个 macOS 闭环验收条件）。
 - AI 创建、修改或优化 Workflow。
 - 内置 Workflow 库与 Workflow Marketplace。
 - 用户自定义原生 Go 插件、动态二进制加载。
@@ -75,19 +82,19 @@ Gum-Workflows 对“可重复运行”的承诺是：输入、Workflow Revision�
 
 **Workflow**：一个长期存在、拥有稳定 ID 的工作流身份。
 
-**Workflow Draft**：Workflow 当前唯一可编辑的草稿。GUI 自动保存只更新 Draft，不影响已经发布或运行的 Revision。
+**Workflow Draft**：Workflow 当前唯一可编辑的草稿。Autosave 只在规范化语义内容变化时更新同一 Draft，不创建 Revision 或历史副本；内部 lock version 只用于并发控制。既有 Revision 和 Run 不受影响，首个产品闭环没有独立 Publish 动作。
 
-**Workflow Revision**：Draft 在明确时间点形成的不可变版本。每次 Run 必须绑定一个 Revision；Draft 变化不能影响已启动 Run。
+**Workflow Revision**：用户点击 Run 时，根据 Draft 的规范化语义内容创建或复用的不可变版本。每次 Run 必须绑定一个 Revision；Draft 变化不能影响已启动 Run。
 
-**Run Snapshot**：Run 启动时固定的完整解析结果，包括 Workflow Revision、Node Executor、LLM Config、LLM Model、有效生成参数和必要的项目环境信息。快照不含 API Key 明文。
+**Run Snapshot**：Run 启动时固定的完整解析结果，包括 Workflow Revision、Node Executor、Resolved LLM Selection、有效生成参数和必要的项目环境信息。快照不含 API Key 明文。
 
-**LLM Config**：用户级、可复用的 LLM 连接配置。每条 LLM Config 对应一个协议端点，包含名称、协议、Base URL、API Key 引用、模型目录、默认模型和连接状态。多个 Agent Node 可以引用同一条 LLM Config。
+**LLM Provider**：用户级的一条 LLM 连接配置，包含名称、协议、Base URL、API Key 引用和手工 Model 列表。支持显式默认 Provider；未设置时取未删除 Provider 按 `(created_at ASC, UUID ASC)` 的第一个。
 
-**LLM Model**：某条 LLM Config 下可用的模型。模型可由服务端发现、用户手工声明，或由两者合并得到。
+**LLM Model**：某个 LLM Provider 下的用户配置槽，拥有全局稳定的 Gum Model UUID，并保存可编辑的 Provider Model ID 和生成默认值。UUID 不声称底层模型不可变；修改 Provider Model ID 会影响未来 Run，历史 Snapshot 保留旧值。每个 Provider 支持显式默认 Model；未设置时取其未删除 Model 按 `(created_at ASC, UUID ASC)` 的第一个。
 
-**LLM Selection**：Agent Node Instance 对 LLM Config 和可选 LLM Model 的选择。省略 Model 时使用该 LLM Config 的默认模型。
+**LLM Preference**：Agent Node Instance 记录的 Gum Model UUID。未选择时，StartRun preflight 按默认 Provider/Model 解析并先写回 Draft；只要 UUID 仍存在，默认值改变都不改变选择。UUID 被删除时不回退，必须由用户重新选择。
 
-**Model Capability**：模型支持的输入输出模态及特性，如 text/image/audio/file、streaming、structured output、tools、thinking。能力值为 supported / unsupported / unknown 三态，字段缺失不得解释为不支持。
+**Resolved LLM Selection**：StartRun 根据已物化到 Draft/Revision 的 Gum Model UUID，为 Agent Node 固定协议、Provider、Provider Model ID 和有效参数；进入 Run Snapshot，不包含 API Key 明文。历史 Run 即使原 Model 后来删除仍展示当时结果。
 
 **Workflow Preview**：从 Draft 或 Revision 派生的只读结构投影，包含 Node、Data Edge、Control Edge、循环组和诊断；坐标不属于 Workflow 语义。
 
@@ -95,23 +102,25 @@ Gum-Workflows 对“可重复运行”的承诺是：输入、Workflow Revision�
 
 **Chat Message**：一条有 role 和一个或多个 Content Part 的对话消息。初期 role 只需 user / assistant；system/developer instruction 是 Node 配置，不混入业务对话 Artifact。
 
-**Content Part**：Chat Message 的内容片段，初期实现 text 和 image；类型模型预留 audio 与 file。二进制内容通过 ArtifactRef 引用，不内联进入 Node 间传递。
+**Content Part**：Chat Message 的内容片段。P9–P12 只实现 text；image、audio 与 file 保留为后续类型方向，进入范围时二进制内容必须通过 ArtifactRef 引用，不内联进入 Node 间传递。
 
 **Conversation**：按顺序保存的 Chat Message 集合，是多轮上下文的数据本体。对话节点自身不保存隐藏历史。
 
-**Manual Artifact**：用户通过 UI 人工提供或替换得到的新 Artifact 版本。Manual Artifact 不覆盖旧版本，并以人类事件记录其来源。
+**Human Chat Entry Node**：对话 Workflow 中唯一可在没有必需输入时自举的人工门。它将每次人工提交追加为 Conversation 中的 user message；收到 `llm-chat` 反馈后只等待下一次人工事件。
 
-### 3.3 运行控制
+### 3.3 已确认但后置的运行边界
 
-**Resume**：继续同一个被暂停或异常中断的 Run；已成功的 Node Run 不重新执行。
+**Paused**：暂停派发新的 Node Run；已经开始的外部调用不保证被冻结。可以保留 Run ID Resume。
 
-**Retry**：在同一个 Run 内，以完全相同的输入快照为某个 Node Instance 创建新的 Node Run。
+**Interrupted**：进程异常退出后仍可保留 Run ID Resume；结果未知的 Node Run 不自动重放。
 
-**Rerun**：在同一个活动 Run 内主动重算某个 Node Instance；成功产出的新 Artifact 版本按正常 dirty 规则级联下游。
+**Interaction Retry**：Interaction Error 不终结 Run，可在同一个 Run 内以相同输入创建新 Node Run。
 
-**Fork**：从一个历史 Run Snapshot 或稳定事件位置创建新的 Run；原 Run 保持不变。
+**Failed / Stopped**：两者都是终态。Structural Error 导致 Failed；用户主动停止导致 Stopped。继续工作必须创建新 Run。
 
-这些术语不得互换。UI 文案、事件名、历史查询和测试必须使用同一语义。
+**UnknownOutcome**：Node Run 的结果状态，不是 Run 终态；是否再次执行必须由用户明确决定。
+
+这些边界供未来运行恢复设计使用；Rerun、Fork、Manual Artifact 和完整恢复流程不在首个产品闭环中设计。
 
 ---
 
@@ -120,55 +129,56 @@ Gum-Workflows 对“可重复运行”的承诺是：输入、Workflow Revision�
 ```text
 ┌──────────────────────────────────────────────────────────────┐
 │ Desktop UI（Web frontend in native shell）                  │
-│ Workflow / LLM Config / Preview / Run / Artifact / History  │
+│ Workflow / LLM Provider / Preview / Run / Artifact / History│
 └───────────────────────────────┬──────────────────────────────┘
-                                │ typed calls + events
+                                │ typed calls + observation signals
 ┌───────────────────────────────▼──────────────────────────────┐
 │ Application Module                                            │
-│ WorkflowAuthoring / LLMConfig / RunControl / ArtifactQuery   │
+│ WorkflowAuthoring / LLMProvider / RunControl / ArtifactQuery │
 └──────────────┬─────────────────────┬──────────────────────────┘
                │                     │
 ┌──────────────▼────────────┐  ┌────▼──────────────────────────┐
 │ Product Repository        │  │ Workflow Runtime             │
 │ SQLite drafts/revisions   │  │ execution/definition/history │
-│ configs/events/snapshots  │  │ artifact/project/node        │
+│ providers/run snapshots   │  │ artifact/project/node        │
 └──────────────┬────────────┘  └────┬──────────────────────────┘
                │                     │
 ┌──────────────▼─────────────────────▼──────────────────────────┐
 │ Adapters                                                     │
-│ Wails / CLI / OpenAI-compatible / Anthropic / FS Artifact    │
+│ Wails / OpenAI-compatible / FS Artifact                      │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 ### 4.1 Application 模块
 
-UI 不直接调用 Engine、SQLite、YAML Loader 或某个协议 Adapter。Application 模块提供产品动作，隐藏事务、校验、解析和运行时编排：
+UI 不直接调用 Engine、SQLite 或某个协议 Adapter。Application 模块提供产品动作，隐藏事务、校验、解析和运行时编排：
 
 ```go
 type WorkflowApplication interface {
     CreateWorkflow(ctx context.Context, input CreateWorkflowInput) (WorkflowView, error)
     UpdateDraft(ctx context.Context, input UpdateDraftInput) (WorkflowView, error)
     ValidateDraft(ctx context.Context, workflowID string) (WorkflowPreview, error)
-    CreateRevision(ctx context.Context, workflowID string) (WorkflowRevision, error)
-    StartRun(ctx context.Context, revisionID string) (RunView, error)
+    StartRun(ctx context.Context, workflowID string, expectedLockVersion uint64) (RunView, error)
 }
 ```
 
 接口名称为方向示例，不是本计划要求的最终 Go 签名。设计约束是：
 
-- UI 和 CLI 通过同一个 Application seam 使用领域能力；
+- Desktop UI 和未来产品 Adapter 通过同一个 Application seam 使用领域能力；现有 YAML CLI 不接入产品 Workflow / Revision；
+- UI 点击 Run 前先 flush 有内容变化的 autosave；StartRun 必须携带 UI 当前看到的 expected_lock_version，token 不匹配时返回最新 Draft/Diagnostics，且不得物化 UUID、创建 Revision 或创建 Run；
+- StartRun 在同一 Application 用例内校验 Draft；对尚未选择模型的 Agent Node 按当前双层 default 解析 Gum Model UUID并先写回 Draft、递增 lock_version；随后按语义哈希创建或复用 Revision、固定 Run Snapshot 并创建 Run。任一步失败不得留下部分写入，不暴露独立 Publish 动作；
 - Application 接收依赖，不在方法内部创建数据库、HTTP Client 或 Engine；
 - 每个写操作在本地事务中完成；
 - 返回产品 View/Result，不把数据库行或协议响应直接泄露给调用方；
-- 长运行通过结构化事件向 UI 推送，不用请求阻塞承担全部状态通信。
+- 长运行通过结构化暂态观测信号向 UI 推送，不用请求阻塞承担全部状态通信；这不是持久化 Run Event Log。
 
 ### 4.2 桌面技术路线
 
 默认候选为 Wails + Web 前端。Go 继续承载本地 Runtime，React/Vue/Svelte 等前端运行在系统 WebView。正式锁定框架前先完成一个 Prototype Gate：
 
-1. macOS 与 Windows 均能构建启动；
+1. macOS 能构建启动；Windows Prototype Gate 列入后续待办；
 2. 前端能调用 Application 方法；
-3. Run Event 能实时推送；
+3. 运行状态观测信号能实时推送；
 4. 本地文件选择、系统路径和窗口生命周期正常；
 5. 浏览器 Mock Adapter 与桌面 Adapter 能复用同一前端 Workflow Client interface。
 
@@ -180,20 +190,20 @@ type WorkflowApplication interface {
 
 ### 5.1 SQLite 是产品事实来源
 
-14 之后 GUI 创建的 Workflow 不以 YAML 文件作为编辑主体。SQLite 保存：
+14 之后产品创建和运行的 Workflow 只以 SQLite 为事实来源，不从 YAML CLI 隐式导入。SQLite 保存：
 
 - Workflow 身份；
 - 当前 Draft；
 - immutable Revision；
 - Node Instance 与绑定；
 - UI 展示元数据；
-- LLM Config 与模型目录（不含 API Key 明文）；
-- Run Snapshot、Run Event 和运行索引；
+- LLM Provider、Model 与默认标记（不含 API Key 明文）；
+- Run Snapshot、Node Run、错误和运行索引；
 - Artifact 元数据和引用。
 
 Artifact 本体与大型文件继续存于文件系统，SQLite 保存引用、哈希和来源。代码工作流的 Project Workspace 就是用户项目目录：Agent 修改实时落在该目录，Automation 使用同一工作状态。Gum 不复制项目、不创建内部代码 Revision，也不承担代码版本恢复；这些属于用户已有项目工具。
 
-产品需要一个由平台管理的用户级 Local Data Root，而不是把跨项目的 LLM Config 和 Workflow Library 分散到每个项目的 `.workflow/`：
+产品需要一个由平台管理的用户级 Local Data Root，而不是把跨项目的 LLM Provider 和 Workflow Library 分散到每个项目的 `.workflow/`：
 
 ```text
 <Local Data Root>/gum-workflows/
@@ -221,12 +231,18 @@ Workflow 8f...
 规则：
 
 1. 一个 Workflow 同时至多一个 Draft。
-2. 自动保存只更新 Draft 和 `updated_at`。
-3. 用户显式发布，或首次以当前 Draft 运行时，创建 immutable Revision。
-4. Draft 内容与最新 Revision 完全一致时，运行可以复用该 Revision，不创建重复版本。
-5. Revision 以规范化内容哈希判断等价；UI 布局偏好不影响运行语义哈希。
-6. Run 启动后只读取 Run Snapshot；后续 Draft/Revision 变化不影响它。
-7. Revision 可以比较和恢复为新 Draft，但不可原地修改。
+2. Draft 持有单调递增的内部 `lock_version`，它不是 Workflow Revision。Autosave 先比较规范化语义内容：无变化时 no-op，不更新时间、不递增 token；有变化时通过 `UpdateDraft(expected_lock_version)` 在单个 SQLite 事务中更新同一 Draft 行、递增 lock_version 并更新 `updated_at`。
+3. 用户点击 Run 前，UI flush 有变化的 autosave，并把当前 expected_lock_version 传给 StartRun；token 冲突时不执行任何物化、Revision 或 Run 写入。
+4. StartRun preflight 为尚未选择模型的 Agent Node 按当前默认层级物化 Gum Model UUID并写回 Draft，再以该 Draft 创建或复用 immutable Revision；没有独立 Publish 动作。实际 Workflow Run 启动后不回写定义。
+5. Draft 的规范化语义内容与既有 Revision 完全一致时，运行复用该 Revision，不创建重复版本；每次点击 Run 仍创建新的 Run。
+6. Revision 以规范化内容哈希判断等价；哈希纳入 semantic schema version、Node Instance ID、Node Definition / Executor 选择、Node config、input bindings、dependsOn、Project binding、Node 记录的 Gum Model UUID 和其他影响验证或执行的字段。
+7. Workflow / Node 展示名称与描述、Presentation Hint、时间戳、缩放、折叠、最近选择和自动布局坐标不进入语义哈希。
+8. 默认 Provider/Model、Provider 的 Base URL、API Key 引用和其他可变连接内容不进入 Revision；StartRun 时的 Resolved LLM Selection 进入 Run Snapshot。API Key 不进入 Revision 或 Run Snapshot。
+9. Map、set 和其他无语义顺序的集合必须先规范化再哈希；仅调整存储顺序不得创建新 Revision。
+10. Run 启动后只读取 Run Snapshot；后续 Draft/Revision 变化不影响它。
+11. Revision 可以比较和恢复为新 Draft，但不可原地修改。
+12. 非法 Draft 允许保存，并与 Preview + Diagnostics 一起返回；首版只支持单窗口编辑，版本冲突时要求刷新，不做字段级 merge。
+13. UI view preference 独立保存，不与语义 Draft 共用 lock_version。
 
 ### 5.3 UI 元数据
 
@@ -259,7 +275,9 @@ Workflow 8f...
 4. 为每个 Input 选择上游 Node Output；
 5. 声明 Control Dependency；
 6. 查看结构预览和诊断；
-7. 发布 Revision 或运行。
+7. 点击 Run，由 Application 创建或复用 Revision 后启动运行。
+
+首个闭环实现通用的 Node Instance 添加、端口绑定、循环配置和诊断 seam，但 Node Catalog 只需覆盖 `human-chat`、`llm-chat` 及闭环直接需要的节点。不得用硬编码聊天页面或只能运行的预置 Workflow 代替通用创作路径。
 
 本阶段不实现 AI 修改 Workflow，也不通过画布拖入 Node、手工拉线或拖动坐标改变顺序。
 
@@ -280,7 +298,7 @@ type WorkflowPreview struct {
 
 - Data Edge 与 Control Edge；
 - Input/Output TypeExpr；
-- Node/Executor/LLM Selection；
+- Node/Executor/LLM Preference；
 - 强连通分量和循环组；
 - 错误与提示定位。
 
@@ -319,7 +337,7 @@ Preview 必须在 Draft 非法时仍可生成：
 
 - 未绑定 Input 显示为悬空端口；
 - 类型不兼容 Edge 显示定位错误；
-- 未选择 LLM Config 的 Agent Node 保留在图上并显示缺项；
+- LLM Preference 悬空的 Agent Node 保留在图上并显示缺项；默认 Provider/Model 缺失属于 StartRun 设置诊断；
 - 点击 Diagnostic 直接打开对应 Node 和字段；
 - `Preview + Diagnostics` 一起返回，不因第一个错误丢失整张图。
 
@@ -332,11 +350,19 @@ Preview 必须在 Draft 非法时仍可生成：
 Node Definition 继续作为业务契约的唯一声明处；14 后的新版本或显式升级增加四类描述：
 
 1. **Contract**：inputs / outputs / optional / TypeExpr；
-2. **Requirements**：llm、project、网络、输入输出模态等能力要求；
+2. **Requirements**：llm、project、network、command、secret 等运行资源需求；
 3. **Config Schema**：Node Instance 可配置字段及其校验；
 4. **Presentation Hint**：显示名、分类、图标、编辑器类型、文档入口等可忽略的 UI 信息。
 
 Config Schema 负责“值是否合法”，Presentation Hint 负责“如何展示”。忽略 Presentation Hint 不得改变运行语义。
+
+首版 Config Schema 使用 Gum 自有的小型类型模型，不把 JSON Schema、CUE AST 或前端表单库结构暴露为领域接口：
+
+- 字段类型：string、markdown、integer、number、boolean、enum；
+- Config Contract：required、default、min/max、enum values、sensitive；
+- Presentation Hint：label、help、editor；
+- Go Semantic Validator 与 Desktop 表单使用同一 Schema；
+- 将来接入外部 Schema 时通过 Adapter 转换。
 
 ### 7.2 建议的描述维度
 
@@ -344,7 +370,6 @@ Config Schema 负责“值是否合法”，Presentation Hint 负责“如何展
 |---|---|
 | 身份 | name、display name、description、category、version |
 | Contract | port 名、TypeExpr、optional、description |
-| Capability | input/output modalities、conversation、streaming、tools、structured output |
 | Config | 类型、必填、默认值、范围、枚举、敏感性 |
 | Requirements | llm、project、network、command、secret |
 | Side Effect | Workspace 写入、外部写操作、费用、幂等性 |
@@ -352,122 +377,111 @@ Config Schema 负责“值是否合法”，Presentation Hint 负责“如何展
 | Observability | usage、latency、provider request id、finish reason、logs |
 | Presentation | icon、category、field editor、Artifact preview preference |
 
-### 7.3 能力匹配
+### 7.3 模型适配责任
 
-Agent Node 启动前校验：
-
-```text
-Node Capability Requirements ⊆ Resolved LLM Model Capabilities
-```
-
-规则：
-
-- required capability 为 supported：通过；
-- required capability 为 unsupported：错误；
-- required capability 为 unknown：默认要求用户确认或手工补充，不能静默当作 supported；
-- 实际输入出现 image/audio/file 时再次按本轮内容校验；
-- 不根据模型 ID 字符串猜测能力。
+Gum 不维护或匹配 LLM Model Capability。Node/Artifact Contract 只判断 Workflow 数据是否合法；用户为 Agent Node 选择 Model UUID，即确认该模型适合该任务。若实际请求包含模型不支持的 image、tools 或其他特性，Protocol Adapter 仍按合同组装请求，Provider 拒绝时记录并展示原始 Provider/Structural Error，由用户更换模型解决。
 
 ---
 
-## 8. LLM Config 模块
+## 8. LLM Provider / Model 模块
 
 ### 8.1 定位
 
-LLM Config 是独立、用户级、跨 Workflow 复用的配置聚合：
+LLM Provider 是用户级运行环境中的连接配置，下挂有稳定顺序的手工 Model 列表：
 
 ```text
-LLM Config: “公司 OpenAI 网关”
+LLM Provider: “公司 OpenAI 网关”
 ├── protocol: openai-chat-completions
 ├── base URL: https://llm.example.com/v1
 ├── API key: secret://...
-├── default model: model-a
 └── models
     ├── model-a
     └── model-b
 ```
 
-Agent Node Instance 只保存 LLM Selection：
+Workflow 中的 Agent Node Definition 只声明需要 LLM 资源：
 
 ```text
-LLM Config = “公司 OpenAI 网关”
-Model      = “model-b”        # 可省略，走 Config 默认
+requires: [llm, network]
 ```
 
-Node 不保存 Base URL 和 API Key，不要求用户在每个 Node 重复配置连接。
+Agent Node Instance 的 LLM Preference 只记录 Gum Model UUID。UI 允许用户从 Provider 下选择 Model，或使用默认值；Node 永远不保存 Base URL、API Key 或可变 Provider Model ID。StartRun 把实际解析结果固定进 Run Snapshot。
 
 ### 8.2 数据模型
 
 ```go
-type LLMConfig struct {
+type LLMProvider struct {
     ID             string
     Name           string
     Description    string
     Protocol       Protocol
     BaseURL        string
     APIKeyRef      string
-    DefaultModelID string
-    Enabled        bool
+    IsDefault      bool
     CreatedAt      time.Time
     UpdatedAt      time.Time
+    DeletedAt      *time.Time
 }
 
 type LLMModel struct {
     ID                string
-    LLMConfigID       string
+    ProviderID        string
     ModelID           string
     DisplayName       string
-    Source            ModelSource // discovered | manual | merged
-    Enabled           bool
-    Capabilities      ModelCapabilities
+    IsDefault         bool
     GenerationDefault GenerationConfig
-    RawDiscovery      json.RawMessage
-    LastSeenAt        *time.Time
+    CreatedAt         time.Time
+    DeletedAt         *time.Time
 }
 
-type LLMSelection struct {
-    LLMConfigID string
-    ModelID     string // empty = config default
+type LLMPreference struct {
+    ModelUUID string // empty = resolve current defaults
 }
 ```
 
-`APIKeyRef` 只保存 Secret Adapter 返回的引用。桌面 UI 中用户填写的 API Key 直接写入操作系统安全凭据存储；SQLite 只保存引用。CLI 和自动化测试可以使用环境变量引用 Adapter。若安全凭据存储不可用，平台必须提示用户改用环境变量引用，不能静默降级为 SQLite 明文。Revision、Run Snapshot、Run Event、日志和未来导出内容均不得保存 API Key 明文。
+`APIKeyRef` 只保存 Secret Adapter 返回的引用。桌面 UI 中用户填写的 API Key 直接写入操作系统安全凭据存储；SQLite 只保存引用。自动化测试和无桌面环境的开发 Adapter 可以使用环境变量引用。若安全凭据存储不可用，平台必须提示用户改用环境变量引用，不能静默降级为 SQLite 明文。Revision、Run Snapshot、运行记录、日志和未来导出内容均不得保存 API Key 明文。
 
 ### 8.3 UI 流程
 
 设置页：
 
 ```text
-新建 LLM Config
+新建 LLM Provider
 → 名称
 → 选择协议
 → Base URL
 → API Key
-→ 测试连接
-→ 发现模型
-→ 启用/补充模型
-→ 设置默认模型
+→ 手工添加 Provider Model ID
+→ 保存 Provider
+→ 可选：设为默认 Provider / 默认 Model
 ```
 
 Agent Node 配置页：
 
 ```text
-LLM Config [公司 OpenAI 网关 ▼]
-Model      [model-b ▼]
+Provider: [使用默认值 ▼]
+Model:    [使用 Provider 默认值 ▼]
 ```
 
-模型下拉只显示该 LLM Config 中已启用的模型，并展示 text/image、context、structured output 等已知能力；unknown 必须明确显示为未知。
+UI 用 Provider 对 Model 分组，但持久化时只记录所选 Model 的 Gum UUID。“使用默认值”允许 Draft 暂时为空；首次 StartRun preflight 会解析当前 default 并把 UUID 写回 Draft。UI 不要求用户维护模型能力表。
 
-### 8.4 LLM Config 解析与 Run Snapshot
+### 8.4 LLM Preference 解析与 Run Snapshot
 
 Run 启动时解析：
 
-1. Node Instance 指定的 LLM Config 存在且启用；
-2. 指定 Model 存在且启用，或 Config 有默认模型；
-3. Node Capability 与 Model Capability 兼容；
-4. API Key 引用可以解析；
-5. 生成参数按优先级合并；
-6. 结果写入 Run Snapshot。
+1. 每个 Agent Node 的 LLM Preference 结构合法；
+2. Preference 已有 Gum Model UUID 时，该 UUID 必须仍存在且未删除；删除或缺失时返回 Node 字段诊断，不 fallback、不创建 Run；
+3. Preference 为空时，取未删除的显式默认 Provider；没有显式默认时按 `(created_at ASC, UUID ASC)` 取第一个未删除 Provider；
+4. 再取该 Provider 下未删除的显式默认 Model；没有显式默认时按 `(created_at ASC, UUID ASC)` 取第一个未删除 Model；
+5. 把解析出的 Gum Model UUID 写入 Draft，并递增 Draft version；
+6. 基于已物化 UUID 的 Draft 创建或复用 immutable Revision；
+7. API Key 引用必须可解析；
+8. 按优先级合并生成参数，把结果作为 Resolved LLM Selection 写入 Run Snapshot；
+9. 创建 Run。上述写操作必须保持原子性，失败不得留下部分 Draft/Revision/Run。
+
+任一步失败都在创建 Run 前返回具体 Node 与字段的诊断，不创建 Run。系统不自动切换 Provider，也不在已绑定 Model 被删除后改用 default。
+
+用户修改 Provider 的 Base URL、API Key、Provider Model ID 或生成默认值后，Gum Model UUID 不变，Workflow Revision 不变，未来 Run 使用新连接内容；既有 Run Snapshot 保持原值。删除 Provider/Model 不改写 Workflow，但删除前提示受影响 Workflow；其 Draft 与表单随后飘红，用户重新选择 Model UUID 后才能 StartRun。历史 Run 继续从 Snapshot 展示旧 Provider/Model。
 
 生成参数优先级：
 
@@ -477,7 +491,7 @@ Node Instance 显式参数
     > Protocol Adapter 默认参数
 ```
 
-Run Snapshot 记录：Config ID/name、Protocol、Base URL、Model ID、能力快照和有效生成参数；不记录 API Key。
+Run Snapshot 记录：Provider ID/name、Protocol、Base URL、Provider Model ID 和有效生成参数；不记录 API Key。
 
 ---
 
@@ -491,8 +505,7 @@ Canonical Conversation Model
 Canonical GenerateRequest
             ↓
 Protocol Adapter
-    ├── OpenAI Chat Completions
-    └── Anthropic Messages
+    └── OpenAI Chat Completions
             ↓
 HTTP Transport
 ```
@@ -501,12 +514,11 @@ HTTP Transport
 
 ```go
 type ProtocolAdapter interface {
-    DiscoverModels(ctx context.Context, conn Connection) (ModelPage, error)
-    Generate(ctx context.Context, conn Connection, req GenerateRequest, sink StreamSink) (GenerateResult, error)
+    Generate(ctx context.Context, conn Connection, req GenerateRequest) (GenerateResult, error)
 }
 ```
 
-最终签名在实施设计中确定。接口必须让两个真实 Adapter 和 fake Adapter 共用，测试只跨该 seam 断言规范化行为。
+最终签名在实施设计中确定。接口必须让当前 OpenAI-compatible Adapter、future Adapter 和 fake Adapter 共用，测试只跨该 seam 断言规范化行为。Streaming 进入范围时另加可选 streaming seam，不让首个非流式接口提前承担 StreamSink。
 
 ### 9.2 Canonical Request
 
@@ -525,14 +537,14 @@ Canonical 层不保存 OpenAI/Anthropic 的原始 JSON 字段。Protocol Adapter
 
 - endpoint：相对 Base URL 的 `chat/completions`；
 - auth：`Authorization: Bearer <key>`；
-- instructions：根据 Config/Model capability 映射为 developer 或 system message；为兼容第三方默认可配置 system；
+- instructions：根据 Provider 的协议/dialect 设置映射为 developer 或 system message；为兼容第三方默认可配置 system；
 - history：按原顺序发送 user / assistant messages；
-- multimodal：将 Content Part 映射为协议 content parts；
-- response：规范化 assistant content、usage、finish reason、request id 和 stream delta。
+- P10 content：只映射 text Content Part；
+- response：规范化 assistant text、usage、finish reason 和 request id。
 
 OpenAI 官方 Chat Completions 以有序 message 列表表达对话，并支持多种 content part。OpenAI-compatible 只承诺本计划明确采用的共同子集；厂商扩展通过 Adapter 内部 dialect 处理，不泄露到 Conversation Artifact。
 
-### 9.4 Anthropic Messages
+### 9.4 Backlog：Anthropic Messages
 
 - endpoint：相对 Base URL 的 `messages`；
 - auth：`x-api-key` + `anthropic-version`；
@@ -545,80 +557,30 @@ Anthropic Messages 是无状态多轮接口，每轮必须由本地 Conversation
 
 ### 9.5 对话组装不变式
 
-1. `history` 只包含本轮新 `input` 之前的消息；
-2. Request Builder 产生 `history + input`；
-3. 成功响应后输出 `conversation = history + input + output`；
+1. 输入 Conversation 的最后一条消息必须是本轮新提交的 user message；
+2. Request Builder 按原顺序发送输入 Conversation；
+3. 成功响应后输出 `conversation = input conversation + assistant output`；
 4. 不在 Node Executor 内保存隐藏 session；
 5. 发送给 Provider 的实际消息快照进入 Node Run 诊断，但密钥与敏感 Header 必须脱敏；
 6. 上下文超限时不静默删除历史；初期返回明确错误，未来 Context Policy 另行设计；
-7. Provider 不支持实际输入模态时在网络请求前失败；
-8. stream delta 只用于 UI/日志，完整完成前不生成正式输出 Artifact。
+7. Gum 不在网络请求前判断模型是否支持实际模态；Provider 拒绝时保留并展示错误；
+8. Streaming 进入范围后，delta 只用于 UI/日志，完整完成前不生成正式输出 Artifact。
 
 ---
 
-## 10. 模型发现与手工模型
+## 10. 手工模型目录
 
-### 10.1 发现流程
+当前产品化范围不实现 `/models` 服务端发现。模型目录只来自用户手工声明；不设计 discovered/manual merge、raw discovery、last-seen 或 disappearance 规则。
 
-```text
-LLM Config Connection
-    ↓ DiscoverModels
-Protocol-specific /models
-    ↓ raw response
-Protocol Normalizer
-    ↓ discovered catalog
-Manual Overlay
-    ↓ effective model catalog
-```
+### 10.1 手工目录规则
 
-### 10.2 标准化字段
+1. 用户显式填写 Provider 使用的 Model ID；
+2. 每个 Model 分配稳定 Gum UUID，Provider Model ID 可以编辑；
+3. Gum 不探测、推断或要求用户维护 Model Capability；选择 Model 即表示用户确认其适合任务；
+4. Default Model 必须是未删除的手工 Model；未显式设置时按 `(created_at ASC, UUID ASC)` 取第一个未删除 Model；
+5. `/models` discovery 若未来重新进入范围，必须作为独立设计，不得静默改变现有手工目录或 Model UUID。
 
-```go
-type ModelCapabilities struct {
-    InputText        Capability
-    InputImage       Capability
-    InputAudio       Capability
-    InputFile        Capability
-    OutputText       Capability
-    OutputAudio      Capability
-    Streaming        Capability
-    StructuredOutput Capability
-    Tools            Capability
-    Thinking         Capability
-    ContextWindow    Optional[int]
-    MaxOutputTokens  Optional[int]
-}
-```
-
-`Capability` 为 supported / unsupported / unknown。每个标准化值保留来源：discovered、manual 或 default。
-
-### 10.3 协议差异
-
-- Anthropic `/v1/models` 可发现模型 ID、显示名、capabilities、max input tokens、max tokens 等已公开字段，并需处理分页。
-- OpenAI 标准模型对象主要提供模型 ID 与基础元数据；不能假设所有 OpenAI-compatible `/models` 返回上下文窗口、模态或可用生成参数。
-- 第三方 OpenAI-compatible 服务可能增加私有字段；Normalizer 识别已知字段，完整 `raw` 仍保存。
-- 不允许按模型名称模式猜测 image/tools/context 等能力。
-
-### 10.4 合并与刷新规则
-
-有效字段优先级：
-
-```text
-用户手工显式值 > 服务端发现值 > unknown
-```
-
-规则：
-
-1. `/models` 不可用不阻止用户创建手工 Model；
-2. 手工 Model 标记为 manual/unverified；
-3. Refresh 不删除手工 Model；
-4. 已发现 Model 后续消失时标记 unavailable/last-seen，不立即删除；
-5. 用户可禁用不希望出现在 Node 下拉框的模型；
-6. Default Model 必须属于同一 LLM Config 且启用；
-7. unknown capability 可由用户补充，但 UI 应提示这是手工声明；
-8. 原始响应限制大小并脱敏后保存，不信任其中的描述文本作为指令。
-
-### 10.5 Base URL
+### 10.2 Base URL
 
 Base URL 表示协议 API root，例如 `https://example.com/v1`。Adapter 使用 URL parser 追加相对资源，不能用字符串拼接；需覆盖：
 
@@ -626,7 +588,7 @@ Base URL 表示协议 API root，例如 `https://example.com/v1`。Adapter 使�
 - Base URL 已含 `/v1`；
 - 反向代理子路径；
 - query/fragment 非法；
-- 禁止因拼接产生 `/v1/v1/models`；
+- 禁止因拼接产生重复 `/v1/v1/...`；
 - localhost 与企业内网 endpoint。
 
 ---
@@ -637,44 +599,74 @@ Base URL 表示协议 API root，例如 `https://example.com/v1`。Adapter 使�
 
 `llm-chat` 是第一个简单但真实的 Agent Node，用来验证：
 
-- LLM Config 复用与 UI 下拉选择；
-- OpenAI-compatible / Anthropic 双协议；
-- 单轮、多轮和多模态 Request Builder；
+- LLM Provider/Model 与 UI 下拉选择；
+- 首切片 OpenAI-compatible，后续沿 ProtocolAdapter 增加 Anthropic；
+- 首切片单轮 text Request Builder，后续增加多轮和多模态；
 - Node Config Schema；
-- Model Capability 校验；
-- streaming Run Event；
+- 用户负责所选模型是否适合实际输入；
+- 后续 streaming 运行观测；
 - Chat Artifact 和 Artifact Preview；
-- usage、latency、finish reason、错误分类和重试。
+- usage、latency、finish reason 和错误分类。
 
 它不调用工具、不修改 Workspace、不承担 Coding Agent 职责。
 
-### 11.2 Contract
+首个产品切片只实现 OpenAI-compatible Chat Completions、非流式 text input -> text output 和 macOS。Canonical ChatMessage / ContentPart 和 ProtocolAdapter seam 必须在该切片中成立；Streaming 与 Windows 支持进入待办，Anthropic Messages 与 image input 在后续切片沿同一 seam 增加。
+
+### 11.2 首个多轮 Workflow 拓扑
+
+```text
+human-chat ──Conversation──> llm-chat
+     ▲                           │
+     └──────Conversation─────────┘
+```
+
+- `human-chat` 是唯一可在没有必需输入时自举的 Human Chat Entry Node；
+- 首次执行时等待用户提交，并产出以 user message 结尾的 Conversation；
+- `llm-chat` 追加 assistant message 后把新 Conversation 反馈给 `human-chat`；
+- 反馈只使 `human-chat` 进入 WaitingHuman，不会自动产出下一轮；
+- 下一次人工提交追加新的 user message，再触发 `llm-chat`；
+- 这是一项 14 后显式语义升级：唯一入口从“完全无 inputs 的 `human-input`”升级为“唯一可在没有必需输入时自举的 Human Chat Entry Node”，不得倒灌 workflow/v1。
+
+实施不得把这项调度升级塞入第一个端到端切片：
+
+1. 首个切片使用单向 `human-chat(source) -> llm-chat`，验证 SQLite Workflow、Revision、真实 LLM、Artifact 与通用 Application seam；
+2. 下一切片再让 `human-chat` 接收 optional Conversation feedback，并实现 WaitingHuman、每次人工提交一个新 Node Run 与显式回边；
+3. 不增加“只提供上下文但不触发 Ready”的 context input；所有 Input 继续遵守统一 dirty/Ready 规则。
+
+### 11.3 Contract
+
+`human-chat`：
 
 ```yaml
 inputs:
-  input:
-    type: ChatMessage
   history:
     type: Conversation
     optional: true
-
 outputs:
-  output:
-    type: ChatMessage
+  conversation:
+    type: Conversation
+```
+
+`llm-chat`：
+
+```yaml
+inputs:
+  conversation:
+    type: Conversation
+outputs:
   conversation:
     type: Conversation
 ```
 
 初期：
 
-- input：text + image；
-- output：text；
-- history：可选；
-- output role：assistant；
-- conversation：完整新版本；
+- 首个切片 human input：text Content Part；
+- assistant output：text Content Part；
+- `llm-chat` 输入必须以 user message 结尾，输出必须在其后追加一个 assistant message；
+- Conversation 每轮产生完整新版本；
 - usage 等运行数据记 Node Run metadata，不作为 Node 间默认数据通道。
 
-### 11.3 Config Schema
+### 11.4 Config Schema
 
 ```text
 instructions       markdown，可选
@@ -682,9 +674,9 @@ temperature        float，可选
 max_output_tokens  int，可选
 ```
 
-LLM Config 和 Model 通过 Node Instance 的 LLM Selection 配置，不重复成为普通 config 字段。
+Node Definition 通过 `requires: llm` 声明需要模型资源；Node Instance 保存可选 LLM Preference，但不保存 Provider 的 Base URL 或 API Key。StartRun 按 Preference 与默认层级解析。
 
-### 11.4 运行属性
+### 11.5 运行属性
 
 | 属性 | 值 |
 |---|---|
@@ -692,47 +684,41 @@ LLM Config 和 Model 通过 Node Instance 的 LLM Selection 配置，不重复�
 | requires | llm、network |
 | Workspace 写入 | 否 |
 | 外部副作用 | 模型调用与费用；无业务写操作 |
-| Retry | 可创建新 Node Run，但会产生额外调用/费用，输出不保证相同 |
-| Resume | 已完成响应可复用；中断 HTTP/stream 不支持续传 |
-| Streaming | 是；完成前只发临时事件 |
-| 输出校验 | assistant ChatMessage + text content |
+| Interaction Retry | 可创建新 Node Run，但会产生额外调用/费用，输出不保证相同 |
+| 中断 | HTTP/stream 不支持续传；UnknownOutcome 不自动重放 |
+| Streaming | 首个切片不支持；列入后续待办 |
+| 输出校验 | 输入 Conversation 后恰好追加一个 assistant message，且含 text content |
 
-### 11.5 错误
+### 11.6 错误
 
 - 配置缺失、认证失败、网络不可达、限流/服务不可用：Structural Error；
-- 选择模型明确不支持实际输入模态：运行前配置错误；
+- Provider 拒绝所选模型不支持的模态或特性：Structural Error，由用户更换模型；
 - 响应协议无法解析：Structural Error；
 - 后续结构化输出不符合 Contract：Interaction Error；
-- 进程崩溃或取消导致结果未知：Node Run Interrupted/UnknownOutcome，由恢复策略或用户决定 Retry。
+- 进程崩溃或取消导致结果未知：Node Run UnknownOutcome，不自动重放；完整恢复流程后置。
 
 ---
 
-## 12. Artifact 体验
+## 12. 首个闭环的 Artifact 查看
 
 ### 12.1 Artifact 是一等 UI 对象
 
-每个 Artifact View 展示：
+首个闭环只要求用户能确认 Workflow 的真实输入和输出。每个 Artifact View 最少展示：
 
 - Kind、MIME、版本、大小、哈希；
 - 生产 Node、Node Run ID、round 和时间；
-- 消费它的下游；
-- 本体位置或外部 URI；
-- 预览、下载/打开、版本比较；
-- 是否由 Node、Human 或导入产生。
+- 消费 Node 与本轮绑定；
+- Conversation 的 user / assistant 消息和 text Content Part；
+- 通用文本或结构化数据的安全只读预览。
 
 ### 12.2 Preview Registry
 
-前端/应用层按 Kind + MIME 选择 Previewer：
+首个闭环的 Preview Registry 只实现实际验收需要的类型：
 
 - Markdown/Text；
-- Source Code 文件树与 diff；
-- Image；
-- JSON/OpenAPI；
-- Test Report；
 - Chat Message / Conversation；
-- 外部资源（如 Figma URL/ID）的摘要和打开入口。
 
-未知 Kind 使用通用元数据视图。预览器只读，不能改变 Artifact；人工替换必须创建 Manual Artifact 新版本。
+未知 Kind 使用通用元数据视图。Source diff、JSON/OpenAPI 专用视图、Test Report、外部资源、版本比较和人工替换均后置。
 
 ### 12.3 安全
 
@@ -744,233 +730,176 @@ LLM Config 和 Model 通过 Node Instance 的 LLM Selection 配置，不重复�
 
 ---
 
-## 13. Run Event 与运行控制
+## 13. 首个闭环的运行观测
 
-### 13.1 Event Envelope
+本阶段只设计让 Desktop UI 启动 Run、显示 Node 状态并查看最终 Artifact 所必需的观测 seam，不实现完整 append-only Run Event 或事件重放。Streaming 作为后续待办加入。
 
-```go
-type RunEvent struct {
-    EventID   string
-    Sequence  uint64
-    RunID     string
-    NodeID    string
-    NodeRunID string
-    Type      EventType
-    OccurredAt time.Time
-    Payload   json.RawMessage
-}
-```
+首个闭环持久化 Workflow、Draft、Revision、Run Snapshot、Node Run、正式 Artifact 和错误。已完成 Run 与 Conversation Artifact 在应用重启后仍可查看。启动时发现未结束 Run，将其标记为 Interrupted 并保留查询能力，但当前版本明确不可恢复，也不得自动重放任何 Node Run。Streaming 加入后，LLM Content Delta 仍只作为进程内临时 UI 信号，不持久化。
 
-不变式：
+### 13.1 最小观测信号
 
-- `Sequence` 在单个 Run 内严格递增；
-- Event append 与当前状态快照在同一个 SQLite 事务；
-- UI 可从最后确认 Sequence 重放并继续订阅；
-- Event payload 有 schema version；
-- Event 是事实，不用后续 update 修改；纠正通过新 Event 表达。
-
-### 13.2 初始事件集
-
-运行级：
-
-- RunCreated / RunStarted / RunPaused / RunResumed / RunStopped / RunFailed；
-
-节点级：
-
-- NodeReady / NodeRunStarted / NodeWaitingHuman / NodeRunSucceeded / NodeRunFailed / NodeRunInterrupted；
-
-数据与人工：
-
-- ArtifactProduced / ManualArtifactProduced；
+- RunStarted / RunStopped / RunFailed；
+- NodeReady / NodeRunStarted / NodeWaitingHuman / NodeRunSucceeded / NodeRunFailed；
+- ArtifactProduced；
 - HumanInputRequested / HumanInputSubmitted；
-- ApprovalRequested / ApprovalDecided；
-- RetryRequested / RerunRequested / ForkCreated；
+- LLMRequestStarted / LLMRequestCompleted / LLMRequestFailed。`LLMContentDelta` 随 Streaming 待办加入。
 
-LLM 诊断：
+首个非流式切片只在完整响应成功后生成 Conversation Artifact。未来 Streaming 的 Content Delta 只用于临时 UI，完成前仍不得生成正式 Artifact。
 
-- LLMRequestStarted / LLMContentDelta / LLMRequestCompleted / LLMRequestFailed。
+### 13.2 后置边界
 
-Content Delta 可设置保留策略；完整 Artifact 只在 Node Run 成功后产生。
+完整 Event Envelope、持久化重放、Pause/Resume、Interrupted 恢复、Rerun、Fork、Manual Artifact 和受影响下游预览不属于首个产品闭环。未来设计必须遵守第 3.3 节已确认的运行边界。
 
-### 13.3 Resume
+### 13.3 首个闭环的失败边界
 
-- 目标是同一个 Run ID；
-- 已成功 Node Run 与 Artifact 保持不变；
-- WaitingHuman 恢复等待；
-- 未派发 Node 继续调度；
-- 崩溃时 Running Node 标为 Interrupted；
-- Executor 的恢复能力决定自动 Retry、等待人工或 Fail；
-- `llm-chat` 的未知请求默认等待用户确认 Retry，避免静默重复费用。
-
-### 13.4 Retry
-
-- 同一个 Run、同一个 Node Instance、新 Node Run ID 和 round；
-- 输入 ArtifactRef 快照与目标失败轮完全相同；
-- 只有成功输出后才更新下游；
-- 人工 Retry 是人类事件，重置收敛保护；
-- 记录发起人、原因和被重试 Node Run ID。
-
-### 13.5 Rerun
-
-- 用于主动重算，不要求上一轮 Failed；
-- 默认解析当前最新输入并生成新 Node Run；
-- 成功后新 Artifact 版本按 dirty 规则级联；
-- UI 在执行前预览受影响下游；
-- 若用户要求使用历史输入，应改用 Fork 或明确选择输入快照。
-
-### 13.6 Fork
-
-- 新 Run ID；
-- 来源 Run/Sequence/Snapshot 可追溯；
-- 可以复用不可变 Artifact，但不自动复制用户项目；Fork 使用哪个 Project Workspace 由用户显式选择，代码分支/恢复由用户的版本管理工具负责；
-- 原 Run 不再变化；
-- 适用于对历史结果做实验、从 Stopped Run 继续另一条路径。
-
-### 13.7 Manual Artifact
-
-- 创建新 Artifact ID/version，保留被替代引用；
-- 标记 producer 为 human/manual；
-- 记录用户说明；
-- 消费者按新版本 dirty；
-- Artifact Kind 必须符合目标 Input Contract。
+- Draft 结构、端口绑定、已绑定 Model UUID、默认 Provider/Model 与 Secret 引用可解析性在创建 Run 前校验；空 Preference 在 preflight 中物化，悬空 UUID 报错；失败时不创建 Run；不做 Model Capability 校验；
+- Run 创建后发生的认证失败、网络错误、限流、服务不可用或协议响应损坏均为 Structural Error，使 Run 进入终态 Failed；
+- Provider 已成功返回、但业务输出不符合 Node Contract 时才是 Interaction Error，Run 保持 Running；
+- 首个闭环不新增通用 Retry UI，也不因为错误可能是暂时的而自动重试；既有 advise 语义保持不变。
 
 ---
 
 ## 14. 测试策略
 
-### 14.1 LLM Config
+### 14.1 LLM Provider / Model
 
-- Config CRUD、默认模型、启用/禁用；
+- Provider/Model 创建、编辑、显式默认与删除；首版不做 enable/disable。删除前提示受影响 Workflow，删除后悬空 UUID 阻止 StartRun；
 - Desktop Secret Adapter 与环境变量 Secret Adapter 行为一致；
-- API Key 不落库/日志/事件；
-- Config 删除时被 Draft/Revision 引用的行为；
-- Run Snapshot 固定后修改 Config 不影响已启动 Run；
-- Model discovery 与 manual overlay 优先级；
-- unavailable/last-seen 和刷新幂等。
+- API Key 不落库/日志/观测信号；
+- Run Snapshot 固定后修改 Provider 不影响已启动 Run；
+- 手工 Provider Model ID、稳定 Gum UUID 与 Provider/Model 默认解析；
+- 当前范围不存在 discovery、raw response、overlay 或 refresh。
 
 ### 14.2 协议契约
 
 全部使用 `httptest.Server` 和固定 fixture，单测禁止真实网络：
 
-- OpenAI 单轮、多轮、system/developer、text/image、stream；
-- Anthropic 顶层 system、user/assistant 历史、连续角色规范化、text/image、stream；
+- OpenAI 首切片覆盖非流式单轮 text；后续分别增加多轮、image 和 stream；
+- Backlog：Anthropic 顶层 system、user/assistant 历史、连续角色规范化、text/image、stream；
 - usage、finish/stop reason、request ID；
 - malformed response、认证、限流、取消；
 - Base URL 所有边界；
-- `/models` 分页、额外字段、缺失字段、raw 保留和大小限制。
 
-请求体使用 golden fixture，确保“多轮对话能发起”之外，还能准确断言消息顺序和 content part 映射。
+P10 请求体使用单轮 text golden fixture，准确断言 message 顺序和 text content part；P12 再增加多轮 Conversation golden。
 
 ### 14.3 `llm-chat`
 
-- 无 history 单轮；
-- 带 history 多轮；
-- conversation 输出顺序；
-- text + image；
-- capability unknown/unsupported；
-- streaming delta 不提前产生 Artifact；
-- 完整响应后两个输出同时产生；
-- Structural / Interaction / Interrupted；
-- Retry 同输入但产生新 Node Run；
+- 单轮切片：`human-chat(source) -> llm-chat` 产生并持久化一次真实 Conversation；
+- 单轮切片只使用 OpenAI-compatible Chat Completions 与 text Content Part；
+- 多轮切片：在单轮验收后才升级入口语义；
+- `human-chat` 无历史时可自举并等待首次输入；
+- `human-chat -> llm-chat -> human-chat` 多轮交替；
+- Conversation 的 user / assistant 追加顺序；
+- P10–P12 只覆盖 text；image 进入独立待办；
+- Provider 拒绝所选模型不支持的请求时返回 Structural Error；
+- 首切片非流式；未来 streaming delta 不得提前产生 Artifact；
+- 完整响应后产生一个完整 Conversation 新版本；
+- Structural / Interaction / UnknownOutcome；
 - API Key 与敏感 Header 脱敏。
 
 ### 14.4 Workflow 产品模型
 
 - Draft 自动保存；
 - immutable Revision；
+- 无独立 Publish 动作，StartRun 创建或复用 Revision；
 - 相同内容不重复 Revision；
 - Run Snapshot 不受 Draft/Config 后续修改影响；
 - Preview 在非法 Draft 下仍返回完整图和 Diagnostics；
 - SCC/循环组、分支、汇合、Data/Control Edge；
 - UI 坐标不影响语义哈希。
 
-### 14.5 Event 与恢复
+### 14.5 最小运行观测
 
-- 单 Run Sequence 严格递增；
-- Event + Snapshot 事务一致；
-- UI 从 Sequence 重放；
-- crash 后 Running -> Interrupted；
-- Resume/Retry/Rerun/Fork 语义互不混淆；
-- Manual Artifact 不覆盖历史；
-- Recorder/Event 写入故障的错误处理策略需在实施票中明确。
+- Desktop UI 可观察 Run、Node Run、Human Waiting 和 Artifact Produced；
+- 非流式响应完成前不产生正式 Artifact；未来 Streaming Delta 同样不得提前成为 Artifact；
+- 最终 Conversation Artifact 与 Node Run 成功状态一致；
+- Structural Error 仍使 Run Failed；
+- UnknownOutcome 不会被伪装成成功或自动重放。
+- 应用重启后已完成 Run 与 Conversation 仍可查询，未完成 Run 显示为当前不可恢复的 Interrupted；
+- Run 前校验失败不创建 Run；Run 后 transport/protocol failure 终结 Run 且不自动重试。
 
 ### 14.6 桌面 UI
 
 - Browser Mock Adapter 做页面与交互测试；
 - Wails/Desktop Adapter 做类型绑定和事件测试；
-- macOS/Windows CI 分别构建；
-- 关键流程 e2e：配置 LLM → 添加 llm-chat → 绑定输入 → Preview → Run → stream → Artifact → 第二轮对话。
+- 首个闭环以 macOS 为功能验收平台；Windows 支持列入待办；
+- 首个产品切片必须经过真实薄 Desktop UI，走通通用 Node 添加、端口绑定、LLM Provider/Model、StartRun、人工输入与 Artifact 查看；
+- 单轮 e2e：配置 LLM → 创建 `human-chat(source) -> llm-chat` → Preview → Run → 输入 → 完整响应 → Conversation Artifact；
+- 后续多轮 e2e：把 Conversation 回接 `human-chat` → Run → 首轮输入 → assistant → WaitingHuman → 第二轮输入。
 
 ---
 
 ## 15. 开发阶段与验收门
 
-### P9：产品领域模型与 Application Module
+### P9：macOS Product Tracer
 
 交付：
 
-- Workflow / Draft / Revision / Run Snapshot 模型；
-- SQLite migration；
-- Workflow authoring Application interface；
-- Revision 内容哈希和快照；
-- CLI/fake Adapter 验证，不做正式 UI。
+- macOS desktop shell 与真实薄 UI；
+- SQLite product schema、migration、Workflow / Draft / Revision / Run Snapshot；
+- Draft lock_version + expected_lock_version CAS、无变化 autosave no-op、非法 Draft + Preview/Diagnostics；StartRun 同样校验 expected_lock_version；
+- Gum Config Schema 驱动的通用 Node 表单；
+- LLM Provider/Model 设置、稳定 Model UUID、双层 default 与删除提示；
+- 通用 Node 添加和端口绑定，首批 Catalog 为 `human-chat(source)` 与 `llm-chat`；
+- fake executor 驱动 StartRun、Revision、Node Run 和 Conversation Artifact；
+- Browser Mock 与 Desktop Adapter 复用同一个 Workflow Client interface。
 
-验收：Draft 可编辑，Revision 不可变；Run 固定 Revision，后续修改不漂移。
+验收：用户在真实 macOS UI 中创建 SQLite Workflow、配置 Provider/Model、添加并连接两个 Node，通过 fake executor 完成 Run 并查看 Artifact。该阶段是 TDD tracer，不声称真实 LLM 产品闭环完成。
 
-### P10：LLM Config 与 Model Catalog
-
-交付：
-
-- LLM Config CRUD；
-- Secret Store seam：桌面安全凭据 Adapter + 环境变量 Adapter；
-- Config/Model/Selection/Capability 三态；
-- OpenAI-compatible 与 Anthropic DiscoverModels；
-- manual overlay、raw discovery、默认模型；
-- Run Snapshot 解析；
-- API Key 保密测试。
-
-验收：一个用户配置可被多个 Agent Node 引用；模型发现失败时手工模型仍可用。
-
-### P11：协议 Client 与真实 `llm-chat`
+### P10：首个真实产品闭环
 
 交付：
 
-- Canonical Conversation/Request；
-- 两种 Protocol Adapter；
-- text/image input、text streaming output；
-- ChatMessage/Conversation Artifact；
-- usage、错误和中断语义；
-- 完整协议 fixture 测试。
+- macOS Keychain Secret Adapter 与测试用环境变量 Adapter；
+- Canonical ChatMessage / ContentPart / GenerateRequest；
+- OpenAI-compatible Chat Completions 非流式 text Adapter；
+- StartRun preflight 物化默认 Gum Model UUID，悬空 UUID 阻止 Run；
+- Resolved LLM Selection 与 Run Snapshot；
+- 真实 `human-chat(source) -> llm-chat` 单轮执行；
+- Conversation Artifact、usage、Provider request ID、finish reason、错误和历史持久化；
+- httptest fixture、请求体 golden 和 API Key 脱敏测试。
 
-验收：同一 Node 通过不同 LLM Config 分别完成多轮对话，请求体与历史顺序正确。
+验收：用户在 macOS UI 中手工配置 Provider/Model，创建通用 Workflow，提交 text，获得并持久化真实 Conversation；修改 default 不改变已绑定 UUID，修改 Provider 内容只影响未来 Run，删除 Model 后表单飘红且 StartRun 不创建 Run。
 
-### P12：Node 描述与 Workflow Preview
-
-交付：
-
-- Node Config Schema、Capability Requirement、运行属性、Presentation Hint；
-- Preview ViewModel 和 Diagnostics；
-- SCC/Iteration Group；
-- 自动 layout Prototype；
-- 非法 Draft 可预览。
-
-验收：用户无需拖拽即可从声明得到稳定结构图，点击 Node 配置，Data/Control 顺序清晰。
-
-### P13：桌面 GUI MVP
+### P11：闭环加固
 
 交付：
 
-- macOS/Windows desktop shell Prototype Gate；
-- Workflow 列表、声明、配置、Preview；
-- LLM Config 设置与 Agent Node 下拉选择；
-- Run Mode、Human interaction、history；
-- 浏览器 Mock 与 Desktop Adapter。
+- schema migration fixture 与旧库升级测试；
+- 应用重启后把未结束 Run 标为当前不可恢复的 Interrupted；
+- 已完成 Run、Node Run、Conversation Artifact 与错误可重启后查询；
+- Provider/Model 删除影响提示、悬空 UUID Diagnostics；
+- Structural / Interaction / UnknownOutcome 展示；
+- 日志脱敏、Crash report bundle；
+- macOS 构建、安装和升级验证。
 
-验收：在两平台完成创建 Workflow 到运行 `llm-chat` 的闭环。
+验收：首个真实闭环可以重复安装、升级、诊断和回归验证；崩溃或 Provider 错误不会被伪装为成功或自动重放。
 
-### P14：Artifact Experience
+### P12：多轮对话升级
 
 交付：
+
+- Human Chat Entry Node：optional Conversation feedback、无必需输入时自举；
+- Human Executor 接收上一版 Conversation；
+- WaitingHuman 状态与每次人工提交一个新 Node Run；
+- `human-chat -> llm-chat -> human-chat` 显式回边；
+- Validator 从唯一无 inputs human-input 升级为唯一可自举 Human Entry；
+- 两轮对话、回边 dirty/Ready 和 Convergence Guard 测试。
+
+验收：用户在 UI 中创建显式对话循环；assistant 输出只使 Human Entry 等待，第二次人工提交才触发下一轮 `llm-chat`，不存在隐藏 Conversation 或模型自循环。
+
+### 明确待办：协议、模态与平台扩展
+
+以下内容在 P9–P12 后分别设计和排期，不预设相互顺序：
+
+- Streaming：SSE、Content Delta、取消和 UnknownOutcome；
+- Anthropic Messages Protocol Adapter；
+- image Content Part、文件选择和 ArtifactRef；
+- Windows Desktop Adapter、构建、安装和 e2e 对等。
+
+### 后置候选：高级 Artifact Experience
+
+以下内容不属于当前 P9–P12 的验收前置，暂不编号：
 
 - Preview Registry；
 - Chat/Markdown/Image/JSON/Source diff 初始 Previewer；
@@ -978,63 +907,56 @@ Content Delta 可设置保留策略；完整 Artifact 只在 Node Run 成功后�
 - Manual Artifact；
 - 大文件与安全限制。
 
-验收：用户能从 Node Run 定位、查看和比较 Artifact，并用合法 Manual Artifact 触发下游。
+### 后置候选：Run Event 与恢复控制
 
-### P15：Run Event 与恢复控制
-
-交付：
+以下内容不属于当前 P9–P12 的验收前置，暂不编号：
 
 - append-only Run Event；
 - UI reconnect/replay；
 - Pause/Resume；
 - Retry/Rerun/Fork；
-- Interrupted/UnknownOutcome；
+- Interrupted Resume 与 UnknownOutcome 处置/重试；
 - 受影响下游预览。
 
-验收：应用重启后可恢复 WaitingHuman/静止 Run；中断 LLM 调用不会被伪装成成功或静默重复。
-
-### P16：稳定性与跨平台发布准备
+### 首个闭环稳定性与产品形态评审
 
 交付：
 
 - schema migration fixtures；
-- macOS/Windows 构建矩阵；
+- macOS 构建矩阵、安装和升级验证；Windows 对等支持后置；
 - 日志脱敏、Crash report bundle；
 - 权限预览的最小模型；
 - 性能基线与大图/大 Artifact 测试；
 - 产品 v1 形态评审。
 
-验收：核心闭环达到可重复安装、升级、诊断和回归验证；评审后才开始规划导入/导出、Workflow Pack 和 AI Workflow authoring。
+验收：核心闭环达到可重复安装、升级、诊断和回归验证。该评审只判断当前产品形态，不自动启动导入/导出、Workflow Pack 或 AI Workflow authoring 设计。
 
 阶段纪律：P(n) 未通过验收门，不开始依赖其领域语义的 P(n+1)；UI Prototype 可作为技术探索并行，但不得反向定义领域模型。
 
 ---
 
-## 16. 产品 v1 评审清单
+## 16. 首个产品闭环评审清单
 
-进入导入/导出规划前，至少回答：
+判断首个 SQLite Workflow 闭环是否跑通，至少回答：
 
 1. Workflow / Draft / Revision 是否稳定，是否仍频繁迁移？
 2. Node Config Schema 能否覆盖真实 `llm-chat` 和至少一个非 Agent Node？
-3. LLM Config 能否稳定支持两个协议和第三方 OpenAI-compatible 差异？
-4. Model Capability 的 unknown/manual/discovered 是否能被普通用户理解？
+3. 手工 LLM Provider 与 Model ID 能否稳定支持第三方 OpenAI-compatible 差异？
+4. 用户选择 Model 即承担适配责任、Provider 拒绝时由用户换模型的反馈是否清晰？
 5. Preview 是否在分支、汇合、循环和非法 Draft 中保持清晰？
-6. Artifact 是否能支撑查看、比较、人工替换和来源追踪？
-7. Resume/Retry/Rerun/Fork 是否在 UI 和历史中没有语义歧义？
-8. macOS 与 Windows 的安装、升级和本地文件权限是否可控？
-9. Secret、Prompt、Artifact 和日志的导出边界是否明确？
-10. SQLite schema 和 Revision 表达是否足以形成稳定的可移植格式？
+6. 用户是否能查看本轮 Conversation Artifact、来源 Node Run 与错误？
+7. 最小运行观测是否足以解释 Run 为什么等待、运行或失败？
+8. macOS 的安装、升级和本地文件权限是否可控？Windows 支持已有独立待办且未被当前架构堵死？
+9. Secret、Prompt、Artifact 和日志的本地存储边界是否明确？
 
-只有这些问题稳定后，才设计 YAML 导出、导入冲突、Git 版本管理、Workflow Pack 和 AI 修改 Workflow。
+产品 v1 的范围仍未确定；在其确定前，不设计 YAML 导入/导出、导入冲突、Workflow Pack 或 AI 修改 Workflow。
 
 ---
 
 ## 17. 外部协议依据与演进原则
 
 - OpenAI Chat Completions：有序 messages、developer/system/user/assistant role 与多种 content part。官方参考：<https://developers.openai.com/api/reference/cli/resources/chat/subresources/completions>。
-- OpenAI Model 基础对象：ID、created、owner 等基础信息，不能据此假定完整 capability 元数据。官方参考：<https://developers.openai.com/api/reference/typescript/resources/models/methods/retrieve>。
 - Anthropic Messages：顶层 system、无状态多轮 user/assistant messages、content blocks。官方参考：<https://platform.claude.com/docs/en/api/messages/create>。
-- Anthropic Models：模型目录、capabilities、max input/output tokens 与分页。官方参考：<https://platform.claude.com/docs/en/api/models/list>。
 
 协议会演进：实现时必须以版本化 Adapter 和 fixture 隔离变化，不能把某日的服务端私有 JSON 直接固化为 Gum-Workflows 的领域模型。
 
@@ -1044,13 +966,25 @@ Content Delta 可设置保留策略；完整 Artifact 只在 Node Run 成功后�
 
 1. 01–14 保持原计划；本文从其完成后开始。
 2. GUI 是 Workflow 创作入口；画布只读、自动布局、可选择配置，不做拖拽式编排。
-3. SQLite 是产品事实来源；YAML 导入/导出推迟至稳定 v1 前评审之后。
-4. Workflow 使用 Draft + immutable Revision；Run 使用固定 Snapshot。
-5. Artifact 是一等 UI 对象，按类型预览并支持版本比较。
+3. SQLite 是产品 Workflow 唯一的编辑与运行事实来源；现有 YAML CLI 不兼容、不隐式导入，v1 范围确定前不设计 YAML 导入/导出。
+4. Workflow 使用自动保存的 Draft + immutable Revision；没有独立 Publish，StartRun 创建或复用 Revision 并固定 Snapshot。
+5. 首个闭环只实现运行所需的基本 Artifact 查看；高级预览、版本比较与人工替换后置。
 6. 先打磨 Node，不规划内置 Workflow 库。
-7. `llm-chat` 是第一个简单但真实的 Agent Node。
-8. LLM Config 是独立用户级复用配置；Agent Node 只选择 Config 和 Model。
-9. 支持 OpenAI-compatible Chat Completions 与 Anthropic Messages 的正确多轮组装。
-10. 模型既可发现也可手工声明；能力三态、保留 raw、手工显式值优先，不按名称猜测。
-11. 结构化 Run Event 支撑 UI、历史与恢复；Resume/Retry/Rerun/Fork 语义严格区分。
+7. `llm-chat` 是第一个简单但真实的 Agent Node；首个多轮闭环固定为 `human-chat -> llm-chat -> human-chat`。
+8. 用户级 LLM 设置采用 `Provider -> Models`；每个 Model 有稳定 Gum UUID。未选择模型的 Node 在首次 StartRun preflight 按双层 default 物化 UUID；UUID 存在时不受 default 变化影响，删除后不 fallback，必须由用户重新选择；Run Snapshot 保存历史实际连接与 Model。
+9. 首个切片只支持 OpenAI-compatible；Anthropic Messages 后续沿同一 ProtocolAdapter seam 加入。
+10. 当前范围不实现 `/models` discovery 或 Model Capability 目录；用户手工声明 Model ID，选择模型即确认适合任务，Provider 拒绝时由用户更换。
+11. 首个闭环只实现 UI 必需的运行观测；完整 Run Event、Resume、Rerun、Fork、Manual Artifact 与崩溃恢复后置，但未来不得违背第 3.3 节的终态和 UnknownOutcome 边界。
 12. AI 修改 Workflow、Workflow Pack、内置工作流、云同步和高级 Trigger 全部后置。
+13. 首个 UI 走通通用 Node 添加、端口绑定、循环与诊断 seam，但首批 Catalog 只需支持对话闭环，不以硬编码聊天 Demo 代替 Workflow 创作。
+14. 正式 Run/Node Run/Artifact/错误持久化，Content Delta 不持久化；重启后未结束 Run 显示为当前不可恢复的 Interrupted，且不自动重放。
+15. Run 前结构、Model UUID、默认值和 Secret 错误不创建 Run；不做 Model Capability 校验。Run 后认证、transport、限流、协议或 Provider 拒绝错误均为 Structural Error 并终结 Run，不自动重试。
+16. 最终多轮模型保持显式 Human Gate 回环；第一个可执行切片只做单轮，下一切片再升级入口与 WaitingHuman，不增加 non-triggering context input。
+17. 首个产品切片只支持 OpenAI-compatible 与 text -> text；Anthropic 和 image 后续加入，但首切片必须使用正式 Canonical Message/ContentPart 与 ProtocolAdapter seam。
+18. 首个产品切片必须经过真实薄 Desktop UI 和通用创作路径，不接受 fake-only 或硬编码聊天 Demo。
+19. Revision 语义哈希只覆盖执行语义；展示文案、UI 状态与布局不产生新 Revision，LLM Provider 可变连接详情由 Run Snapshot 固定。
+20. 首个闭环为 macOS、非流式；Streaming 与 Windows 支持均进入明确待办。
+21. Config Schema 使用 Gum 自有的小型类型模型；Contract 与 Presentation Hint 分离，不暴露 JSON Schema、CUE AST 或前端库结构。
+22. Draft autosave 不创建 Revision：语义内容无变化时 no-op，有变化时更新同一行并使用 lock_version + expected_lock_version CAS；StartRun 也必须校验 UI 当前 token；非法 Draft 可保存并返回 Diagnostics，首版单窗口、冲突刷新、无字段级 merge。
+23. 相同语义内容重复 Run 复用同一 immutable Revision，但每次创建新的 Run；首次物化 Model UUID 导致语义变化时才创建新 Revision。
+24. P9–P12 改为纵向交付：macOS fake Product Tracer -> 真实 OpenAI text 闭环 -> 持久化与诊断加固 -> Human Chat 多轮升级；Streaming、Anthropic、image 和 Windows 分别进入待办。

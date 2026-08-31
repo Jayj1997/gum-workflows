@@ -33,33 +33,45 @@ Node Instance 的组合声明，附项目声明。一个 Workflow 可运行任�
 被加工的本地代码仓库声明：名称 + 仓库地址。仓库的规范化绝对路径直接成为 In-place Project Workspace，不为 Run 或 Node 复制项目。
 
 **LLM Provider（模型提供方）**:
-一个大模型服务接入点（url + 协议类型 + apikey 引用 + 名称），下挂一组 Model。Provider 声明在用户级 llm.yaml 中，跨 Workflow 复用，是纯运行时配置：不落项目库，run 启动时把解析结果（provider/model 名）记入运行记录。
+workflow/v1 中的一个大模型服务接入点（url + 协议类型 + apikey 引用 + 名称），下挂一组 Model。Provider 声明在用户级 llm.yaml 中，跨 Workflow 复用，是纯运行时配置：不落项目库，run 启动时把解析结果（provider/model 名）记入运行记录。14 后 SQLite 产品继续使用 Provider / Model 领域关系，但不读取或兼容 llm.yaml。
 
 **LLM Model（模型）**:
-Provider 下可选用的具体模型（如 gpt-4o），携带可选生成参数（temperature 等）。默认解析链：默认 Provider（显式 default，缺省取第一个）-> 默认 Model（同理）。
+Provider 下一个用户配置的模型槽，拥有全局稳定的 Gum Model UUID，并携带可编辑的 Provider Model ID 和生成默认值。UUID 标识配置槽而非不可变底层模型；修改 Provider Model ID 会影响未来 Run，历史 Run Snapshot 保留旧值。默认解析链：默认 Provider（显式 default，否则取未删除项按 created_at、UUID 升序的第一个）-> 默认 Model（同理）。Gum 不维护或匹配模型能力。
 
 ### 14 后产品侧（已确认、部分已实现）
 
-**LLM Config（大模型配置）**:
-用户级、跨 Workflow 复用的一条模型连接配置：名称 + 协议 + Base URL + API Key 引用 + 模型目录 + 默认模型。多个 Agent Node 可以选择同一条 LLM Config，不在各 Node 中重复填写连接信息。
-_Avoid_: 与某个 Agent Node 的普通 config 混称、把 API Key 写入 Node Instance。
+**LLM Preference（模型偏好）**:
+Agent Node Instance 记录的 Gum Model UUID。未选择时，StartRun preflight 按默认 Provider/Model 解析并先写回 Draft；只要 UUID 对应的 Model 仍存在，默认值变化都不改变选择。UUID 被删除时不回退，必须由用户重新选择。
 
-**LLM Selection（模型选择）**:
-Agent Node Instance 对一条 LLM Config 及其可选模型的引用；未显式选择模型时使用该 LLM Config 的默认模型。Run 启动时解析并固定，密钥不进入运行快照。
-_Avoid_: LLM Config（可复用配置本体）、LLM Model（配置下的模型）。
+**Resolved LLM Selection（已解析模型选择）**:
+StartRun 根据已写入 Draft/Revision 的 Gum Model UUID，为 Agent Node 固定协议、Provider、Provider Model ID、能力和有效生成参数。它进入 Run Snapshot，不包含 API Key 明文；历史 Run 即使原 Model 后来删除仍可显示当时的解析结果。
+_Avoid_: 把 Provider 的可变连接内容固化进 Workflow Revision、运行中自动切换 Provider。
 
 **Workflow Draft（工作流草稿）**:
-一个 Workflow 当前可编辑的内容。自动保存只改变 Draft，不改变既有 Revision 或 Run。
+一个 Workflow 唯一可变的当前内容。Autosave 只在规范化语义内容变化时更新同一 Draft，不创建 Revision 或历史副本；内部 lock version 只用于并发控制。首个产品闭环没有独立 Publish 动作。
 
 **Workflow Revision（工作流修订版）**:
-由 Draft 形成的不可变版本。每次 Run 绑定一个 Revision，同一 Workflow 可拥有多个 Revision。
+用户点击 Run 时由 Draft 的规范化语义内容创建或复用的不可变版本。相同语义内容重复运行复用同一 Revision；每次执行仍创建新的 Run。
 _Avoid_: 在 Run 启动后原地修改 Revision。
 
 **Run Snapshot（运行快照）**:
-Run 启动时固定的 Workflow Revision、Node Executor、LLM Selection 解析结果及有效配置；不包含 API Key 明文。
+Run 启动时固定的 Workflow Revision、Node Executor、Resolved LLM Selection 及有效配置；不包含 API Key 明文。
 
 **Workflow Preview（工作流预览）**:
 由 Draft 或 Revision 派生的只读结构视图，展示 Node、Data/Control Edge、循环组与诊断。自动布局坐标只服务显示，不属于 Workflow 执行语义。
+
+**Human Chat Entry Node（人工对话入口节点）**:
+14 后对话 Workflow 中唯一可在没有必需输入时自举的人工门。它把一次人工提交追加为 Conversation 中的 user message；收到 `llm-chat` 反馈的 Conversation 后只等待下一次人工事件，不会自行产出新一轮。
+_Avoid_: 把它当作收到反馈便自动执行的普通 Node、让 `llm-chat` 自循环生成对话。
+
+**Paused Run（已暂停运行）**:
+仍可用同一 Run ID 继续的 Run；暂停只阻止派发新的 Node Run，不承诺冻结已经开始的外部调用。
+
+**Interrupted Run（已中断运行）**:
+因进程退出或崩溃而未正常完成、但仍可用同一 Run ID 恢复的 Run。中断时结果不确定的 Node Run 不得自动重放。
+
+**Unknown Outcome（结果未知）**:
+Node Run 已发起外部副作用但平台无法确认是否完成的结果状态，不是 Workflow Run 的独立终态。是否再次执行必须由用户明确决定。
 
 **Local Data Root（本地数据根目录）**:
 平台管理的用户级可配置存储根目录，容纳产品数据、Artifact、Node Run 日志与 tool-output。它位于用户项目之外，Workflow 不得在项目内创建 `.workflow` 等 Gum 产物。
