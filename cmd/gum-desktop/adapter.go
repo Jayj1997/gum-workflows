@@ -38,3 +38,13 @@ func (a *DesktopAdapter) CreateWorkflow(input product.CreateWorkflowInput) (prod
 func (a *DesktopAdapter) ListWorkflows() ([]product.WorkflowView, error) {
 	return a.application.ListWorkflows(a.ctx)
 }
+
+// GetDraft forwards Product Workflow Draft loading through WorkflowApplication.
+func (a *DesktopAdapter) GetDraft(workflowID string) (product.DraftView, error) {
+	return a.application.GetDraft(a.ctx, workflowID)
+}
+
+// UpdateDraft forwards an autosave request through WorkflowApplication.
+func (a *DesktopAdapter) UpdateDraft(input product.UpdateDraftInput) (product.DraftUpdateView, error) {
+	return a.application.UpdateDraft(a.ctx, input)
+}

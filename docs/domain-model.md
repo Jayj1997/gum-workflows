@@ -1,12 +1,16 @@
 # Gum-Workflows Domain Model
 
-本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 的 SQLite identity 与创建/列表切片。术语以根目录 `CONTEXT.md` 为权威；当前 GUI 只支持 Product Workflow 创建与列表，Workflow Draft、Revision、真实 LLM Client、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
+本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 的 SQLite identity、创建/列表与 Draft autosave 切片。术语以根目录 `CONTEXT.md` 为权威；Workflow Revision、Node 创作、真实 LLM Client、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
 
 ## 0. Product Workflow identity
 
 macOS Desktop 与 Browser Mock 通过同一 `WorkflowClient` 调用 `product.WorkflowApplication`；UI Adapter 不访问 SQLite。真实 Desktop 在用户级 Local Data Root 打开 `product.db`，创建的 Product Workflow 保存于独立 `product_workflow` 表，字段为稳定 UUID、显示名称和创建时间，并按 `(created_at ASC, id ASC)` 稳定列出。
 
-Product Workflow 与 workflow/v1 的 `workflow` / `node_instance` 定义表共享同一数据库但不共享身份：YAML CLI 的导入、运行或 history 查询不会创建、读取或修改 Product Workflow。当前只实现 identity、创建和列表；每个 Workflow 的唯一 Draft 由后续票实现。
+Product Workflow 与 workflow/v1 的 `workflow` / `node_instance` 定义表共享同一数据库但不共享身份：YAML CLI 的导入、运行或 history 查询不会创建、读取或修改 Product Workflow。
+
+每个 Product Workflow 在 `product_workflow_draft` 中恰有一行当前 Draft。新建 Workflow 与初始 Draft 在同一事务写入；旧 product schema 升级时为既有 Workflow 回填初始 Draft。Draft 保存规范化的语义 JSON 与内部 `lock_version`：内容等价时 autosave 为 no-op，保留时间与 token；内容变化时以 UI 看到的 expected token 做 CAS，更新同一行并递增 token。冲突不覆盖内容，Application 返回数据库最新 Draft 并要求 UI 刷新。
+
+非法语义 Draft 允许持久化。Application 同时返回 renderer-independent `WorkflowPreview` 结果形态与聚合 Diagnostics；当前切片只诊断 semantic schema version 和空 nodes，Node Catalog、具体 Node/config、Data/Control Edge 与完整图投影由后续票实现。Browser Mock 和 Desktop Adapter 通过同一 WorkflowClient 加载与 autosave；autosave 不创建 Revision 或 Draft 历史副本。
 
 ## 1. 定义、实例与运行
 

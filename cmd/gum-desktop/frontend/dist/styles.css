@@ -59,7 +59,15 @@ button:disabled { cursor: wait; opacity: .55; }
 .workflow-library h2 { margin: 0 0 12px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
 .workflow-library ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .workflow-library li { display: grid; gap: 5px; padding: 14px 16px; border: 1px solid rgba(32, 32, 24, .12); border-radius: 14px; background: rgba(255,255,255,.44); }
+.workflow-library li button { justify-self: start; padding: 0; color: #202018; background: transparent; box-shadow: none; font-weight: 700; }
 .workflow-library code { overflow: hidden; color: #777367; font-size: 10px; text-overflow: ellipsis; }
+
+.draft-editor { margin-top: 32px; }
+.draft-editor h2 { margin: 0 0 8px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+.draft-editor p, .draft-editor li { color: #777367; font-size: 12px; line-height: 1.5; }
+.draft-editor textarea { width: 100%; min-height: 220px; padding: 16px; border: 1px solid rgba(32, 32, 24, .2); border-radius: 14px; color: #202018; background: rgba(255,255,255,.58); font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+.draft-editor textarea:disabled { opacity: .55; }
+.draft-editor ul { padding-left: 20px; }
 
 .status { margin: 18px 0 0; color: #777367; font-size: 12px; }
 .status[data-state="ready"] { color: #2e7250; }

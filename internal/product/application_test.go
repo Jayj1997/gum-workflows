@@ -64,6 +64,164 @@ func TestApplicationCreatesAndListsSQLiteWorkflowsAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestApplicationCreatesAndLoadsOneDraftPerWorkflow(t *testing.T) {
+	ctx := context.Background()
+	store, err := history.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	if err != nil {
+		t.Fatalf("open product database: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	application := product.NewApplication(store)
+
+	workflow, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "Release checklist"})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	draft, err := application.GetDraft(ctx, workflow.ID)
+	if err != nil {
+		t.Fatalf("get draft: %v", err)
+	}
+
+	if draft.WorkflowID != workflow.ID {
+		t.Fatalf("draft workflow ID = %q, want %q", draft.WorkflowID, workflow.ID)
+	}
+	if draft.LockVersion != 1 {
+		t.Fatalf("draft lock version = %d, want 1", draft.LockVersion)
+	}
+	if got := draft.Content["semanticSchemaVersion"]; got != "productWorkflow/v1" {
+		t.Fatalf("semantic schema version = %#v", got)
+	}
+	if got, ok := draft.Content["nodes"].([]any); !ok || len(got) != 0 {
+		t.Fatalf("initial nodes = %#v, want empty list", draft.Content["nodes"])
+	}
+}
+
+func TestApplicationAutosavesOnlySemanticChangesAndRejectsStaleUpdates(t *testing.T) {
+	ctx := context.Background()
+	store, err := history.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	if err != nil {
+		t.Fatalf("open product database: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	application := product.NewApplication(store)
+	workflow, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "Release checklist"})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	initial, err := application.GetDraft(ctx, workflow.ID)
+	if err != nil {
+		t.Fatalf("get initial draft: %v", err)
+	}
+
+	changed, err := application.UpdateDraft(ctx, product.UpdateDraftInput{
+		WorkflowID:          workflow.ID,
+		ExpectedLockVersion: initial.LockVersion,
+		Content: map[string]any{
+			"semanticSchemaVersion": "productWorkflow/v1",
+			"nodes":                 []any{},
+			"project":               map[string]any{"repository": "/workspace/example"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("save changed draft: %v", err)
+	}
+	if !changed.Saved || changed.Conflict || changed.Draft.LockVersion != 2 {
+		t.Fatalf("changed result = %#v", changed)
+	}
+
+	noOp, err := application.UpdateDraft(ctx, product.UpdateDraftInput{
+		WorkflowID:          workflow.ID,
+		ExpectedLockVersion: changed.Draft.LockVersion,
+		Content: map[string]any{
+			"project":               map[string]any{"repository": "/workspace/example"},
+			"nodes":                 []any{},
+			"semanticSchemaVersion": "productWorkflow/v1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("save semantically unchanged draft: %v", err)
+	}
+	if noOp.Saved || noOp.Conflict || noOp.Draft.LockVersion != changed.Draft.LockVersion {
+		t.Fatalf("no-op result = %#v", noOp)
+	}
+	if !noOp.Draft.UpdatedAt.Equal(changed.Draft.UpdatedAt) {
+		t.Fatalf("no-op updated_at = %s, want %s", noOp.Draft.UpdatedAt, changed.Draft.UpdatedAt)
+	}
+
+	newer, err := application.UpdateDraft(ctx, product.UpdateDraftInput{
+		WorkflowID:          workflow.ID,
+		ExpectedLockVersion: changed.Draft.LockVersion,
+		Content: map[string]any{
+			"semanticSchemaVersion": "productWorkflow/v1",
+			"nodes":                 []any{},
+			"project":               map[string]any{"repository": "/workspace/newer"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("save newer draft: %v", err)
+	}
+	conflict, err := application.UpdateDraft(ctx, product.UpdateDraftInput{
+		WorkflowID:          workflow.ID,
+		ExpectedLockVersion: changed.Draft.LockVersion,
+		Content: map[string]any{
+			"semanticSchemaVersion": "productWorkflow/v1",
+			"nodes":                 []any{},
+			"project":               map[string]any{"repository": "/workspace/stale"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("save stale draft: %v", err)
+	}
+	if !conflict.Conflict || !conflict.RefreshRequired || conflict.Saved {
+		t.Fatalf("conflict result = %#v", conflict)
+	}
+	if !reflect.DeepEqual(conflict.Draft, newer.Draft) {
+		t.Fatalf("conflict draft = %#v, want latest %#v", conflict.Draft, newer.Draft)
+	}
+	if got := conflict.Draft.Content["project"].(map[string]any)["repository"]; got != "/workspace/newer" {
+		t.Fatalf("stored repository = %#v, want newer value", got)
+	}
+}
+
+func TestApplicationSavesInvalidDraftWithCompletePreviewDiagnostics(t *testing.T) {
+	ctx := context.Background()
+	store, err := history.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	if err != nil {
+		t.Fatalf("open product database: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	application := product.NewApplication(store)
+	workflow, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "Incomplete workflow"})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+
+	result, err := application.UpdateDraft(ctx, product.UpdateDraftInput{
+		WorkflowID:          workflow.ID,
+		ExpectedLockVersion: 1,
+		Content:             map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("save invalid draft: %v", err)
+	}
+	if !result.Saved || result.Draft.LockVersion != 2 {
+		t.Fatalf("save invalid result = %#v", result)
+	}
+	if result.Preview.Nodes == nil || result.Preview.Edges == nil || result.Preview.Groups == nil {
+		t.Fatalf("preview collections must be present: %#v", result.Preview)
+	}
+	if len(result.Preview.Diagnostics) != 2 {
+		t.Fatalf("diagnostics = %#v, want schema version and nodes errors", result.Preview.Diagnostics)
+	}
+	loaded, err := application.GetDraft(ctx, workflow.ID)
+	if err != nil {
+		t.Fatalf("reload invalid draft: %v", err)
+	}
+	if len(loaded.Content) != 0 || loaded.LockVersion != 2 {
+		t.Fatalf("loaded invalid draft = %#v", loaded)
+	}
+}
+
 func TestApplicationDoesNotListWorkflowV1Imports(t *testing.T) {
 	ctx := context.Background()
 	store, err := history.Open(ctx, filepath.Join(t.TempDir(), "product.db"))

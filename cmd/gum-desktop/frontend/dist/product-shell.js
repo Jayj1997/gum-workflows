@@ -22,6 +22,11 @@ export function productStatusMessage(state) {
 }
 
 export function createProductShell(view, client) {
+	let currentDraft;
+	let editSequence = 0;
+	let selectionSequence = 0;
+	let saveQueue = Promise.resolve();
+	let refreshRequired = false;
   async function refreshWorkflows() {
     view.renderWorkflows(await client.listWorkflows());
   }
@@ -67,4 +72,51 @@ export function createProductShell(view, client) {
       });
     }
   });
+	view.onSelectWorkflow(async (workflowId) => {
+		const selection = ++selectionSequence;
+		editSequence = 0;
+		refreshRequired = false;
+		saveQueue = Promise.resolve();
+		currentDraft = undefined;
+		view.renderDraftLoading();
+		try {
+			const draft = await client.getDraft(workflowId);
+			if (selection !== selectionSequence) return;
+			if (draft.workflowId !== workflowId) throw new Error("draft response does not match selected workflow");
+			currentDraft = draft;
+			view.renderDraft({ draft: currentDraft });
+		} catch (error) {
+			view.render({ status: "error", title: "Gum Workflows", message: errorMessage(error) });
+		}
+	});
+	view.onDraftDirty(({ workflowId, revision }) => {
+		if (currentDraft?.workflowId === workflowId) editSequence = Math.max(editSequence, revision);
+	});
+	view.onEditDraft((editRequest) => {
+		if (!currentDraft) return;
+		if (editRequest.workflowId !== currentDraft.workflowId) return;
+		editSequence = Math.max(editSequence, editRequest.revision);
+		const edit = editRequest.revision;
+		const selection = selectionSequence;
+		const workflowId = editRequest.workflowId;
+		const queued = saveQueue.then(async () => {
+			if (selection !== selectionSequence || refreshRequired) return;
+			try {
+				const result = await client.updateDraft({
+					workflowId,
+					expectedLockVersion: currentDraft.lockVersion,
+					content: editRequest.content,
+				});
+				if (selection !== selectionSequence || currentDraft?.workflowId !== workflowId) return;
+				currentDraft = result.draft;
+				refreshRequired = result.refreshRequired;
+				if (result.conflict || edit === editSequence) view.renderDraft(result);
+				return result;
+			} catch (error) {
+				view.render({ status: "error", title: "Gum Workflows", message: errorMessage(error) });
+			}
+		});
+		saveQueue = queued.then(() => undefined, () => undefined);
+		return queued;
+	});
 }

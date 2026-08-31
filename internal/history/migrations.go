@@ -27,6 +27,9 @@ const NodeRunDiagnosticsSchemaVersion = 4
 // ProductWorkflowSchemaVersion adds SQLite-only Product Workflow identities.
 const ProductWorkflowSchemaVersion = 5
 
+// ProductWorkflowDraftSchemaVersion adds one mutable Draft per Product Workflow.
+const ProductWorkflowDraftSchemaVersion = 6
+
 // 新增迁移只允许 append（不改写历史迁移），保证已迁移的库向前兼容。
 var migrations = []migration{
 	{
@@ -144,6 +147,20 @@ var migrations = []migration{
   created_at   TEXT NOT NULL
 )`,
 			`CREATE INDEX idx_product_workflow_created_at ON product_workflow (created_at ASC, id ASC)`,
+		},
+	},
+	{
+		version: ProductWorkflowDraftSchemaVersion,
+		stmts: []string{
+			`CREATE TABLE product_workflow_draft (
+  workflow_id  TEXT PRIMARY KEY REFERENCES product_workflow(id) ON DELETE CASCADE,
+  content_json TEXT NOT NULL,
+  lock_version INTEGER NOT NULL CHECK (lock_version >= 1),
+  updated_at   TEXT NOT NULL
+)`,
+			`INSERT INTO product_workflow_draft (workflow_id, content_json, lock_version, updated_at)
+SELECT id, '{"nodes":[],"semanticSchemaVersion":"productWorkflow/v1"}', 1, created_at
+FROM product_workflow`,
 		},
 	},
 }

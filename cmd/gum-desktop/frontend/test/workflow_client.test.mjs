@@ -17,6 +17,12 @@ const expectedWorkflow = {
   displayName: "Release checklist",
   createdAt: "2026-08-31T09:00:00Z",
 };
+const expectedDraft = {
+  workflowId: expectedWorkflow.id,
+  content: { semanticSchemaVersion: "productWorkflow/v1", nodes: [] },
+  lockVersion: 1,
+  updatedAt: "2026-08-31T09:00:00Z",
+};
 
 const clientContract = [
   [
@@ -32,6 +38,12 @@ const clientContract = [
         async listWorkflows() {
           return [expectedWorkflow];
         },
+		async getDraft() {
+			return expectedDraft;
+		},
+		async updateDraft(input) {
+			return { draft: { ...expectedDraft, ...input, lockVersion: 2 }, preview: { nodes: [], edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
+		},
       }),
   ],
   [
@@ -47,6 +59,12 @@ const clientContract = [
         async ListWorkflows() {
           return [expectedWorkflow];
         },
+		async GetDraft() {
+			return expectedDraft;
+		},
+		async UpdateDraft(input) {
+			return { draft: { ...expectedDraft, ...input, lockVersion: 2 }, preview: { nodes: [], edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
+		},
       }),
   ],
 ];
@@ -57,6 +75,8 @@ for (const [name, createClient] of clientContract) {
 	assert.deepEqual(await client.openWorkspace(), expectedView);
 	assert.deepEqual(await client.createWorkflow({ displayName: "Release checklist" }), expectedWorkflow);
 	assert.deepEqual(await client.listWorkflows(), [expectedWorkflow]);
+	assert.deepEqual(await client.getDraft(expectedWorkflow.id), expectedDraft);
+	assert.equal((await client.updateDraft({ workflowId: expectedWorkflow.id, expectedLockVersion: 1, content: expectedDraft.content })).draft.lockVersion, 2);
   });
 }
 
@@ -69,12 +89,17 @@ test("a user action crosses WorkflowClient and renders the visible result", asyn
 			openWorkspace = handler;
 		},
 		onCreateWorkflow() {},
+		onSelectWorkflow() {},
+		onDraftDirty() {},
+		onEditDraft() {},
 		render(state) {
 			renderStates.push(structuredClone(state));
 		},
 		renderWorkflows(workflows) {
 			workflowStates.push(structuredClone(workflows));
 		},
+		renderDraft() {},
+		renderDraftLoading() {},
 	};
 	const client = createBrowserWorkflowClient({
 		async openWorkspace() {
@@ -84,6 +109,8 @@ test("a user action crosses WorkflowClient and renders the visible result", asyn
 		async listWorkflows() {
 			return [expectedWorkflow];
 		},
+		async getDraft() { return expectedDraft; },
+		async updateDraft() {},
 	});
 
   createProductShell(view, client);
@@ -106,10 +133,15 @@ test("user creates a Product Workflow and sees the refreshed list", async () => 
 		onCreateWorkflow(handler) {
 			createWorkflow = handler;
 		},
+		onSelectWorkflow() {},
+		onDraftDirty() {},
+		onEditDraft() {},
 		render() {},
 		renderWorkflows(items) {
 			rendered.push(structuredClone(items));
 		},
+		renderDraft() {},
+		renderDraftLoading() {},
 	};
 	const client = createBrowserWorkflowClient({
 		async openWorkspace() {
@@ -123,6 +155,8 @@ test("user creates a Product Workflow and sees the refreshed list", async () => 
 		async listWorkflows() {
 			return workflows;
 		},
+		async getDraft() { return expectedDraft; },
+		async updateDraft() {},
 	});
 
 	createProductShell(view, client);
@@ -139,10 +173,15 @@ test("application failures become visible without leaking adapter details", asyn
 			openWorkspace = handler;
 		},
 		onCreateWorkflow() {},
+		onSelectWorkflow() {},
+		onDraftDirty() {},
+		onEditDraft() {},
 		render(state) {
 			renderStates.push(structuredClone(state));
 		},
 		renderWorkflows() {},
+		renderDraft() {},
+		renderDraftLoading() {},
 	};
 	const client = createBrowserWorkflowClient({
 		async openWorkspace() {
@@ -152,6 +191,8 @@ test("application failures become visible without leaking adapter details", asyn
 		async listWorkflows() {
 			return [];
 		},
+		async getDraft() { return expectedDraft; },
+		async updateDraft() {},
 	});
 
   createProductShell(view, client);
@@ -164,6 +205,200 @@ test("application failures become visible without leaking adapter details", asyn
   });
 });
 
+test("selecting a workflow and editing content autosaves with the current concurrency token", async () => {
+	let selectWorkflow;
+	let editDraft;
+	const renderedDrafts = [];
+	const updates = [];
+	const view = {
+		onOpenWorkspace() {},
+		onCreateWorkflow() {},
+		onSelectWorkflow(handler) { selectWorkflow = handler; },
+		onDraftDirty() {},
+		onEditDraft(handler) { editDraft = handler; },
+		render() {},
+		renderWorkflows() {},
+		renderDraft(state) { renderedDrafts.push(structuredClone(state)); },
+		renderDraftLoading() {},
+	};
+	const client = createBrowserWorkflowClient({
+		async openWorkspace() { return expectedView; },
+		async createWorkflow() { return expectedWorkflow; },
+		async listWorkflows() { return [expectedWorkflow]; },
+		async getDraft() { return expectedDraft; },
+		async updateDraft(input) {
+			updates.push(structuredClone(input));
+			return {
+				draft: { ...expectedDraft, content: input.content, lockVersion: 2 },
+				preview: { nodes: [], edges: [], groups: [], diagnostics: [{ code: "workflow-needs-node", severity: "error", path: "nodes", message: "workflow must contain at least one node" }] },
+				saved: true,
+				conflict: false,
+				refreshRequired: false,
+			};
+		},
+	});
+
+	createProductShell(view, client);
+	await selectWorkflow(expectedWorkflow.id);
+	await editDraft({ workflowId: expectedWorkflow.id, revision: 1, content: {} });
+
+	assert.deepEqual(updates, [{ workflowId: expectedWorkflow.id, expectedLockVersion: 1, content: {} }]);
+	assert.equal(renderedDrafts.at(-1).draft.lockVersion, 2);
+	assert.equal(renderedDrafts.at(-1).preview.diagnostics.length, 1);
+});
+
+test("overlapping edits serialize autosaves with the latest returned lock token", async () => {
+	let selectWorkflow;
+	let editDraft;
+	let draftDirty;
+	let releaseFirstSave;
+	const updates = [];
+	const renderedDrafts = [];
+	const view = {
+		onOpenWorkspace() {},
+		onCreateWorkflow() {},
+		onSelectWorkflow(handler) { selectWorkflow = handler; },
+		onDraftDirty(handler) { draftDirty = handler; },
+		onEditDraft(handler) { editDraft = handler; },
+		render() {},
+		renderWorkflows() {},
+		renderDraft(result) { renderedDrafts.push(structuredClone(result)); },
+		renderDraftLoading() {},
+	};
+	const client = createBrowserWorkflowClient({
+		async openWorkspace() { return expectedView; },
+		async createWorkflow() { return expectedWorkflow; },
+		async listWorkflows() { return [expectedWorkflow]; },
+		async getDraft() { return expectedDraft; },
+		async updateDraft(input) {
+			updates.push(structuredClone(input));
+			if (updates.length === 1) {
+				await new Promise((resolve) => { releaseFirstSave = resolve; });
+			}
+			return {
+				draft: { ...expectedDraft, content: input.content, lockVersion: input.expectedLockVersion + 1 },
+				preview: { nodes: [], edges: [], groups: [], diagnostics: [] },
+				saved: true,
+				conflict: false,
+				refreshRequired: false,
+			};
+		},
+	});
+
+	createProductShell(view, client);
+	await selectWorkflow(expectedWorkflow.id);
+	draftDirty({ workflowId: expectedWorkflow.id, revision: 1 });
+	const firstSave = editDraft({ workflowId: expectedWorkflow.id, revision: 1, content: { nodes: [{ id: "first" }] } });
+	await Promise.resolve();
+	draftDirty({ workflowId: expectedWorkflow.id, revision: 2 });
+	const secondSave = editDraft({ workflowId: expectedWorkflow.id, revision: 2, content: { nodes: [{ id: "second" }] } });
+	await Promise.resolve();
+	assert.equal(updates.length, 1);
+	releaseFirstSave();
+	await firstSave;
+	await secondSave;
+
+	assert.deepEqual(updates.map((update) => update.expectedLockVersion), [1, 2]);
+	assert.deepEqual(updates.at(-1).content, { nodes: [{ id: "second" }] });
+	assert.deepEqual(renderedDrafts.at(-1).draft.content, { nodes: [{ id: "second" }] });
+	assert.equal(renderedDrafts.some((result) => result.saved && result.draft.content.nodes?.[0]?.id === "first"), false);
+});
+
+test("a conflict stops queued autosaves and renders the latest stored Draft", async () => {
+	let selectWorkflow;
+	let editDraft;
+	let releaseConflict;
+	const updates = [];
+	const renderedDrafts = [];
+	const latestDraft = { ...expectedDraft, content: { nodes: [{ id: "external" }] }, lockVersion: 2 };
+	const view = {
+		onOpenWorkspace() {},
+		onCreateWorkflow() {},
+		onSelectWorkflow(handler) { selectWorkflow = handler; },
+		onDraftDirty() {},
+		onEditDraft(handler) { editDraft = handler; },
+		render() {},
+		renderWorkflows() {},
+		renderDraft(result) { renderedDrafts.push(structuredClone(result)); },
+		renderDraftLoading() {},
+	};
+	const client = createBrowserWorkflowClient({
+		async openWorkspace() { return expectedView; },
+		async createWorkflow() { return expectedWorkflow; },
+		async listWorkflows() { return [expectedWorkflow]; },
+		async getDraft() { return expectedDraft; },
+		async updateDraft(input) {
+			updates.push(structuredClone(input));
+			await new Promise((resolve) => { releaseConflict = resolve; });
+			return {
+				draft: latestDraft,
+				preview: { nodes: [], edges: [], groups: [], diagnostics: [] },
+				saved: false,
+				conflict: true,
+				refreshRequired: true,
+			};
+		},
+	});
+
+	createProductShell(view, client);
+	await selectWorkflow(expectedWorkflow.id);
+	const firstSave = editDraft({ workflowId: expectedWorkflow.id, revision: 1, content: { nodes: [{ id: "local-first" }] } });
+	await Promise.resolve();
+	const queuedSave = editDraft({ workflowId: expectedWorkflow.id, revision: 2, content: { nodes: [{ id: "local-second" }] } });
+	releaseConflict();
+	await firstSave;
+	await queuedSave;
+
+	assert.equal(updates.length, 1);
+	assert.equal(renderedDrafts.at(-1).conflict, true);
+	assert.deepEqual(renderedDrafts.at(-1).draft, latestDraft);
+});
+
+test("editing is suspended while another workflow Draft is loading", async () => {
+	let selectWorkflow;
+	let editDraft;
+	let releaseSecondDraft;
+	const updates = [];
+	const loadingStates = [];
+	const secondWorkflowId = "22222222-2222-4222-8222-222222222222";
+	let draftLoads = 0;
+	const view = {
+		onOpenWorkspace() {},
+		onCreateWorkflow() {},
+		onSelectWorkflow(handler) { selectWorkflow = handler; },
+		onDraftDirty() {},
+		onEditDraft(handler) { editDraft = handler; },
+		render() {},
+		renderWorkflows() {},
+		renderDraft() {},
+		renderDraftLoading() { loadingStates.push(true); },
+	};
+	const client = createBrowserWorkflowClient({
+		async openWorkspace() { return expectedView; },
+		async createWorkflow() { return expectedWorkflow; },
+		async listWorkflows() { return [expectedWorkflow]; },
+		async getDraft(workflowId) {
+			draftLoads += 1;
+			if (draftLoads === 2) await new Promise((resolve) => { releaseSecondDraft = resolve; });
+			return { ...expectedDraft, workflowId };
+		},
+		async updateDraft(input) {
+			updates.push(structuredClone(input));
+			throw new Error("must not autosave while selection is loading");
+		},
+	});
+
+	createProductShell(view, client);
+	await selectWorkflow(expectedWorkflow.id);
+	const loading = selectWorkflow(secondWorkflowId);
+	await Promise.resolve();
+	await editDraft({ workflowId: expectedWorkflow.id, revision: 1, content: { nodes: [{ id: "stale" }] } });
+	assert.equal(updates.length, 0);
+	assert.equal(loadingStates.length, 2);
+	releaseSecondDraft();
+	await loading;
+});
+
 test("desktop and browser entries share one DOM view adapter", () => {
   const title = { textContent: "" };
   const message = { textContent: "" };
@@ -172,18 +407,167 @@ test("desktop and browser entries share one DOM view adapter", () => {
 	const form = { addEventListener() {}, reset() {} };
 	const nameInput = { value: "Release checklist" };
 	const workflowList = { replaceChildren() {} };
+	const draftEditor = { disabled: true, value: "", addEventListener() {} };
+	const draftStatus = { textContent: "" };
+	const diagnosticList = { replaceChildren() {} };
 	const view = createProductDOMView(
-		{ title, message, status, button, form, nameInput, workflowList },
+		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList },
 		productStatusMessage,
 	);
 
-  view.render({ status: "ready", title: "Gum Workflows", message: "ready" });
+	view.render({ status: "ready", title: "Gum Workflows", message: "ready" });
+	view.renderDraft({ draft: expectedDraft });
 
   assert.equal(title.textContent, "Gum Workflows");
   assert.equal(message.textContent, "ready");
   assert.equal(status.textContent, "Application round-trip complete");
   assert.equal(status.dataset.state, "ready");
-  assert.equal(button.disabled, false);
+	assert.equal(button.disabled, false);
+	assert.equal(draftStatus.textContent, "Draft loaded.");
+	assert.equal(draftStatus.textContent.includes("token"), false);
+});
+
+test("the DOM editor debounces input and submits the latest captured content", async () => {
+	let inputDraft;
+	const dirtied = [];
+	const submitted = [];
+	const title = { textContent: "" };
+	const message = { textContent: "" };
+	const status = { textContent: "", dataset: {} };
+	const button = { disabled: false, addEventListener() {} };
+	const form = { addEventListener() {}, reset() {} };
+	const nameInput = { value: "" };
+	const workflowList = { replaceChildren() {} };
+	const draftEditor = {
+		disabled: false,
+		value: "",
+		addEventListener(event, handler) {
+			if (event === "input") inputDraft = handler;
+		},
+	};
+	const draftStatus = { textContent: "" };
+	const diagnosticList = { replaceChildren() {} };
+	const view = createProductDOMView(
+		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList },
+		productStatusMessage,
+	);
+	view.renderDraft({ draft: expectedDraft });
+	view.onDraftDirty((edit) => { dirtied.push(structuredClone(edit)); });
+	view.onEditDraft(async (edit) => { submitted.push(structuredClone(edit)); });
+
+	draftEditor.value = '{"nodes":[{"id":"first"}]}';
+	inputDraft();
+	draftEditor.value = '{"nodes":[{"id":"latest"}]}';
+	inputDraft();
+	assert.deepEqual(dirtied, [
+		{ workflowId: expectedWorkflow.id, revision: 1 },
+		{ workflowId: expectedWorkflow.id, revision: 2 },
+	]);
+	await new Promise((resolve) => setTimeout(resolve, 300));
+
+	assert.deepEqual(submitted, [{ workflowId: expectedWorkflow.id, revision: 2, content: { nodes: [{ id: "latest" }] } }]);
+});
+
+test("selecting another workflow cancels the previous workflow's pending debounce", async () => {
+	let inputDraft;
+	const submitted = [];
+	const draftEditor = {
+		disabled: false,
+		value: "",
+		addEventListener(event, handler) { if (event === "input") inputDraft = handler; },
+	};
+	const view = createProductDOMView({
+		title: { textContent: "" }, message: { textContent: "" }, status: { textContent: "", dataset: {} },
+		button: { disabled: false, addEventListener() {} }, form: { addEventListener() {}, reset() {} },
+		nameInput: { value: "" }, workflowList: { replaceChildren() {} }, draftEditor,
+		draftStatus: { textContent: "" }, diagnosticList: { replaceChildren() {} },
+	}, productStatusMessage);
+	view.onDraftDirty(() => {});
+	view.onEditDraft(async (edit) => { submitted.push(structuredClone(edit)); });
+	view.renderDraft({ draft: expectedDraft });
+	draftEditor.value = '{"nodes":[{"id":"workflow-a"}]}';
+	inputDraft();
+	view.renderDraft({
+		draft: { ...expectedDraft, workflowId: "workflow-b" },
+	});
+	await new Promise((resolve) => setTimeout(resolve, 300));
+
+	assert.deepEqual(submitted, []);
+});
+
+test("the DOM and shell preserve newer text while an earlier autosave is in flight", async () => {
+	let openWorkspace;
+	let inputDraft;
+	let releaseFirstSave;
+	const updates = [];
+	const document = {
+		createElement(tag) {
+			return {
+				tag,
+				listeners: {},
+				addEventListener(event, handler) { this.listeners[event] = handler; },
+				append(...children) { this.children = children; },
+			};
+		},
+	};
+	const workflowList = {
+		ownerDocument: document,
+		replaceChildren(...items) { this.items = items; },
+	};
+	const draftEditor = {
+		disabled: true,
+		value: "",
+		addEventListener(event, handler) { if (event === "input") inputDraft = handler; },
+	};
+	const elements = {
+		title: { textContent: "" },
+		message: { textContent: "" },
+		status: { textContent: "", dataset: {} },
+		button: { disabled: false, addEventListener(event, handler) { if (event === "click") openWorkspace = handler; } },
+		form: { addEventListener() {}, reset() {} },
+		nameInput: { value: "" },
+		workflowList,
+		draftEditor,
+		draftStatus: { textContent: "" },
+		diagnosticList: { ownerDocument: document, replaceChildren() {} },
+	};
+	const client = createBrowserWorkflowClient({
+		async openWorkspace() { return expectedView; },
+		async createWorkflow() { return expectedWorkflow; },
+		async listWorkflows() { return [expectedWorkflow]; },
+		async getDraft() { return expectedDraft; },
+		async updateDraft(input) {
+			updates.push(structuredClone(input));
+			if (updates.length === 1) await new Promise((resolve) => { releaseFirstSave = resolve; });
+			return {
+				draft: { ...expectedDraft, content: input.content, lockVersion: input.expectedLockVersion + 1 },
+				preview: { nodes: [], edges: [], groups: [], diagnostics: [] },
+				saved: true,
+				conflict: false,
+				refreshRequired: false,
+			};
+		},
+	});
+	createProductShell(createProductDOMView(elements, productStatusMessage), client);
+	await openWorkspace();
+	await workflowList.items[0].children[0].listeners.click();
+
+	const firstText = '{"semanticSchemaVersion":"productWorkflow/v1","nodes":[{"id":"first"}]}';
+	const latestText = '{"semanticSchemaVersion":"productWorkflow/v1","nodes":[{"id":"latest"}]}';
+	draftEditor.value = firstText;
+	inputDraft();
+	await new Promise((resolve) => setTimeout(resolve, 300));
+	draftEditor.value = latestText;
+	inputDraft();
+	releaseFirstSave();
+	await Promise.resolve();
+	await Promise.resolve();
+	assert.equal(draftEditor.value, latestText);
+	await new Promise((resolve) => setTimeout(resolve, 300));
+	await Promise.resolve();
+
+	assert.deepEqual(updates.map((update) => update.expectedLockVersion), [1, 2]);
+	assert.equal(updates.at(-1).content.nodes[0].id, "latest");
 });
 
 test("the shell gives both clients the same user-facing status text", () => {

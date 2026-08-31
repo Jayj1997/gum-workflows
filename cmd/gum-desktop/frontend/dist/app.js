@@ -11,10 +11,13 @@ const button = document.querySelector("#open-workspace");
 const form = document.querySelector("#create-workflow");
 const nameInput = document.querySelector("#workflow-name");
 const workflowList = document.querySelector("#workflow-list");
+const draftEditor = document.querySelector("#draft-content");
+const draftStatus = document.querySelector("#draft-status");
+const diagnosticList = document.querySelector("#draft-diagnostics");
 
 createProductShell(
   createProductDOMView(
-    { title, message, status, button, form, nameInput, workflowList },
+		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList },
     productStatusMessage,
   ),
   client,

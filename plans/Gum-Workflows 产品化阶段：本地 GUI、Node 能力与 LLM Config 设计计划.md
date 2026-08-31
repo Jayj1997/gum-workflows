@@ -4,7 +4,7 @@
 >
 > 前置条件：`.scratch/platform-core/spec.md` 与 `.scratch/platform-core/issues/` 中 01–14 全部完成并验收。
 >
-> 当前进度：platform-core 与 code-quality-automation 已完成；Local Data Root、In-place Project Workspace、Workflow Context Binding、ScriptNode 和首批四个 Go Code Quality Check 已落地。当前产品化设计的第一要务是跑通完全基于 SQLite 的 Workflow 创建、配置、运行和基本结果查看；GUI、Draft/Revision、真实 LLM 与这一闭环直接需要的能力仍待实现，高级 Artifact 体验与运行恢复后置。
+> 当前进度：platform-core 与 code-quality-automation 已完成；14 后 Product Workflow 已完成 macOS/Browser 产品壳、SQLite identity 创建/列表和唯一 Draft autosave + lock-version CAS。Node 创作、完整 Preview、Revision/Run 与真实 LLM 仍待实现；下一张顺序票为 `.scratch/product-workflow/issues/04-node-catalog-config-schema-form.md`，高级 Artifact 体验与运行恢复继续后置。
 >
 > 实施切片：最终多轮领域模型是 `human-chat -> llm-chat -> human-chat`；首个可执行切片先完成单轮 `human-chat(source) -> llm-chat`，下一切片再加入 Human Chat Entry 语义升级与 Conversation 回边。
 >

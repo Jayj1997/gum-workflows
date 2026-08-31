@@ -8,13 +8,13 @@ Workflow 通过 Node 的 Input / Output Contract 组合工作过程，Node 之�
 
 项目遵循“现实工作流优先”：Agent 直接修改用户项目，Automation 在同一份工作状态上执行检查；Gum 负责组合、调度、结果留存和诊断，不默认复制项目、创建内部代码 Revision 或接管代码恢复。
 
-当前 YAML、CLI 与 Mock Agent 主要服务 Runtime 开发、验证和演示。macOS 产品壳已经可以通过通用 Application seam 在 SQLite 中创建并列出 Product Workflow；Node 创作、Draft、运行和真实 LLM 闭环仍按后续票逐步交付。
+当前 YAML、CLI 与 Mock Agent 主要服务 Runtime 开发、验证和演示。macOS 产品壳已经可以通过通用 Application seam 在 SQLite 中创建并列出 Product Workflow，并自动保存唯一可变 Draft；Node 创作、运行和真实 LLM 闭环仍按后续票逐步交付。
 
 ## 项目规划
 
 基础 Runtime、平台核心和首个 14 后产品模块已经完成。后续产品化按 [`Gum-Workflows 产品化阶段设计计划`](<plans/Gum-Workflows 产品化阶段：本地 GUI、Node 能力与 LLM Config 设计计划.md>) 推进，主要方向包括：
 
-- 在已完成的 SQLite Product Workflow identity 上建立 Draft、immutable Revision 与 Run Snapshot；
+- 在已完成的 SQLite Product Workflow identity 与 Draft autosave 上建立 immutable Revision 与 Run Snapshot；
 - 升级独立 LLM Config，并实现真实的双协议 LLM Client 与 `llm-chat` Agent Node；
 - 扩展当前 macOS 产品壳的 Node Config、Workflow Preview 与自动布局，并在后续支持 Windows；
 - 完善 Artifact 预览、来源追踪、多版本比较和人工替换；
@@ -27,6 +27,21 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 
 ## 项目当前进展
 
+### Product Workflow Draft autosave — 已完成
+
+该切片让 Product Workflow 获得唯一可变 Draft，并把真实 Desktop 与 Browser Mock 的通用编辑路径推进到可靠 autosave：等价内容不会制造写入，旧页面也不能覆盖新内容。
+
+主要交付：
+
+- 每个 Product Workflow 在 SQLite 中恰有一行 Draft；新建与升级都保证 Draft 存在，不创建编辑历史副本；
+- 语义 JSON 规范化后再比较，no-op 保留时间与 token，变化以 expected `lock_version` 做 CAS 并更新同一行；
+- CAS 冲突返回数据库最新 Draft 和刷新提示，不覆盖较新内容；
+- 非法中间态仍可保存，并返回 renderer-independent Preview 集合与聚合 Diagnostics；当前只覆盖基础 schema/nodes，具体 Node、端口与 config 由后续票实现；
+- Desktop Adapter 与 Browser Mock 共享 `getDraft` / `updateDraft` WorkflowClient，UI 串行执行去抖 autosave，并展示保存状态、冲突和 Diagnostics；内部 token 不进入产品语言。
+- Darwin 上的完整 build、test、vet、race 与前端合同测试均通过；Browser Mock 实际交互验证了创建、选择、非法 Draft autosave 与聚合 Diagnostics。
+
+详细范围见 [product-workflow spec](.scratch/product-workflow/spec.md) 和 [issue 03](.scratch/product-workflow/issues/03-draft-autosave-lock-version.md)。
+
 ### Product Workflow SQLite 创建与列表 — 已完成
 
 该切片把首个 macOS 产品壳从 deterministic tracer 推进到真实本地持久化：用户可以在 UI 创建带稳定 UUID 和显示名称的 Product Workflow，并在应用重启后看到相同列表。
@@ -38,7 +53,7 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 - Browser Mock 与 Desktop Adapter 共享同一 WorkflowClient 创建/列表合同，UI 不直接访问 SQLite；
 - schema migration 可重复打开，并验证升级后旧定义与 Run history 保持可读。
 
-当前只完成 Workflow identity、创建和列表；Draft autosave、Node Catalog、Preview、Revision、Run 与真实 LLM 属后续票。详细范围见 [product-workflow spec](.scratch/product-workflow/spec.md) 和 [issue 02](.scratch/product-workflow/issues/02-sqlite-workflow-list-create.md)。
+该切片只完成 Workflow identity、创建和列表；Draft autosave 已由下一模块交付，Node Catalog、完整 Preview、Revision、Run 与真实 LLM 仍属后续票。详细范围见 [product-workflow spec](.scratch/product-workflow/spec.md) 和 [issue 02](.scratch/product-workflow/issues/02-sqlite-workflow-list-create.md)。
 
 ### code-quality-automation — 已完成
 
@@ -81,7 +96,7 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 - 四个内置 Code Quality Check 当前只支持 Darwin / Linux，Windows 原生、PowerShell 与 WSL 后端尚未实现；
 - Host Execution Environment 继承用户的 PATH、Go 配置、缓存、工具链与网络策略，适合受信任项目，但不是安全沙箱，也不提供容器、CPU / 内存隔离或自动 timeout；
 - Static 只代表 `go vet`，Coverage 只报告本次 full-scope 测试的 statement coverage，Race 只报告本次是否观察到 race；
-- macOS GUI 当前只支持 Product Workflow 创建与列表；Draft / Revision、Node 创作、产品化 LLM Config、真实 LLM Client、Artifact 产品体验和运行恢复仍属于后续规划。
+- macOS GUI 当前支持 Product Workflow 创建、列表与通用 Draft autosave；Revision、Node 创作、完整 Preview、产品化 LLM Config、真实 LLM Client、Artifact 产品体验和运行恢复仍属于后续规划。
 
 ## 使用与文档
 

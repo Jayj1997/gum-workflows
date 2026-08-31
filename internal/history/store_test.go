@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	productworkflow "github.com/Jayj1997/gum-workflows/internal/product/workflow"
 )
 
 // fixedTime 提供稳定时间戳，让测试不依赖墙钟。
@@ -217,6 +219,48 @@ VALUES (?, 'existing-yaml', 'v1', 'Stopped', 'workflow.yaml', '', 'user_interrup
 	created, err := store.CreateProductWorkflow(context.Background(), "New product workflow")
 	if err != nil || created.ID == "" {
 		t.Fatalf("create Product Workflow = %#v, error = %v", created, err)
+	}
+}
+
+func TestProductWorkflowDraftMigrationBackfillsExistingProductWorkflows(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "product.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, migration := range migrations[:ProductWorkflowSchemaVersion] {
+		if err := applyMigration(context.Background(), tx, migration); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workflowID := "11111111-1111-4111-8111-111111111111"
+	if _, err := tx.Exec(`
+INSERT INTO product_workflow (id, display_name, created_at)
+VALUES (?, 'Existing product workflow', '2026-08-31T09:00:00Z')`, workflowID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(context.Background(), dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	draft, err := store.GetProductWorkflowDraft(context.Background(), workflowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if draft.LockVersion != 1 || string(draft.Content) != string(productworkflow.InitialDraftContent()) {
+		t.Fatalf("backfilled Draft = %#v", draft)
 	}
 }
 
