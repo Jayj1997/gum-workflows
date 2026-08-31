@@ -29,7 +29,9 @@
 ```text
 gum-workflows/
 ├── cmd/workflow/                 # validate / run / history 与 stdin HumanGateway
+├── cmd/gum-desktop/              # macOS Wails Adapter 与共享 Browser Mock 前端
 ├── internal/
+│   ├── product/                  # Product Application 与 SQLite Workflow identity model
 │   ├── definition/               # Node Type / Definition / Executor、TypeExpr、Registry
 │   ├── llm/                      # 用户级 llm.yaml、严格加载与默认链解析
 │   ├── workflow/                 # workflow/v1、严格加载、Data/Control Graph
@@ -62,6 +64,9 @@ cmd/workflow
   ├─ runtimepath
   └─ node/builtins ──> definition / node / agent / artifact
 
+cmd/gum-desktop ──> product / history / runtimepath
+product ──> product/workflow <── history
+
 definition ──> artifact          node ──> definition / artifact / project
 workflow ──(引用校验经 validation)──> definition / llm
 agent ──> artifact / project
@@ -74,6 +79,7 @@ artifact、project、runtimepath ──> 标准库
 - Node 契约唯一来源是 `definition.NodeDefinition` YAML；Go `node.Node` 只实现 `Execute`。`ExecutorRegistry` 按 `(definition, version)` 显式注册并在 Run 启动时固定版本。
 - `execution` 是唯一驱动 Node Run 的包；它通过消费方接口 `HumanGateway` 与 `RunRecorder` 隔离终端和持久化适配器，不 import `cmd` 或 `history`。
 - `history` 实现 `execution.RunRecorder`，以 DTO 接收定义导入数据，不反向 import `definition`、`workflow` 或 `llm`。
+- `product` 是 Desktop / Browser Mock 共用的 Application seam；UI Adapter 只调用其用例。`history.Store` 实现注入的 Product Workflow Repository，并以独立表隔离 workflow/v1 identity。
 - `artifact` 与 `project` 是基础包，不 import 其他 `internal/` 包。Node 之间只传 `ArtifactRef`。
 - `runtimepath` 只解析用户级 Local Data Root 并计算数据库、Run、Node Run、Artifact、日志与 tool-output 路径，不创建文件；优先级为测试注入、`GUM_WORKFLOWS_DATA_ROOT`、产品设置、操作系统默认应用数据目录，具体命令是否允许写入由 `cmd/workflow` 决定。
 - Registry 禁止在 `init()` 隐式注册；内嵌定义与 Go Executor 必须由 CLI 组装层显式加载、校验并注册。

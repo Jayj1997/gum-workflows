@@ -24,6 +24,9 @@ const StableRunIdentitySchemaVersion = 3
 // NodeRunDiagnosticsSchemaVersion preserves immutable script and host execution facts.
 const NodeRunDiagnosticsSchemaVersion = 4
 
+// ProductWorkflowSchemaVersion adds SQLite-only Product Workflow identities.
+const ProductWorkflowSchemaVersion = 5
+
 // 新增迁移只允许 append（不改写历史迁移），保证已迁移的库向前兼容。
 var migrations = []migration{
 	{
@@ -130,6 +133,17 @@ var migrations = []migration{
 		version: NodeRunDiagnosticsSchemaVersion,
 		stmts: []string{
 			`ALTER TABLE workflow_node_run_history ADD COLUMN diagnostics_json TEXT NOT NULL DEFAULT '{}'`,
+		},
+	},
+	{
+		version: ProductWorkflowSchemaVersion,
+		stmts: []string{
+			`CREATE TABLE product_workflow (
+  id           TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL CHECK (length(trim(display_name)) > 0),
+  created_at   TEXT NOT NULL
+)`,
+			`CREATE INDEX idx_product_workflow_created_at ON product_workflow (created_at ASC, id ASC)`,
 		},
 	},
 }

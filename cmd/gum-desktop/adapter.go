@@ -28,3 +28,13 @@ func (a *DesktopAdapter) startup(ctx context.Context) {
 func (a *DesktopAdapter) OpenWorkspace() (product.WorkspaceView, error) {
 	return a.application.OpenWorkspace(a.ctx)
 }
+
+// CreateWorkflow forwards Product Workflow creation through WorkflowApplication.
+func (a *DesktopAdapter) CreateWorkflow(input product.CreateWorkflowInput) (product.WorkflowView, error) {
+	return a.application.CreateWorkflow(a.ctx, input)
+}
+
+// ListWorkflows forwards Product Workflow listing through WorkflowApplication.
+func (a *DesktopAdapter) ListWorkflows() ([]product.WorkflowView, error) {
+	return a.application.ListWorkflows(a.ctx)
+}

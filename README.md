@@ -8,15 +8,15 @@ Workflow 通过 Node 的 Input / Output Contract 组合工作过程，Node 之�
 
 项目遵循“现实工作流优先”：Agent 直接修改用户项目，Automation 在同一份工作状态上执行检查；Gum 负责组合、调度、结果留存和诊断，不默认复制项目、创建内部代码 Revision 或接管代码恢复。
 
-当前 YAML、CLI 与 Mock Agent 主要服务 Runtime 开发、验证和演示。产品目标是逐步形成以本地 GUI 为主要创作入口、以 Node 和 Artifact 为核心的本地工作流产品。
+当前 YAML、CLI 与 Mock Agent 主要服务 Runtime 开发、验证和演示。macOS 产品壳已经可以通过通用 Application seam 在 SQLite 中创建并列出 Product Workflow；Node 创作、Draft、运行和真实 LLM 闭环仍按后续票逐步交付。
 
 ## 项目规划
 
 基础 Runtime、平台核心和首个 14 后产品模块已经完成。后续产品化按 [`Gum-Workflows 产品化阶段设计计划`](<plans/Gum-Workflows 产品化阶段：本地 GUI、Node 能力与 LLM Config 设计计划.md>) 推进，主要方向包括：
 
-- 建立 SQLite 中的 Workflow、Draft、immutable Revision 与 Run Snapshot 产品模型；
+- 在已完成的 SQLite Product Workflow identity 上建立 Draft、immutable Revision 与 Run Snapshot；
 - 升级独立 LLM Config，并实现真实的双协议 LLM Client 与 `llm-chat` Agent Node；
-- 提供 Node Config、Workflow Preview、自动布局和 macOS / Windows 本地 GUI；
+- 扩展当前 macOS 产品壳的 Node Config、Workflow Preview 与自动布局，并在后续支持 Windows；
 - 完善 Artifact 预览、来源追踪、多版本比较和人工替换；
 - 设计结构化 Run Event，以及 Resume、Retry、Rerun、Fork 和崩溃恢复；
 - 在领域模型稳定后，再规划 Workflow 导入导出、Pack、AI 修改 Workflow 和云同步。
@@ -26,6 +26,19 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 任何新模块都需要先形成设计文档和开发票，再修改实现。模块完成后的 README 与进度文档同步方法见 [`README 更新规范`](<plans/README 更新规范：模块完成后的进度同步.md>)。
 
 ## 项目当前进展
+
+### Product Workflow SQLite 创建与列表 — 已完成
+
+该切片把首个 macOS 产品壳从 deterministic tracer 推进到真实本地持久化：用户可以在 UI 创建带稳定 UUID 和显示名称的 Product Workflow，并在应用重启后看到相同列表。
+
+主要交付：
+
+- Product Workflow 使用 Local Data Root 的 `product.db`，按创建时间与 UUID 稳定展示；
+- 独立 `product_workflow` schema 与 workflow/v1 定义、YAML CLI history 安全共存，不导入或复用 YAML Workflow identity；
+- Browser Mock 与 Desktop Adapter 共享同一 WorkflowClient 创建/列表合同，UI 不直接访问 SQLite；
+- schema migration 可重复打开，并验证升级后旧定义与 Run history 保持可读。
+
+当前只完成 Workflow identity、创建和列表；Draft autosave、Node Catalog、Preview、Revision、Run 与真实 LLM 属后续票。详细范围见 [product-workflow spec](.scratch/product-workflow/spec.md) 和 [issue 02](.scratch/product-workflow/issues/02-sqlite-workflow-list-create.md)。
 
 ### code-quality-automation — 已完成
 
@@ -68,7 +81,7 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 - 四个内置 Code Quality Check 当前只支持 Darwin / Linux，Windows 原生、PowerShell 与 WSL 后端尚未实现；
 - Host Execution Environment 继承用户的 PATH、Go 配置、缓存、工具链与网络策略，适合受信任项目，但不是安全沙箱，也不提供容器、CPU / 内存隔离或自动 timeout；
 - Static 只代表 `go vet`，Coverage 只报告本次 full-scope 测试的 statement coverage，Race 只报告本次是否观察到 race；
-- 本地 GUI、Draft / Revision、产品化 LLM Config 与真实 LLM Client、Artifact 产品体验和运行恢复仍属于后续规划。
+- macOS GUI 当前只支持 Product Workflow 创建与列表；Draft / Revision、Node 创作、产品化 LLM Config、真实 LLM Client、Artifact 产品体验和运行恢复仍属于后续规划。
 
 ## 使用与文档
 

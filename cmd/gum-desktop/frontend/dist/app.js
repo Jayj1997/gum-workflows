@@ -8,10 +8,13 @@ const title = document.querySelector("#title");
 const message = document.querySelector("#message");
 const status = document.querySelector("#status");
 const button = document.querySelector("#open-workspace");
+const form = document.querySelector("#create-workflow");
+const nameInput = document.querySelector("#workflow-name");
+const workflowList = document.querySelector("#workflow-list");
 
 createProductShell(
   createProductDOMView(
-    { title, message, status, button },
+    { title, message, status, button, form, nameInput, workflowList },
     productStatusMessage,
   ),
   client,

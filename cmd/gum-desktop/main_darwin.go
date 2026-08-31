@@ -3,16 +3,33 @@
 package main
 
 import (
+	"context"
 	"log"
 
+	"github.com/Jayj1997/gum-workflows/internal/history"
 	"github.com/Jayj1997/gum-workflows/internal/product"
+	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 )
 
 func main() {
-	adapter := newDesktopAdapter(product.NewFakeApplication())
+	paths, err := runtimepath.Resolve("")
+	if err != nil {
+		log.Fatal(err)
+	}
+	store, err := history.Open(context.Background(), paths.Database())
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			log.Printf("close product database: %v", err)
+		}
+	}()
+
+	adapter := newDesktopAdapter(product.NewApplication(store))
 	if err := wails.Run(&options.App{
 		Title:     "Gum Workflows",
 		Width:     1080,

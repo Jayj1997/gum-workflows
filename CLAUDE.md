@@ -12,6 +12,8 @@
 
 **code-quality-automation 已完成**：Local Data Root、显式 legacy 迁移、In-place Project Workspace、`project.code` Workflow Context Binding、ScriptNode，以及真实 `go-static-analysis` / `go-coverage-check` / `go-race-check` / `go-complexity-check` 已落地。四者使用不可变 POSIX Script Bundle 在 Darwin/Linux 的用户 PATH 上原地运行并产出严格 Result；详细合同见 `.scratch/code-quality-automation/spec.md`。
 
+**14 后 Product Workflow 01–02 已完成**：Wails macOS 产品壳、Browser Mock 与 Desktop Adapter 共享 WorkflowClient / Product Application seam；用户可以在 UI 向 Local Data Root 的 `product.db` 创建并稳定列出带 UUID 的 Product Workflow。独立 `product_workflow` schema 不读取或复用 workflow/v1 YAML identity。Draft、Node 创作、Preview、Revision、Run 与真实 LLM 仍未实施；后续范围见 `.scratch/product-workflow/spec.md` 与 issues。
+
 后续版本方向（需先升级设计文档）：真实 Coding Agent Adapter（替换 MockCodingAgent）、真实 OpenAPI Generator、Skipped 传播、重试/超时等 workflow/v2 字段。
 
 ## 硬性设计约束（任何代码变更不得违反）
@@ -25,7 +27,7 @@
 5. **CLI 不接受业务参数**：只有 `workflow run <workflow-file>`、`workflow validate <workflow-file>` 与 `workflow history [<run-id> [<node-id>]]`，不提供业务 flags。所有运行配置来自 YAML 与用户级 `llm.yaml`。
 6. **Workflow 不管理 Skills**：Coding Agent 自行进入 Project Workspace 并发现 `.agents/skills/`、`.claude/skills/` 等项目约定。
 7. **两层 Validation**：CUE Schema（结构）→ Go Semantic Validator（语义：Node Definition / Executor / LLM / Project 存在，端口与 Artifact 类型匹配，唯一 human 入口，环提示）。错误信息必须指明具体 Node 与字段。
-8. **平台核心批准范围与排除项**：有环迭代、human 在环和本地 SQLite 统一库已经由平台核心设计批准并实现。仍不做 UI、Temporal、Redis/Kafka/服务端数据库、分布式调度、多租户、Skill/Agent Marketplace、resume、复杂 Retry/Condition/Secret Management，以及 workflow/v1 之外的 `retry/timeout/parallelism/environment/hooks` 等字段；加入前必须先升级设计文档。
+8. **平台核心批准范围与排除项**：有环迭代、human 在环和本地 SQLite 统一库已经由平台核心设计批准并实现。workflow/v1 仍不接入 Product UI，也不增加 Temporal、Redis/Kafka/服务端数据库、分布式调度、多租户、Skill/Agent Marketplace、resume、复杂 Retry/Condition/Secret Management 或 `retry/timeout/parallelism/environment/hooks` 等字段。14 后 Product Workflow 只按 `.scratch/product-workflow/` 的独立设计与票据推进，不得倒灌 workflow/v1。
 
 ## 常用命令
 

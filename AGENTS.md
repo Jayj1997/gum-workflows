@@ -15,13 +15,15 @@
 
 **code-quality-automation 已完成**：Local Data Root、显式 legacy 迁移、In-place Project Workspace、`project.code` Workflow Context Binding、ScriptNode，以及真实 `go-static-analysis` / `go-coverage-check` / `go-race-check` / `go-complexity-check` 已落地。四者使用不可变 `automationScript/v1` POSIX Bundle，在 Darwin/Linux 上从用户 PATH 原地运行并产出严格的 `qualityCheckResult/v1`；详细合同见 `.scratch/code-quality-automation/spec.md`，当前实现见 `docs/domain-model.md`。
 
+**14 后 Product Workflow 01–02 已完成**：Wails macOS 产品壳、Browser Mock 与 Desktop Adapter 共享 WorkflowClient / Product Application seam；用户可以在 UI 向 Local Data Root 的 `product.db` 创建并稳定列出带 UUID 的 Product Workflow。它使用独立 `product_workflow` schema，不读取或复用 workflow/v1 YAML identity。Draft、Node 创作、Preview、Revision、Run 与真实 LLM 仍未实施，后续从 `.scratch/product-workflow/issues/03-draft-autosave-lock-version.md` 继续。
+
 后续版本方向（需先升级设计文档）：真实 Coding Agent Adapter（替换 MockCodingAgent）、真实 OpenAPI Generator、Skipped 传播、重试/超时等 workflow/v2 字段。
 
-## 01–14 之后的产品规划（已确认，尚未实施）
+## 01–14 之后的产品规划（已确认，部分实施）
 
 `.scratch/platform-core/spec.md` 与 `.scratch/platform-core/issues/` 中编号 01–14 的票是已完成的平台核心历史记录；以下内容只属于 14 完成后的新设计，不得倒灌或改变 01–14 的范围。
 
-- **本地 GUI 是主要创作入口**：Workflow 的新建、节点声明、连接与配置、优化均通过 UI 完成。画布是只读的结构预览：节点按 Data/Control Edge 自动排列，可选择节点打开配置；不以拖拽节点、手工拉线或画布坐标表达执行语义。首个闭环平台为 macOS；Windows 是明确待办和长期目标，不属于 P9–P12 验收。
+- **本地 GUI 是主要创作入口**：macOS 产品壳已实现 SQLite Product Workflow 的新建与列表。后续节点声明、连接与配置、优化均通过 UI 完成。画布是只读的结构预览：节点按 Data/Control Edge 自动排列，可选择节点打开配置；不以拖拽节点、手工拉线或画布坐标表达执行语义。首个闭环平台为 macOS；Windows 是明确待办和长期目标，不属于 P9–P12 验收。
 - **本地事实来源**：14 之后的产品 Workflow 只以 SQLite 中的 Workflow / Draft / immutable Revision 为编辑与运行事实来源；Draft 自动保存，不引入独立 Publish 动作，用户点击 Run 时按规范化语义内容创建或复用 immutable Revision，并固定 Executor、模型与配置快照。现有 YAML CLI 只属于已完成的平台核心历史入口，不作为产品 Workflow 的兼容入口，也不得在运行时隐式创建或复用产品 Workflow / Revision。YAML 只保留为未来可能的导出格式；产品 v1 形态未确定前不设计导入、导出或二者之间的转换。
 - **Artifact 体验分阶段**：跑通 SQLite Workflow 的创建、配置、运行和基本结果查看是当前第一要务。多类型高级预览、版本比较、人工替换、历史复用以及外部可变资源的重建保证均后置，不能成为首个产品闭环的前置条件。
 - **先打磨 Node 能力**：暂不规划内置 Workflow 库。14 后优先实现一个简单但真实的 AI 对话 Agent Node，用它验证真实 LLM 调用、对话历史、输出 Artifact、配置描述、错误、观测和 UI 展示。目标多轮模型使用 `human-chat -> llm-chat -> human-chat`：Human Chat Entry Node 是唯一可在没有必需输入时自举的人工门，每次人工提交追加 user message；`llm-chat` 接收并追加 assistant message 后把 Conversation 反馈给人工门，反馈只使其等待下一次人工事件，不会自动产出新一轮。P9 先用 fake executor 跑通 Product Tracer；P10 才是 `human-chat(source) -> llm-chat` 的首个真实 OpenAI text 闭环；P12 再升级入口验证、Human Executor input、WaitingHuman 与显式 Conversation 回边，不引入 triggering/context 两类 Input。

@@ -58,6 +58,7 @@ func TestOpenCreatesAndMigrates(t *testing.T) {
 	for _, table := range []string{
 		"node_type_definition", "node_definition", "node_executor",
 		"workflow", "node_instance", "workflow_run_history", "workflow_node_run_history",
+		"product_workflow",
 	} {
 		var name string
 		err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name)
@@ -162,6 +163,60 @@ VALUES (?, 'legacy-local-data', 'v1', 'Stopped', 'workflow.yaml', 'execution-000
 	}
 	if run == nil || run.ID != runID || run.Workflow != "legacy-local-data" {
 		t.Fatalf("upgraded Run = %+v", run)
+	}
+}
+
+func TestProductWorkflowMigrationPreservesExistingDefinitionsAndRunHistory(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "product.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, migration := range migrations[:NodeRunDiagnosticsSchemaVersion] {
+		if err := applyMigration(context.Background(), tx, migration); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workflowID := "11111111-1111-4111-8111-111111111111"
+	runID := "22222222-2222-4222-8222-222222222222"
+	if _, err := tx.Exec(`
+INSERT INTO workflow (id, name, version, description, projects_json, created_at)
+VALUES (?, 'existing-yaml', 'v1', '', '[]', '2026-08-30T12:00:00Z')`, workflowID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`
+INSERT INTO workflow_run_history
+  (id, workflow_name, workflow_version, status, workflow_file, error, stopped_reason, started_at)
+VALUES (?, 'existing-yaml', 'v1', 'Stopped', 'workflow.yaml', '', 'user_interrupt', '2026-08-30T12:00:00Z')`, runID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(context.Background(), dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	gotWorkflowID, err := store.selectID(context.Background(), "workflow", "name", "existing-yaml")
+	if err != nil || gotWorkflowID != workflowID {
+		t.Fatalf("existing workflow ID = %q, error = %v", gotWorkflowID, err)
+	}
+	run, err := store.GetRun(context.Background(), runID)
+	if err != nil || run == nil || run.Workflow != "existing-yaml" {
+		t.Fatalf("existing run = %#v, error = %v", run, err)
+	}
+	created, err := store.CreateProductWorkflow(context.Background(), "New product workflow")
+	if err != nil || created.ID == "" {
+		t.Fatalf("create Product Workflow = %#v, error = %v", created, err)
 	}
 }
 

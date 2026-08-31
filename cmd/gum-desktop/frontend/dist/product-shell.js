@@ -22,6 +22,10 @@ export function productStatusMessage(state) {
 }
 
 export function createProductShell(view, client) {
+  async function refreshWorkflows() {
+    view.renderWorkflows(await client.listWorkflows());
+  }
+
   view.render(initialState);
   view.onOpenWorkspace(async () => {
     view.render({
@@ -31,7 +35,30 @@ export function createProductShell(view, client) {
     });
     try {
       const workspace = await client.openWorkspace();
+      await refreshWorkflows();
       view.render({ status: "ready", ...workspace });
+    } catch (error) {
+      view.render({
+        status: "error",
+        title: "Gum Workflows",
+        message: errorMessage(error),
+      });
+    }
+  });
+  view.onCreateWorkflow(async (displayName) => {
+    view.render({
+      status: "loading",
+      title: "Gum Workflows",
+      message: "Creating Product Workflow…",
+    });
+    try {
+      await client.createWorkflow({ displayName });
+      await refreshWorkflows();
+      view.render({
+        status: "ready",
+        title: "Gum Workflows",
+        message: `Created “${displayName}” in the local product database.`,
+      });
     } catch (error) {
       view.render({
         status: "error",

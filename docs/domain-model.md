@@ -1,6 +1,12 @@
 # Gum-Workflows Domain Model
 
-本文档描述已完成的 platform-core 01–14 与 code-quality-automation，包括 Local Data Root、In-place Project Workspace、Workflow Context Binding 和首批 Go Code Quality Check。术语以根目录 `CONTEXT.md` 为权威；GUI、Workflow Revision、真实 LLM Client、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
+本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 的 SQLite identity 与创建/列表切片。术语以根目录 `CONTEXT.md` 为权威；当前 GUI 只支持 Product Workflow 创建与列表，Workflow Draft、Revision、真实 LLM Client、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
+
+## 0. Product Workflow identity
+
+macOS Desktop 与 Browser Mock 通过同一 `WorkflowClient` 调用 `product.WorkflowApplication`；UI Adapter 不访问 SQLite。真实 Desktop 在用户级 Local Data Root 打开 `product.db`，创建的 Product Workflow 保存于独立 `product_workflow` 表，字段为稳定 UUID、显示名称和创建时间，并按 `(created_at ASC, id ASC)` 稳定列出。
+
+Product Workflow 与 workflow/v1 的 `workflow` / `node_instance` 定义表共享同一数据库但不共享身份：YAML CLI 的导入、运行或 history 查询不会创建、读取或修改 Product Workflow。当前只实现 identity、创建和列表；每个 Workflow 的唯一 Draft 由后续票实现。
 
 ## 1. 定义、实例与运行
 
@@ -165,7 +171,7 @@ Workflow 没有自动 Succeeded 终态。全图静止时仍保持 Running，等�
 
 CLI 可用 `GUM_WORKFLOWS_DATA_ROOT` 覆盖位置；未覆盖时使用操作系统的用户级应用数据目录。路径解析本身不创建目录；ScriptNode 执行时才创建该 Node Run 私有的 bundle、logs 与临时 tool-output，Adapter 消费正式产物后清理 tool-output。Project Definition 中的 repository 相对 Workflow 文件解析为规范化绝对路径，该目录直接作为 Agent 与 Automation 共享的 In-place Project Workspace；Runtime 不把项目复制到 Local Data Root，也不在项目内写 Gum 日志或结果。
 
-SQLite 使用 WAL、busy_timeout、foreign keys 与 `PRAGMA user_version` 顺序迁移。定义侧保存 Node Type、Node Definition、Node Executor、Workflow 与 Node Instance；运行侧保存 Workflow Run 与逐 Node Run 历史，一行对应一个 round，inputs/outputs 只序列化 `ArtifactRef`，diagnostics 保存非敏感执行事实。Quality Check Result 本体仍由 Artifact Store 保存，历史通过输出 Ref 定位。
+SQLite 使用 WAL、busy_timeout、foreign keys 与 `PRAGMA user_version` 顺序迁移。Product 侧当前保存独立的 Product Workflow identity；workflow/v1 定义侧保存 Node Type、Node Definition、Node Executor、Workflow 与 Node Instance；运行侧保存 Workflow Run 与逐 Node Run 历史，一行对应一个 round，inputs/outputs 只序列化 `ArtifactRef`，diagnostics 保存非敏感执行事实。Quality Check Result 本体仍由 Artifact Store 保存，历史通过输出 Ref 定位。
 
 `history.Store` 实现 `execution.RunRecorder`。Engine 在与 state.json 相同的状态点提交完整快照；Record 使用 upsert 保持重放幂等。`validate` 只在数据库已经存在时 read-only 检查 Executor 解析，不建库、不迁移；`history` 同样 read-only 打开且无库时返回空态。新 Run 不在用户项目内创建或更新 `.workflow`，新旧位置不双写。开发期旧项目数据可通过显式调用 `history.MigrateLegacy` 一次性迁入 Local Data Root；普通 `run`、`validate` 与 `history` 不会自动扫描 legacy 目录。
 

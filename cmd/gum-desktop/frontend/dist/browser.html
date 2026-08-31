@@ -18,6 +18,14 @@
         <p id="message" class="message"></p>
         <button id="open-workspace" type="button">Open workspace</button>
         <p id="status" class="status" aria-live="polite"></p>
+        <form id="create-workflow" class="workflow-form">
+          <label for="workflow-name">Workflow display name</label>
+          <div><input id="workflow-name" name="displayName" required /><button type="submit">Create</button></div>
+        </form>
+        <section class="workflow-library" aria-labelledby="workflow-library-title">
+          <h2 id="workflow-library-title">Product Workflows</h2>
+          <ol id="workflow-list"></ol>
+        </section>
       </section>
       <aside class="boundary" aria-label="Product boundary">
         <p>UI</p><span>WorkflowClient</span><p>Fake Application</p>
