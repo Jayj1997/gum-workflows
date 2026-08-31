@@ -31,7 +31,7 @@ gum-workflows/
 ├── cmd/workflow/                 # validate / run / history 与 stdin HumanGateway
 ├── cmd/gum-desktop/              # macOS Wails Adapter 与共享 Browser Mock 前端
 ├── internal/
-│   ├── product/                  # Product Application 与 SQLite Workflow identity model
+│   ├── product/                  # Product Application、Node Catalog/Config Schema 与 SQLite Workflow identity
 │   ├── definition/               # Node Type / Definition / Executor、TypeExpr、Registry
 │   ├── llm/                      # 用户级 llm.yaml、严格加载与默认链解析
 │   ├── workflow/                 # workflow/v1、严格加载、Data/Control Graph

@@ -1,9 +1,11 @@
 import { createBrowserWorkflowClient } from "./workflow-client.js";
 import { createProductDOMView } from "./product-dom-view.js";
 import { createProductShell, productStatusMessage } from "./product-shell.js";
+import { createBuiltinNodeRegistry, validateConfig } from "./node-registry.js";
 
 const workflows = [];
 const drafts = new Map();
+const nodeRegistry = createBuiltinNodeRegistry();
 
 function normalize(value) {
 	if (Array.isArray(value)) return value.map(normalize);
@@ -24,6 +26,19 @@ function diagnosticsFor(content) {
 	}
 	if (!Array.isArray(content.nodes) || content.nodes.length === 0) {
 		diagnostics.push({ code: "workflow-needs-node", severity: "error", path: "nodes", message: "workflow must contain at least one node" });
+	}
+	for (const [index, node] of (content.nodes ?? []).entries()) {
+		const definition = nodeRegistry.definition(node.definition);
+		if (!definition) {
+			diagnostics.push({ code: "unknown-node-definition", severity: "error", path: `nodes[${index}].definition`, message: `node definition ${node.definition} is not in the Catalog` });
+			continue;
+		}
+		for (const configIssue of validateConfig(definition.config, node.config ?? {})) {
+			diagnostics.push({
+				code: `invalid-node-config-${configIssue.code}`, severity: "error",
+				path: `nodes[${index}].config.${configIssue.field}`, message: configIssue.message,
+			});
+		}
 	}
 	return diagnostics;
 }
@@ -52,8 +67,11 @@ const client = createBrowserWorkflowClient({
   async listWorkflows() {
     return structuredClone(workflows);
   },
+	async listNodeCatalog() { return nodeRegistry.catalog(); },
 	async getDraft(workflowId) {
-		return structuredClone(drafts.get(workflowId));
+		const draft = structuredClone(drafts.get(workflowId));
+		draft.preview = { nodes: structuredClone(draft.content.nodes ?? []), edges: [], groups: [], diagnostics: diagnosticsFor(draft.content) };
+		return draft;
 	},
 	async updateDraft(input) {
 		const current = drafts.get(input.workflowId);
@@ -70,7 +88,7 @@ const client = createBrowserWorkflowClient({
 		return {
 			draft: structuredClone(current),
 			preview: {
-				nodes: [], edges: [], groups: [],
+				nodes: structuredClone(current.content.nodes ?? []), edges: [], groups: [],
 				diagnostics: diagnosticsFor(current.content),
 			},
 			saved,
@@ -89,10 +107,17 @@ const workflowList = document.querySelector("#workflow-list");
 const draftEditor = document.querySelector("#draft-content");
 const draftStatus = document.querySelector("#draft-status");
 const diagnosticList = document.querySelector("#draft-diagnostics");
+const nodeCatalogList = document.querySelector("#node-catalog");
+const nodeList = document.querySelector("#node-list");
+const nodeEditor = document.querySelector("#node-editor");
+const nodeEditorStatus = document.querySelector("#node-editor-status");
+const nodeName = document.querySelector("#node-name");
+const removeNodeButton = document.querySelector("#remove-node");
+const nodeConfigForm = document.querySelector("#node-config-form");
 
 createProductShell(
   createProductDOMView(
-		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList },
+		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm },
     productStatusMessage,
   ),
   client,

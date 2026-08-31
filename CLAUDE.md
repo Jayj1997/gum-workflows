@@ -12,7 +12,7 @@
 
 **code-quality-automation 已完成**：Local Data Root、显式 legacy 迁移、In-place Project Workspace、`project.code` Workflow Context Binding、ScriptNode，以及真实 `go-static-analysis` / `go-coverage-check` / `go-race-check` / `go-complexity-check` 已落地。四者使用不可变 POSIX Script Bundle 在 Darwin/Linux 的用户 PATH 上原地运行并产出严格 Result；详细合同见 `.scratch/code-quality-automation/spec.md`。
 
-**14 后 Product Workflow 01–03 已完成**：Wails macOS 产品壳、Browser Mock 与 Desktop Adapter 共享 WorkflowClient / Product Application seam；用户可以在 UI 向 Local Data Root 的 `product.db` 创建并稳定列出带 UUID 的 Product Workflow，并编辑唯一可变 Draft。Draft autosave 规范化语义 JSON，等价内容 no-op，变化通过 expected `lock_version` CAS 更新同一行；冲突返回最新 Draft 与刷新提示，非法中间态仍保存并返回基础 Preview/Diagnostics。独立 product schema 不读取或复用 workflow/v1 YAML identity，autosave 不创建 Revision 或 Draft 历史副本。Node 创作、完整 Preview、Revision、Run 与真实 LLM 仍未实施；后续从 `.scratch/product-workflow/issues/04-node-catalog-config-schema-form.md` 继续。
+**14 后 Product Workflow 01–04 已完成**：Wails macOS 产品壳、Browser Mock 与 Desktop Adapter 共享 WorkflowClient / Product Application seam；用户可以创建并列出 SQLite Product Workflow，编辑唯一 Draft，并从注册表驱动的 Catalog 添加、选择、重命名、配置和移除 `human-chat` / `llm-chat` Node Instance。Draft autosave 使用 expected `lock_version` CAS；Gum Config Schema 驱动通用表单与字段级 Diagnostics，Presentation Hint 不改变验证语义。独立 product schema 不读取或复用 workflow/v1 YAML identity，autosave 不创建 Revision 或 Draft 历史副本。端口绑定、完整 Preview、Revision、Run 与真实 LLM 仍未实施；后续从 `.scratch/product-workflow/issues/05-input-binding-workflow-preview.md` 继续。
 
 后续版本方向（需先升级设计文档）：真实 Coding Agent Adapter（替换 MockCodingAgent）、真实 OpenAPI Generator、Skipped 传播、重试/超时等 workflow/v2 字段。
 

@@ -14,10 +14,17 @@ const workflowList = document.querySelector("#workflow-list");
 const draftEditor = document.querySelector("#draft-content");
 const draftStatus = document.querySelector("#draft-status");
 const diagnosticList = document.querySelector("#draft-diagnostics");
+const nodeCatalogList = document.querySelector("#node-catalog");
+const nodeList = document.querySelector("#node-list");
+const nodeEditor = document.querySelector("#node-editor");
+const nodeEditorStatus = document.querySelector("#node-editor-status");
+const nodeName = document.querySelector("#node-name");
+const removeNodeButton = document.querySelector("#remove-node");
+const nodeConfigForm = document.querySelector("#node-config-form");
 
 createProductShell(
   createProductDOMView(
-		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList },
+		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm },
     productStatusMessage,
   ),
   client,

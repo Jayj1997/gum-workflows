@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Jayj1997/gum-workflows/internal/product"
+	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
 )
 
 // DesktopAdapter is the only object bound into the desktop WebView. Keeping
@@ -47,4 +48,9 @@ func (a *DesktopAdapter) GetDraft(workflowID string) (product.DraftView, error) 
 // UpdateDraft forwards an autosave request through WorkflowApplication.
 func (a *DesktopAdapter) UpdateDraft(input product.UpdateDraftInput) (product.DraftUpdateView, error) {
 	return a.application.UpdateDraft(a.ctx, input)
+}
+
+// ListNodeCatalog forwards the registered product Node Catalog.
+func (a *DesktopAdapter) ListNodeCatalog() ([]nodecatalog.Entry, error) {
+	return a.application.ListNodeCatalog(a.ctx)
 }

@@ -7,6 +7,7 @@ import {
 } from "../dist/workflow-client.js";
 import { createProductDOMView } from "../dist/product-dom-view.js";
 import { createProductShell, productStatusMessage } from "../dist/product-shell.js";
+import { createBuiltinNodeRegistry, validateConfig } from "../dist/node-registry.js";
 
 const expectedView = {
   title: "Gum Workflows",
@@ -23,6 +24,18 @@ const expectedDraft = {
   lockVersion: 1,
   updatedAt: "2026-08-31T09:00:00Z",
 };
+const expectedCatalog = [
+	{
+		definition: {
+			id: "llm-chat", displayName: "LLM chat", description: "Append one model response", kind: "agent",
+			config: { fields: [
+				{ name: "instructions", type: "markdown", required: false, hasDefault: false, sensitive: false, presentation: { label: "Instructions", help: "Model guidance", editor: "markdown" } },
+				{ name: "temperature", type: "number", required: false, hasDefault: false, min: 0, max: 2, sensitive: false, presentation: { label: "Temperature", help: "Sampling", editor: "number" } },
+			] },
+		},
+		executor: { definitionId: "llm-chat", version: "v1" },
+	},
+];
 
 const clientContract = [
   [
@@ -44,6 +57,7 @@ const clientContract = [
 		async updateDraft(input) {
 			return { draft: { ...expectedDraft, ...input, lockVersion: 2 }, preview: { nodes: [], edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
 		},
+		async listNodeCatalog() { return expectedCatalog; },
       }),
   ],
   [
@@ -65,6 +79,7 @@ const clientContract = [
 		async UpdateDraft(input) {
 			return { draft: { ...expectedDraft, ...input, lockVersion: 2 }, preview: { nodes: [], edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
 		},
+		async ListNodeCatalog() { return expectedCatalog; },
       }),
   ],
 ];
@@ -77,8 +92,112 @@ for (const [name, createClient] of clientContract) {
 	assert.deepEqual(await client.listWorkflows(), [expectedWorkflow]);
 	assert.deepEqual(await client.getDraft(expectedWorkflow.id), expectedDraft);
 	assert.equal((await client.updateDraft({ workflowId: expectedWorkflow.id, expectedLockVersion: 1, content: expectedDraft.content })).draft.lockVersion, 2);
+	assert.deepEqual(await client.listNodeCatalog(), expectedCatalog);
   });
 }
+
+test("the Browser Mock registry validates every Gum Config Schema field type", () => {
+	assert.deepEqual(createBuiltinNodeRegistry().catalog().map((entry) => entry.definition.id), ["human-chat", "llm-chat"]);
+	const schema = { fields: [
+		{ name: "text", type: "string", required: true, hasDefault: false },
+		{ name: "markdown", type: "markdown", required: false, hasDefault: false },
+		{ name: "integer", type: "integer", required: false, hasDefault: false, min: 1, max: 2 },
+		{ name: "number", type: "number", required: false, hasDefault: false, min: 0, max: 1 },
+		{ name: "boolean", type: "boolean", required: false, hasDefault: false },
+		{ name: "enum", type: "enum", required: false, hasDefault: false, values: ["one", "two"] },
+	] };
+	const issues = validateConfig(schema, { markdown: 42, integer: 1.5, number: 2, boolean: "yes", enum: "three", extra: true });
+	assert.deepEqual(issues.map((item) => item.field), ["text", "markdown", "integer", "number", "boolean", "enum", "extra"]);
+});
+
+test("a user authors Node Instances and config through the registered Catalog", async () => {
+	let openWorkspace;
+	let selectWorkflow;
+	let addNode;
+	let selectNode;
+	let renameNode;
+	let editNodeConfig;
+	let removeNode;
+	const updates = [];
+	const renderedEditors = [];
+	let draft = structuredClone(expectedDraft);
+	const view = {
+		onOpenWorkspace(handler) { openWorkspace = handler; },
+		onCreateWorkflow() {},
+		onSelectWorkflow(handler) { selectWorkflow = handler; },
+		onDraftDirty() {},
+		onEditDraft() {},
+		onAddNode(handler) { addNode = handler; },
+		onSelectNode(handler) { selectNode = handler; },
+		onRenameNode(handler) { renameNode = handler; },
+		onEditNodeConfig(handler) { editNodeConfig = handler; },
+		onRemoveNode(handler) { removeNode = handler; },
+		render() {}, renderWorkflows() {}, renderDraft() {}, renderDraftLoading() {}, renderNodeCatalog() {},
+		renderNodeEditor(state) { renderedEditors.push(structuredClone(state)); },
+	};
+	const client = createBrowserWorkflowClient({
+		async openWorkspace() { return expectedView; },
+		async createWorkflow() { return expectedWorkflow; },
+		async listWorkflows() { return [expectedWorkflow]; },
+		async listNodeCatalog() { return expectedCatalog; },
+		async getDraft() { return structuredClone(draft); },
+		async updateDraft(input) {
+			updates.push(structuredClone(input));
+			draft = { ...draft, content: structuredClone(input.content), lockVersion: draft.lockVersion + 1 };
+			return { draft: structuredClone(draft), preview: { nodes: draft.content.nodes, edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
+		},
+	});
+	createProductShell(view, client, { createNodeId: () => "node-uuid" });
+	await openWorkspace();
+	await selectWorkflow(expectedWorkflow.id);
+	await addNode("llm-chat");
+
+	assert.deepEqual(updates.at(-1).content.nodes[0], {
+		id: "node-uuid", definition: "llm-chat", executor: "v1", displayName: "LLM chat", config: {},
+	});
+	selectNode("node-uuid");
+	assert.equal(renderedEditors.at(-1).fields[0].presentation.label, "Instructions");
+	const rename = renameNode({ nodeId: "node-uuid", displayName: "Writer" });
+	const configure = editNodeConfig({ nodeId: "node-uuid", field: "temperature", value: 0.8 });
+	await Promise.all([rename, configure]);
+	assert.equal(updates.at(-1).content.nodes[0].config.temperature, 0.8);
+	assert.equal(updates.at(-1).content.nodes[0].displayName, "Writer");
+	await removeNode("node-uuid");
+	assert.deepEqual(updates.at(-1).content.nodes, []);
+});
+
+test("structured Node edits flush pending Draft text before mutating the latest content", async () => {
+	let openWorkspace;
+	let selectWorkflow;
+	let editDraft;
+	let addNode;
+	let pendingDraft;
+	let draft = structuredClone(expectedDraft);
+	const view = {
+		onOpenWorkspace(handler) { openWorkspace = handler; }, onCreateWorkflow() {},
+		onSelectWorkflow(handler) { selectWorkflow = handler; }, onDraftDirty() {},
+		onEditDraft(handler) { editDraft = handler; }, onAddNode(handler) { addNode = handler; },
+		onSelectNode() {}, onRenameNode() {}, onEditNodeConfig() {}, onRemoveNode() {},
+		async flushDraftEdit() { if (pendingDraft) await editDraft(pendingDraft); pendingDraft = undefined; },
+		render() {}, renderWorkflows() {}, renderDraft() {}, renderDraftLoading() {}, renderNodeCatalog() {}, renderNodeEditor() {},
+	};
+	const client = createBrowserWorkflowClient({
+		async openWorkspace() { return expectedView; }, async createWorkflow() { return expectedWorkflow; },
+		async listWorkflows() { return [expectedWorkflow]; }, async listNodeCatalog() { return expectedCatalog; },
+		async getDraft() { return structuredClone(draft); },
+		async updateDraft(input) {
+			draft = { ...draft, content: structuredClone(input.content), lockVersion: draft.lockVersion + 1 };
+			return { draft: structuredClone(draft), preview: { nodes: draft.content.nodes, edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
+		},
+	});
+	createProductShell(view, client, { createNodeId: () => "node-after-raw-edit" });
+	await openWorkspace();
+	await selectWorkflow(expectedWorkflow.id);
+	pendingDraft = { workflowId: expectedWorkflow.id, revision: 1, content: { ...draft.content, project: { repository: "/workspace/example" } } };
+	await addNode("llm-chat");
+	assert.equal(draft.content.project.repository, "/workspace/example");
+	assert.equal(draft.content.nodes[0].id, "node-after-raw-edit");
+});
 
 test("a user action crosses WorkflowClient and renders the visible result", async () => {
 	const renderStates = [];
@@ -463,7 +582,7 @@ test("the DOM editor debounces input and submits the latest captured content", a
 		{ workflowId: expectedWorkflow.id, revision: 1 },
 		{ workflowId: expectedWorkflow.id, revision: 2 },
 	]);
-	await new Promise((resolve) => setTimeout(resolve, 300));
+	await view.flushDraftEdit();
 
 	assert.deepEqual(submitted, [{ workflowId: expectedWorkflow.id, revision: 2, content: { nodes: [{ id: "latest" }] } }]);
 });

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
 	productworkflow "github.com/Jayj1997/gum-workflows/internal/product/workflow"
 )
 
@@ -25,14 +26,16 @@ type WorkflowApplication interface {
 	ListWorkflows(ctx context.Context) ([]WorkflowView, error)
 	GetDraft(ctx context.Context, workflowID string) (DraftView, error)
 	UpdateDraft(ctx context.Context, input UpdateDraftInput) (DraftUpdateView, error)
+	ListNodeCatalog(ctx context.Context) ([]nodecatalog.Entry, error)
 }
 
 // DraftView is the current mutable Product Workflow definition returned to UI adapters.
 type DraftView struct {
-	WorkflowID  string         `json:"workflowId"`
-	Content     map[string]any `json:"content"`
-	LockVersion uint64         `json:"lockVersion"`
-	UpdatedAt   time.Time      `json:"updatedAt"`
+	WorkflowID  string           `json:"workflowId"`
+	Content     map[string]any   `json:"content"`
+	LockVersion uint64           `json:"lockVersion"`
+	UpdatedAt   time.Time        `json:"updatedAt"`
+	Preview     *WorkflowPreview `json:"preview,omitempty"`
 }
 
 // UpdateDraftInput is an autosave request against the UI's current lock token.
@@ -82,11 +85,21 @@ type WorkflowView struct {
 // Application coordinates Product Workflow use cases for UI adapters.
 type Application struct {
 	repository productworkflow.Repository
+	catalog    *nodecatalog.Registry
 }
 
-// NewApplication creates the Product Application with an injected repository.
-func NewApplication(repository productworkflow.Repository) *Application {
-	return &Application{repository: repository}
+// NewApplication creates the Product Application with injected persistence and
+// the explicitly assembled product Node Definition/Executor registry.
+func NewApplication(repository productworkflow.Repository, catalog *nodecatalog.Registry) *Application {
+	return &Application{repository: repository, catalog: catalog}
+}
+
+// ListNodeCatalog returns addable Nodes from the registered Definitions and Executors.
+func (a *Application) ListNodeCatalog(context.Context) ([]nodecatalog.Entry, error) {
+	if a.catalog == nil {
+		return nil, fmt.Errorf("list node catalog: registry is not configured")
+	}
+	return a.catalog.Catalog(), nil
 }
 
 // OpenWorkspace returns the product shell state.
@@ -126,7 +139,13 @@ func (a *Application) GetDraft(ctx context.Context, workflowID string) (DraftVie
 	if err != nil {
 		return DraftView{}, fmt.Errorf("get draft: %w", err)
 	}
-	return draftView(draft)
+	view, err := draftView(draft)
+	if err != nil {
+		return DraftView{}, err
+	}
+	preview := a.previewDraft(view.Content)
+	view.Preview = &preview
+	return view, nil
 }
 
 // UpdateDraft autosaves semantic content and returns the latest Preview and Diagnostics.
@@ -151,7 +170,7 @@ func (a *Application) UpdateDraft(ctx context.Context, input UpdateDraftInput) (
 	}
 	return DraftUpdateView{
 		Draft:           view,
-		Preview:         previewDraft(view.Content),
+		Preview:         a.previewDraft(view.Content),
 		Saved:           update.Saved,
 		Conflict:        update.Conflict,
 		RefreshRequired: update.Conflict,
@@ -166,7 +185,7 @@ func draftView(draft productworkflow.Draft) (DraftView, error) {
 	return DraftView{WorkflowID: draft.WorkflowID, Content: content, LockVersion: draft.LockVersion, UpdatedAt: draft.UpdatedAt}, nil
 }
 
-func previewDraft(content map[string]any) WorkflowPreview {
+func (a *Application) previewDraft(content map[string]any) WorkflowPreview {
 	preview := WorkflowPreview{Nodes: []any{}, Edges: []any{}, Groups: []any{}, Diagnostics: []Diagnostic{}}
 	if content["semanticSchemaVersion"] != "productWorkflow/v1" {
 		preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
@@ -180,6 +199,43 @@ func previewDraft(content map[string]any) WorkflowPreview {
 			Code: "workflow-needs-node", Severity: "error", Path: "nodes",
 			Message: "workflow must contain at least one node",
 		})
+		return preview
+	}
+	preview.Nodes = append(preview.Nodes, nodes...)
+	for index, value := range nodes {
+		node, ok := value.(map[string]any)
+		if !ok {
+			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+				Code: "invalid-node", Severity: "error", Path: fmt.Sprintf("nodes[%d]", index), Message: "node must be an object",
+			})
+			continue
+		}
+		definitionID, _ := node["definition"].(string)
+		definition, found := a.catalog.Definition(definitionID)
+		if !found {
+			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+				Code: "unknown-node-definition", Severity: "error", Path: fmt.Sprintf("nodes[%d].definition", index),
+				Message: fmt.Sprintf("node definition %q is not in the Catalog", definitionID),
+			})
+			continue
+		}
+		config, ok := node["config"].(map[string]any)
+		if !ok {
+			if node["config"] == nil {
+				config = map[string]any{}
+			} else {
+				preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+					Code: "invalid-node-config", Severity: "error", Path: fmt.Sprintf("nodes[%d].config", index), Message: "config must be an object",
+				})
+				continue
+			}
+		}
+		for _, issue := range definition.Config.Validate(config) {
+			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+				Code: "invalid-node-config-" + issue.Code, Severity: "error",
+				Path: fmt.Sprintf("nodes[%d].config.%s", index, issue.Field), Message: issue.Message,
+			})
+		}
 	}
 	return preview
 }

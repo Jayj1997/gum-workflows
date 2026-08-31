@@ -8,6 +8,7 @@ import (
 
 	"github.com/Jayj1997/gum-workflows/internal/history"
 	"github.com/Jayj1997/gum-workflows/internal/product"
+	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
 	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -29,7 +30,11 @@ func main() {
 		}
 	}()
 
-	adapter := newDesktopAdapter(product.NewApplication(store))
+	catalog, err := nodecatalog.NewBuiltinRegistry()
+	if err != nil {
+		log.Fatal(err)
+	}
+	adapter := newDesktopAdapter(product.NewApplication(store, catalog))
 	if err := wails.Run(&options.App{
 		Title:     "Gum Workflows",
 		Width:     1080,

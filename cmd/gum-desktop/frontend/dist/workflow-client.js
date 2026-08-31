@@ -12,12 +12,16 @@ export function createBrowserWorkflowClient(application) {
   requireMethod(application, "listWorkflows", "browser application");
 	requireMethod(application, "getDraft", "browser application");
 	requireMethod(application, "updateDraft", "browser application");
+	const listNodeCatalog = typeof application.listNodeCatalog === "function"
+		? () => application.listNodeCatalog()
+		: async () => [];
   return {
     openWorkspace: () => application.openWorkspace(),
     createWorkflow: (input) => application.createWorkflow(input),
     listWorkflows: () => application.listWorkflows(),
 		getDraft: (workflowId) => application.getDraft(workflowId),
 		updateDraft: (input) => application.updateDraft(input),
+		listNodeCatalog,
   };
 }
 
@@ -27,11 +31,13 @@ export function createDesktopWorkflowClient(desktopAdapter) {
   requireMethod(desktopAdapter, "ListWorkflows", "desktop adapter");
 	requireMethod(desktopAdapter, "GetDraft", "desktop adapter");
 	requireMethod(desktopAdapter, "UpdateDraft", "desktop adapter");
+	requireMethod(desktopAdapter, "ListNodeCatalog", "desktop adapter");
   return {
     openWorkspace: () => desktopAdapter.OpenWorkspace(),
     createWorkflow: (input) => desktopAdapter.CreateWorkflow(input),
     listWorkflows: () => desktopAdapter.ListWorkflows(),
 		getDraft: (workflowId) => desktopAdapter.GetDraft(workflowId),
 		updateDraft: (input) => desktopAdapter.UpdateDraft(input),
+		listNodeCatalog: () => desktopAdapter.ListNodeCatalog(),
   };
 }

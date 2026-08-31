@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Jayj1997/gum-workflows/internal/product"
+	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
 )
 
 type applicationStub struct {
@@ -21,6 +22,7 @@ type applicationStub struct {
 	draft        product.DraftView
 	update       product.DraftUpdateView
 	updateInput  product.UpdateDraftInput
+	catalog      []nodecatalog.Entry
 }
 
 func (s *applicationStub) OpenWorkspace(context.Context) (product.WorkspaceView, error) {
@@ -46,6 +48,10 @@ func (s *applicationStub) GetDraft(context.Context, string) (product.DraftView, 
 func (s *applicationStub) UpdateDraft(_ context.Context, input product.UpdateDraftInput) (product.DraftUpdateView, error) {
 	s.updateInput = input
 	return s.update, s.err
+}
+
+func (s *applicationStub) ListNodeCatalog(context.Context) ([]nodecatalog.Entry, error) {
+	return s.catalog, s.err
 }
 
 func TestDesktopAdapterUsesWorkflowApplication(t *testing.T) {
@@ -92,6 +98,23 @@ func TestDesktopAdapterCreatesAndListsThroughWorkflowApplication(t *testing.T) {
 	}
 	if created != want || len(listed) != 1 || listed[0] != want {
 		t.Fatalf("created/listed = %#v/%#v, want %#v", created, listed, want)
+	}
+}
+
+func TestDesktopAdapterListsRegisteredNodeCatalog(t *testing.T) {
+	t.Parallel()
+
+	want := []nodecatalog.Entry{{
+		Definition: nodecatalog.Definition{ID: "llm-chat", DisplayName: "LLM chat"},
+		Executor:   nodecatalog.Executor{DefinitionID: "llm-chat", Version: "v1"},
+	}}
+	adapter := newDesktopAdapter(&applicationStub{catalog: want})
+	got, err := adapter.ListNodeCatalog()
+	if err != nil {
+		t.Fatalf("list Node Catalog: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Node Catalog = %#v, want %#v", got, want)
 	}
 }
 

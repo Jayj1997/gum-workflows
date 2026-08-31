@@ -10,7 +10,17 @@ import (
 
 	"github.com/Jayj1997/gum-workflows/internal/history"
 	"github.com/Jayj1997/gum-workflows/internal/product"
+	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
 )
+
+func newTestApplication(t *testing.T, store *history.Store) *product.Application {
+	t.Helper()
+	registry, err := nodecatalog.NewBuiltinRegistry()
+	if err != nil {
+		t.Fatalf("load product Node Catalog: %v", err)
+	}
+	return product.NewApplication(store, registry)
+}
 
 func TestApplicationCreatesAndListsSQLiteWorkflowsAcrossRestart(t *testing.T) {
 	ctx := context.Background()
@@ -20,7 +30,7 @@ func TestApplicationCreatesAndListsSQLiteWorkflowsAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open product database: %v", err)
 	}
-	application := product.NewApplication(store)
+	application := newTestApplication(t, store)
 
 	first, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "Release checklist"})
 	if err != nil {
@@ -49,7 +59,7 @@ func TestApplicationCreatesAndListsSQLiteWorkflowsAcrossRestart(t *testing.T) {
 		t.Fatalf("reopen product database: %v", err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
-	got, err := product.NewApplication(reopened).ListWorkflows(ctx)
+	got, err := newTestApplication(t, reopened).ListWorkflows(ctx)
 	if err != nil {
 		t.Fatalf("list workflows after restart: %v", err)
 	}
@@ -71,7 +81,7 @@ func TestApplicationCreatesAndLoadsOneDraftPerWorkflow(t *testing.T) {
 		t.Fatalf("open product database: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	application := product.NewApplication(store)
+	application := newTestApplication(t, store)
 
 	workflow, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "Release checklist"})
 	if err != nil {
@@ -103,7 +113,7 @@ func TestApplicationAutosavesOnlySemanticChangesAndRejectsStaleUpdates(t *testin
 		t.Fatalf("open product database: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	application := product.NewApplication(store)
+	application := newTestApplication(t, store)
 	workflow, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "Release checklist"})
 	if err != nil {
 		t.Fatalf("create workflow: %v", err)
@@ -190,7 +200,7 @@ func TestApplicationSavesInvalidDraftWithCompletePreviewDiagnostics(t *testing.T
 		t.Fatalf("open product database: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	application := product.NewApplication(store)
+	application := newTestApplication(t, store)
 	workflow, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "Incomplete workflow"})
 	if err != nil {
 		t.Fatalf("create workflow: %v", err)
@@ -233,7 +243,7 @@ func TestApplicationDoesNotListWorkflowV1Imports(t *testing.T) {
 		t.Fatalf("import workflow/v1 definition: %v", err)
 	}
 
-	workflows, err := product.NewApplication(store).ListWorkflows(ctx)
+	workflows, err := newTestApplication(t, store).ListWorkflows(ctx)
 	if err != nil {
 		t.Fatalf("list Product Workflows: %v", err)
 	}
@@ -249,7 +259,7 @@ func TestApplicationRejectsBlankWorkflowNameWithoutCreatingWorkflow(t *testing.T
 		t.Fatalf("open product database: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	application := product.NewApplication(store)
+	application := newTestApplication(t, store)
 
 	if _, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "  "}); err == nil {
 		t.Fatal("create blank workflow = nil error, want rejection")
@@ -260,5 +270,57 @@ func TestApplicationRejectsBlankWorkflowNameWithoutCreatingWorkflow(t *testing.T
 	}
 	if len(workflows) != 0 {
 		t.Fatalf("workflow count = %d, want zero", len(workflows))
+	}
+}
+
+func TestApplicationCatalogAndConfigDiagnosticsComeFromRegisteredDefinitions(t *testing.T) {
+	ctx := context.Background()
+	store, err := history.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	if err != nil {
+		t.Fatalf("open product database: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	application := newTestApplication(t, store)
+
+	catalog, err := application.ListNodeCatalog(ctx)
+	if err != nil {
+		t.Fatalf("list Node Catalog: %v", err)
+	}
+	if len(catalog) != 2 || catalog[0].Definition.ID != "human-chat" || catalog[1].Definition.ID != "llm-chat" {
+		t.Fatalf("Node Catalog = %#v", catalog)
+	}
+
+	workflow, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "Chat"})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	result, err := application.UpdateDraft(ctx, product.UpdateDraftInput{
+		WorkflowID: workflow.ID, ExpectedLockVersion: 1,
+		Content: map[string]any{
+			"semanticSchemaVersion": "productWorkflow/v1",
+			"nodes": []any{map[string]any{
+				"id": "writer", "definition": "llm-chat", "executor": "v1", "displayName": "Writer",
+				"config": map[string]any{"temperature": 2.5, "max_output_tokens": 0, "unknown": true},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("save invalid Node config: %v", err)
+	}
+	wantPaths := []string{
+		"nodes[0].config.temperature",
+		"nodes[0].config.max_output_tokens",
+		"nodes[0].config.unknown",
+	}
+	if len(result.Preview.Diagnostics) != len(wantPaths) {
+		t.Fatalf("diagnostics = %#v", result.Preview.Diagnostics)
+	}
+	for i, want := range wantPaths {
+		if result.Preview.Diagnostics[i].Path != want {
+			t.Fatalf("diagnostic %d path = %q, want %q", i, result.Preview.Diagnostics[i].Path, want)
+		}
+	}
+	if len(result.Preview.Nodes) != 1 {
+		t.Fatalf("preview nodes = %#v, want invalid Node retained", result.Preview.Nodes)
 	}
 }

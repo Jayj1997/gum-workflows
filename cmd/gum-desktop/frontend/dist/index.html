@@ -28,6 +28,25 @@
           <h2 id="workflow-library-title">Product Workflows</h2>
           <ol id="workflow-list"></ol>
         </section>
+		<section class="node-authoring" aria-labelledby="node-catalog-title">
+			<div>
+				<h2 id="node-catalog-title">Node Catalog</h2>
+				<ul id="node-catalog" aria-label="Node Catalog"></ul>
+			</div>
+			<div>
+				<h2>Node Instances</h2>
+				<ul id="node-list" aria-label="Node Instances"></ul>
+			</div>
+		</section>
+		<section id="node-editor" class="node-editor" hidden>
+			<div class="node-editor-heading">
+				<div><h2>Selected Node</h2><p id="node-editor-status">Select a Node Instance to configure it.</p></div>
+				<button id="remove-node" type="button" class="danger">Remove</button>
+			</div>
+			<label for="node-name">Display name</label>
+			<input id="node-name" />
+			<div id="node-config-form" class="node-config-form"></div>
+		</section>
 		<section class="draft-editor" aria-labelledby="draft-editor-title">
 			<h2 id="draft-editor-title">Workflow Draft</h2>
 			<p id="draft-status">Select a Product Workflow to edit its semantic Draft.</p>
