@@ -9,7 +9,7 @@ import { createProductDOMView } from "../dist/product-dom-view.js";
 import { createProductShell, productStatusMessage } from "../dist/product-shell.js";
 import { createBuiltinNodeRegistry, validateConfig } from "../dist/node-registry.js";
 import { createWorkflowPreview } from "../dist/workflow-preview.js";
-import { createBrowserLLMSettings } from "../dist/browser-llm-settings.js";
+import { createBrowserLLMSettings, createMemorySecretAdapter } from "../dist/browser-llm-settings.js";
 import { productRevisionKey } from "../dist/browser-run.js";
 
 const expectedView = {
@@ -44,7 +44,7 @@ const expectedRevisionRuns = [
 const expectedSettings = {
 	providers: [{
 		id: "provider-uuid", name: "Primary", protocol: "openai-chat-completions", baseUrl: "https://api.example/v1",
-		apiKeyRef: "keychain://primary", explicitDefault: true, effectiveDefault: true, createdAt: "2026-08-31T09:00:00Z",
+		hasApiKey: true, explicitDefault: true, effectiveDefault: true, createdAt: "2026-08-31T09:00:00Z",
 		models: [{ id: "model-uuid", providerId: "provider-uuid", displayName: "Fast", providerModelId: "model-fast", generationDefaults: { temperature: 0.2, maxOutputTokens: 1024 }, explicitDefault: true, effectiveDefault: true, createdAt: "2026-08-31T09:00:00Z" }],
 	}],
 	diagnostics: [],
@@ -147,7 +147,7 @@ for (const [name, createClient] of clientContract) {
 	assert.deepEqual(await client.getLLMSettings(), expectedSettings);
 	assert.equal((await client.createLLMProvider({ name: "Primary" })).name, "Primary");
 	assert.equal((await client.updateLLMProvider({ id: "provider-uuid", name: "Renamed" })).name, "Renamed");
-	await client.deleteLLMProvider("provider-uuid");
+	await client.deleteLLMProvider({ providerId: "provider-uuid", confirmed: true });
 	assert.deepEqual(await client.setDefaultLLMProvider("provider-uuid"), expectedSettings);
 	assert.equal((await client.createLLMModel({ providerId: "provider-uuid", displayName: "Fast" })).displayName, "Fast");
 	assert.equal((await client.updateLLMModel({ id: "model-uuid", providerId: "provider-uuid", displayName: "Strong" })).displayName, "Strong");
@@ -233,8 +233,8 @@ test("History drill-down loads Revisions after a Run, then Runs and the Run deta
 test("Browser Mock settings use UUID tie-breaks and truthful mutation defaults", () => {
 	const ids = ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "cccccccc-cccc-4ccc-8ccc-cccccccccccc"];
 	const settings = createBrowserLLMSettings({ newID: () => ids.shift(), now: () => "2026-09-01T00:00:00Z" });
-	const laterProvider = settings.createProvider({ name: "Later UUID", protocol: "openai-chat-completions", baseUrl: "https://later.example/v1", apiKeyRef: "keychain://later" });
-	const earlierProvider = settings.createProvider({ name: "Earlier UUID", protocol: "openai-chat-completions", baseUrl: "https://earlier.example/v1", apiKeyRef: "keychain://earlier" });
+	const laterProvider = settings.createProvider({ name: "Later UUID", protocol: "openai-chat-completions", baseUrl: "https://later.example/v1", apiKey: "later-secret" });
+	const earlierProvider = settings.createProvider({ name: "Earlier UUID", protocol: "openai-chat-completions", baseUrl: "https://earlier.example/v1", apiKey: "earlier-secret" });
 	assert.equal(laterProvider.effectiveDefault, true);
 	assert.equal(earlierProvider.effectiveDefault, true);
 	assert.equal(settings.updateProvider({ ...laterProvider, name: "Later renamed" }).effectiveDefault, false);
@@ -245,6 +245,25 @@ test("Browser Mock settings use UUID tie-breaks and truthful mutation defaults",
 	assert.equal(settings.updateModel({ ...laterModel, displayName: "Later renamed" }).effectiveDefault, false);
 	assert.equal(settings.getSettings().providers[0].id, earlierProvider.id);
 	assert.equal(settings.getSettings().providers[0].models[0].id, earlierModel.id);
+});
+
+test("Browser Mock injects Secret storage and never returns plaintext API Keys", () => {
+	const secrets = createMemorySecretAdapter();
+	const settings = createBrowserLLMSettings({
+		newID: () => "provider-uuid",
+		now: () => "2026-09-01T00:00:00Z",
+		secrets,
+	});
+	const provider = settings.createProvider({
+		name: "Primary", protocol: "openai-chat-completions", baseUrl: "https://api.example/v1", apiKey: "sk-browser-secret",
+	});
+	assert.equal(provider.hasApiKey, true);
+	assert.equal(JSON.stringify(provider).includes("sk-browser-secret"), false);
+	const reference = "memory://gum-workflows/llm-provider%2Fprovider-uuid";
+	assert.equal(secrets.resolve(reference), "sk-browser-secret");
+	assert.throws(() => settings.deleteProvider({ providerId: provider.id }), /confirmation/);
+	settings.deleteProvider({ providerId: provider.id, confirmed: true });
+	assert.throws(() => secrets.resolve(reference), /not found/);
 });
 
 test("Browser Mock Revision identity ignores presentation and unordered storage", () => {
@@ -385,14 +404,14 @@ test("a user manages Provider and Model Slots through the shared product shell",
 	});
 	createProductShell(view, client);
 	await openWorkspace();
-	await createProvider({ name: "Primary", protocol: "openai-chat-completions", baseUrl: "https://api.example/v1", apiKeyRef: "keychain://primary" });
+	await createProvider({ name: "Primary", protocol: "openai-chat-completions", baseUrl: "https://api.example/v1", apiKey: "primary-secret" });
 	await updateProvider({ ...settings.providers[0], name: "Renamed" });
 	await setDefaultProvider("provider-uuid");
 	await createModel({ providerId: "provider-uuid", displayName: "Fast", providerModelId: "model-fast" });
 	await updateModel({ ...settings.providers[0].models[0], providerModelId: "model-fast-v2" });
 	await setDefaultModel("provider-uuid", "model-uuid");
 	await deleteModel("provider-uuid", "model-uuid");
-	await deleteProvider("provider-uuid");
+	await deleteProvider({ providerId: "provider-uuid", confirmed: true });
 
 	assert.deepEqual(calls.filter((call) => Array.isArray(call)).map((call) => call[0]), [
 		"create-provider", "update-provider", "default-provider", "create-model", "update-model", "default-model", "delete-model", "delete-provider",
@@ -967,7 +986,7 @@ test("the DOM settings view renders editable Provider and Model controls", async
 		title: {}, message: {}, status: { dataset: {} }, button: { addEventListener() {} }, form: { addEventListener() {} }, nameInput: {},
 		workflowList: container(), draftEditor: { addEventListener() {} }, draftStatus: {}, diagnosticList: container(),
 		llmProviderList: providerList, llmDiagnosticList: diagnosticList,
-	}, productStatusMessage);
+	}, productStatusMessage, { confirmDelete: () => true });
 	view.onUpdateLLMProvider((input) => calls.push(["provider", input]));
 	view.onSetDefaultLLMProvider((id) => calls.push(["provider-default", id]));
 	view.onDeleteLLMProvider((id) => calls.push(["provider-delete", id]));
@@ -982,6 +1001,7 @@ test("the DOM settings view renders editable Provider and Model controls", async
 	providerControls[0].value = "Renamed";
 	await providerControls[4].listeners.click();
 	await providerControls[5].listeners.click();
+	await providerControls[6].listeners.click();
 	const modelControls = card.children[1].children[0].children;
 	modelControls[1].value = "model-fast-v2";
 	modelControls[2].value = "0.5";
@@ -994,10 +1014,13 @@ test("the DOM settings view renders editable Provider and Model controls", async
 	addModelForm.children[3].value = "4096";
 	await addModelForm.listeners.submit({ preventDefault() {} });
 
-	assert.deepEqual(calls.map((call) => call[0]), ["provider", "provider-default", "model", "model-create"]);
+	assert.deepEqual(calls.map((call) => call[0]), ["provider", "provider-default", "provider-delete", "model", "model-create"]);
 	assert.equal(calls[0][1].id, "provider-uuid");
-	assert.equal(calls[2][1].providerModelId, "model-fast-v2");
-	assert.deepEqual(calls[2][1].generationDefaults, { temperature: 0.5, maxOutputTokens: 2048 });
+	assert.equal(providerControls[3].type, "password");
+	assert.equal(providerControls[3].value, "");
+	assert.deepEqual(calls[2][1], { providerId: "provider-uuid", confirmed: true });
+	assert.equal(calls[3][1].providerModelId, "model-fast-v2");
+	assert.deepEqual(calls[3][1].generationDefaults, { temperature: 0.5, maxOutputTokens: 2048 });
 	assert.equal(diagnosticList.items.length, 0);
 });
 

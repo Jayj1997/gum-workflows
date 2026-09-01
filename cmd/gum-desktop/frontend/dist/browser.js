@@ -174,7 +174,7 @@ const client = createBrowserWorkflowClient({
 	async getLLMSettings() { return llmSettings.getSettings(); },
 	async createLLMProvider(input) { return llmSettings.createProvider(input); },
 	async updateLLMProvider(input) { return llmSettings.updateProvider(input); },
-	async deleteLLMProvider(providerId) { llmSettings.deleteProvider(providerId); },
+	async deleteLLMProvider(input) { llmSettings.deleteProvider(input); },
 	async setDefaultLLMProvider(providerId) { return llmSettings.setDefaultProvider(providerId); },
 	async createLLMModel(input) { return llmSettings.createModel(input); },
 	async updateLLMModel(input) { return llmSettings.updateModel(input); },
@@ -210,7 +210,7 @@ const providerForm = document.querySelector("#create-provider");
 const providerName = document.querySelector("#provider-name");
 const providerProtocol = document.querySelector("#provider-protocol");
 const providerBaseURL = document.querySelector("#provider-base-url");
-const providerAPIKeyRef = document.querySelector("#provider-api-key-ref");
+const providerAPIKey = document.querySelector("#provider-api-key");
 const llmProviderList = document.querySelector("#llm-provider-list");
 const llmDiagnosticList = document.querySelector("#llm-settings-diagnostics");
 const runButton = document.querySelector("#start-run");
@@ -226,7 +226,7 @@ const historyArtifactList = document.querySelector("#history-artifact-list");
 
 createProductShell(
   createProductDOMView(
-		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKeyRef, llmProviderList, llmDiagnosticList, runButton, runStatus, nodeRunList, artifactList, historyRefreshButton, revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList },
+		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKey, llmProviderList, llmDiagnosticList, runButton, runStatus, nodeRunList, artifactList, historyRefreshButton, revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList },
     productStatusMessage,
   ),
   client,

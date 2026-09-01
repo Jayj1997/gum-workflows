@@ -13,6 +13,7 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
 	productworkflow "github.com/Jayj1997/gum-workflows/internal/product/workflow"
 	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
+	"github.com/Jayj1997/gum-workflows/internal/secret"
 )
 
 // WorkspaceView is the product shell state returned to a UI adapter.
@@ -32,7 +33,7 @@ type WorkflowApplication interface {
 	GetLLMSettings(ctx context.Context) (LLMSettingsView, error)
 	CreateLLMProvider(ctx context.Context, input CreateLLMProviderInput) (LLMProviderView, error)
 	UpdateLLMProvider(ctx context.Context, input UpdateLLMProviderInput) (LLMProviderView, error)
-	DeleteLLMProvider(ctx context.Context, providerID string) error
+	DeleteLLMProvider(ctx context.Context, input DeleteLLMProviderInput) error
 	SetDefaultLLMProvider(ctx context.Context, providerID string) (LLMSettingsView, error)
 	CreateLLMModel(ctx context.Context, input CreateLLMModelInput) (LLMModelView, error)
 	UpdateLLMModel(ctx context.Context, input UpdateLLMModelInput) (LLMModelView, error)
@@ -129,6 +130,7 @@ type Application struct {
 	runPaths    runtimepath.Paths
 	runRepo     productworkflow.RunRepository
 	runHistory  productworkflow.RunHistoryRepository
+	secrets     secret.Adapter
 }
 
 // ApplicationOption configures optional product runtime dependencies.
@@ -137,6 +139,11 @@ type ApplicationOption func(*Application)
 // WithRunPaths configures the Local Data Root layout used by Product Runs.
 func WithRunPaths(paths runtimepath.Paths) ApplicationOption {
 	return func(application *Application) { application.runPaths = paths }
+}
+
+// WithSecretAdapter configures credential storage for Product Provider use cases.
+func WithSecretAdapter(adapter secret.Adapter) ApplicationOption {
+	return func(application *Application) { application.secrets = adapter }
 }
 
 // NewApplication creates the Product Application with injected persistence and

@@ -79,16 +79,17 @@ function previewLayers(preview) {
 	return new Map([...componentByNode].map(([nodeId, component]) => [nodeId, layers.get(component) ?? 0]));
 }
 
-export function createProductDOMView(elements, statusMessage) {
+export function createProductDOMView(elements, statusMessage, options = {}) {
 	const {
 		title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList,
 		nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm,
 		nodeInputForm, nodeControlForm,
 		previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset,
-			providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKeyRef, llmProviderList, llmDiagnosticList,
+			providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKey, llmProviderList, llmDiagnosticList,
 			runButton, runStatus, nodeRunList, artifactList,
 			historyRefreshButton, revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList,
 	} = elements;
+	const confirmDelete = options.confirmDelete ?? ((message) => globalThis.confirm?.(message) ?? false);
 	let selectWorkflow = () => {};
 	let draftDirty = () => {};
 	let addNode = () => {};
@@ -195,7 +196,7 @@ export function createProductDOMView(elements, statusMessage) {
 			createLLMProvider = handler;
 			providerForm?.addEventListener("submit", async (event) => {
 				event.preventDefault();
-				await createLLMProvider({ name: providerName.value.trim(), protocol: providerProtocol.value, baseUrl: providerBaseURL.value.trim(), apiKeyRef: providerAPIKeyRef.value.trim() });
+				await createLLMProvider({ name: providerName.value.trim(), protocol: providerProtocol.value, baseUrl: providerBaseURL.value.trim(), apiKey: providerAPIKey.value });
 				providerForm.reset();
 			});
 		},
@@ -258,18 +259,25 @@ export function createProductDOMView(elements, statusMessage) {
 				protocol.append(protocolOption);
 				protocol.value = provider.protocol;
 				const baseURL = textInput(provider.baseUrl, "Base URL");
-				const apiKeyRef = textInput(provider.apiKeyRef, "API Key reference");
+				const apiKey = textInput("", provider.hasApiKey ? "Replace API Key" : "API Key");
+				apiKey.type = "password";
+				apiKey.autocomplete = "new-password";
+				apiKey.placeholder = provider.hasApiKey ? "Leave blank to keep current Key" : "API Key";
 				const save = document.createElement("button");
 				save.type = "button"; save.textContent = "Save Provider";
-				save.addEventListener("click", () => updateLLMProvider({ id: provider.id, name: name.value, protocol: protocol.value, baseUrl: baseURL.value, apiKeyRef: apiKeyRef.value }));
+				save.addEventListener("click", () => updateLLMProvider({ id: provider.id, name: name.value, protocol: protocol.value, baseUrl: baseURL.value, apiKey: apiKey.value }));
 				const makeDefault = document.createElement("button");
 				makeDefault.type = "button"; makeDefault.textContent = provider.effectiveDefault ? "Effective default" : "Make default";
 				makeDefault.disabled = provider.explicitDefault;
 				makeDefault.addEventListener("click", () => setDefaultLLMProvider(provider.id));
 				const remove = document.createElement("button");
 				remove.type = "button"; remove.className = "danger"; remove.textContent = "Delete Provider";
-				remove.addEventListener("click", () => deleteLLMProvider(provider.id));
-				heading.append(name, protocol, baseURL, apiKeyRef, save, makeDefault, remove);
+				remove.addEventListener("click", () => {
+					if (confirmDelete(`Delete Provider ${provider.name} and its saved API Key?`)) {
+						deleteLLMProvider({ providerId: provider.id, confirmed: true });
+					}
+				});
+				heading.append(name, protocol, baseURL, apiKey, save, makeDefault, remove);
 
 				const models = document.createElement("div");
 				models.className = "llm-model-list";

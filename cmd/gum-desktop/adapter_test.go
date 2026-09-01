@@ -11,22 +11,24 @@ import (
 )
 
 type applicationStub struct {
-	view         product.WorkspaceView
-	workflow     product.WorkflowView
-	workflows    []product.WorkflowView
-	createInput  product.CreateWorkflowInput
-	err          error
-	openCalled   bool
-	createCalled bool
-	listCalled   bool
-	draft        product.DraftView
-	update       product.DraftUpdateView
-	updateInput  product.UpdateDraftInput
-	startInput   product.StartRunInput
-	run          product.RunView
-	revisions    []product.RevisionView
-	runSummaries []product.RunSummaryView
-	catalog      []nodecatalog.Entry
+	view                product.WorkspaceView
+	workflow            product.WorkflowView
+	workflows           []product.WorkflowView
+	createInput         product.CreateWorkflowInput
+	err                 error
+	openCalled          bool
+	createCalled        bool
+	listCalled          bool
+	draft               product.DraftView
+	update              product.DraftUpdateView
+	updateInput         product.UpdateDraftInput
+	startInput          product.StartRunInput
+	run                 product.RunView
+	revisions           []product.RevisionView
+	runSummaries        []product.RunSummaryView
+	catalog             []nodecatalog.Entry
+	providerInput       product.CreateLLMProviderInput
+	deleteProviderInput product.DeleteLLMProviderInput
 }
 
 func (s *applicationStub) OpenWorkspace(context.Context) (product.WorkspaceView, error) {
@@ -78,13 +80,17 @@ func (s *applicationStub) ListNodeCatalog(context.Context) ([]nodecatalog.Entry,
 func (s *applicationStub) GetLLMSettings(context.Context) (product.LLMSettingsView, error) {
 	return product.LLMSettingsView{}, s.err
 }
-func (s *applicationStub) CreateLLMProvider(context.Context, product.CreateLLMProviderInput) (product.LLMProviderView, error) {
+func (s *applicationStub) CreateLLMProvider(_ context.Context, input product.CreateLLMProviderInput) (product.LLMProviderView, error) {
+	s.providerInput = input
 	return product.LLMProviderView{}, s.err
 }
 func (s *applicationStub) UpdateLLMProvider(context.Context, product.UpdateLLMProviderInput) (product.LLMProviderView, error) {
 	return product.LLMProviderView{}, s.err
 }
-func (s *applicationStub) DeleteLLMProvider(context.Context, string) error { return s.err }
+func (s *applicationStub) DeleteLLMProvider(_ context.Context, input product.DeleteLLMProviderInput) error {
+	s.deleteProviderInput = input
+	return s.err
+}
 func (s *applicationStub) SetDefaultLLMProvider(context.Context, string) (product.LLMSettingsView, error) {
 	return product.LLMSettingsView{}, s.err
 }
@@ -163,6 +169,26 @@ func TestDesktopAdapterListsRegisteredNodeCatalog(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Node Catalog = %#v, want %#v", got, want)
+	}
+}
+
+func TestDesktopAdapterForwardsProviderSecretInputsThroughApplication(t *testing.T) {
+	t.Parallel()
+
+	application := &applicationStub{}
+	adapter := newDesktopAdapter(application)
+	createInput := product.CreateLLMProviderInput{
+		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://api.example/v1", APIKey: "sk-desktop-secret",
+	}
+	if _, err := adapter.CreateLLMProvider(createInput); err != nil {
+		t.Fatalf("create LLM Provider: %v", err)
+	}
+	deleteInput := product.DeleteLLMProviderInput{ProviderID: "provider-id", Confirmed: true}
+	if err := adapter.DeleteLLMProvider(deleteInput); err != nil {
+		t.Fatalf("delete LLM Provider: %v", err)
+	}
+	if !reflect.DeepEqual(application.providerInput, createInput) || !reflect.DeepEqual(application.deleteProviderInput, deleteInput) {
+		t.Fatalf("Provider inputs = %#v/%#v, want %#v/%#v", application.providerInput, application.deleteProviderInput, createInput, deleteInput)
 	}
 }
 

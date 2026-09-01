@@ -10,6 +10,7 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/product"
 	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
 	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
+	"github.com/Jayj1997/gum-workflows/internal/secret"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -34,7 +35,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	adapter := newDesktopAdapter(product.NewApplication(store, catalog, product.WithRunPaths(paths)))
+	adapter := newDesktopAdapter(product.NewApplication(store, catalog, product.WithRunPaths(paths), product.WithSecretAdapter(secret.NewKeychainAdapter(nil))))
 	if err := wails.Run(&options.App{
 		Title:     "Gum Workflows",
 		Width:     1080,

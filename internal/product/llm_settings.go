@@ -18,7 +18,7 @@ type LLMProviderView struct {
 	Name             string         `json:"name"`
 	Protocol         string         `json:"protocol"`
 	BaseURL          string         `json:"baseUrl"`
-	APIKeyRef        string         `json:"apiKeyRef"`
+	HasAPIKey        bool           `json:"hasApiKey"`
 	ExplicitDefault  bool           `json:"explicitDefault"`
 	EffectiveDefault bool           `json:"effectiveDefault"`
 	CreatedAt        time.Time      `json:"createdAt"`
@@ -52,19 +52,25 @@ type ResolvedLLMModelView struct {
 
 // CreateLLMProviderInput creates a Provider with a generated stable Gum UUID.
 type CreateLLMProviderInput struct {
-	Name      string `json:"name"`
-	Protocol  string `json:"protocol"`
-	BaseURL   string `json:"baseUrl"`
-	APIKeyRef string `json:"apiKeyRef"`
+	Name     string `json:"name"`
+	Protocol string `json:"protocol"`
+	BaseURL  string `json:"baseUrl"`
+	APIKey   string `json:"apiKey"`
 }
 
 // UpdateLLMProviderInput edits connection metadata without changing Provider identity.
 type UpdateLLMProviderInput struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Protocol  string `json:"protocol"`
-	BaseURL   string `json:"baseUrl"`
-	APIKeyRef string `json:"apiKeyRef"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Protocol string `json:"protocol"`
+	BaseURL  string `json:"baseUrl"`
+	APIKey   string `json:"apiKey"`
+}
+
+// DeleteLLMProviderInput records the explicit confirmation required to remove a Provider credential.
+type DeleteLLMProviderInput struct {
+	ProviderID string `json:"providerId"`
+	Confirmed  bool   `json:"confirmed"`
 }
 
 // CreateLLMModelInput creates a Model Slot with a generated stable Gum UUID.
@@ -91,6 +97,13 @@ func (a *Application) requireLLMSettings() (productworkflow.LLMSettingsRepositor
 	return a.llmSettings, nil
 }
 
+func (a *Application) requireSecrets() error {
+	if a.secrets == nil {
+		return fmt.Errorf("secret adapter is not configured")
+	}
+	return nil
+}
+
 // GetLLMSettings returns active Providers and Models plus actionable empty-state diagnostics.
 func (a *Application) GetLLMSettings(ctx context.Context) (LLMSettingsView, error) {
 	repository, err := a.requireLLMSettings()
@@ -110,13 +123,23 @@ func (a *Application) CreateLLMProvider(ctx context.Context, input CreateLLMProv
 	if err != nil {
 		return LLMProviderView{}, err
 	}
-	provider, err := providerFromInput("", input.Name, input.Protocol, input.BaseURL, input.APIKeyRef)
+	if err := a.requireSecrets(); err != nil {
+		return LLMProviderView{}, err
+	}
+	provider, err := providerFromInput("", input.Name, input.Protocol, input.BaseURL, "pending://secret")
 	if err != nil {
 		return LLMProviderView{}, fmt.Errorf("create LLM Provider: %w", err)
 	}
 	provider.ID = uuid.NewString()
+	provider.APIKeyRef, err = a.secrets.Store(ctx, "llm-provider/"+provider.ID, input.APIKey)
+	if err != nil {
+		return LLMProviderView{}, fmt.Errorf("create LLM Provider: store API Key: %w", err)
+	}
 	created, err := repository.CreateLLMProvider(ctx, provider)
 	if err != nil {
+		if cleanupErr := a.secrets.Delete(ctx, provider.APIKeyRef); cleanupErr != nil {
+			return LLMProviderView{}, fmt.Errorf("create LLM Provider: %w; delete API Key after persistence failure: %v", err, cleanupErr)
+		}
 		return LLMProviderView{}, fmt.Errorf("create LLM Provider: %w", err)
 	}
 	return llmProviderView(created, nil), nil
@@ -128,25 +151,97 @@ func (a *Application) UpdateLLMProvider(ctx context.Context, input UpdateLLMProv
 	if err != nil {
 		return LLMProviderView{}, err
 	}
-	provider, err := providerFromInput(input.ID, input.Name, input.Protocol, input.BaseURL, input.APIKeyRef)
+	if err := a.requireSecrets(); err != nil {
+		return LLMProviderView{}, err
+	}
+	existing, err := activeProvider(ctx, repository, input.ID)
 	if err != nil {
 		return LLMProviderView{}, fmt.Errorf("update LLM Provider: %w", err)
 	}
+	provider, err := providerFromInput(input.ID, input.Name, input.Protocol, input.BaseURL, existing.APIKeyRef)
+	if err != nil {
+		return LLMProviderView{}, fmt.Errorf("update LLM Provider: %w", err)
+	}
+	previousAPIKey := ""
+	if input.APIKey != "" {
+		previousAPIKey, err = a.secrets.Resolve(ctx, existing.APIKeyRef)
+		if err != nil {
+			return LLMProviderView{}, fmt.Errorf("update LLM Provider: resolve existing API Key: %w", err)
+		}
+		storedRef, storeErr := a.secrets.Store(ctx, "llm-provider/"+provider.ID, input.APIKey)
+		if storeErr != nil {
+			return LLMProviderView{}, fmt.Errorf("update LLM Provider: store API Key: %w", storeErr)
+		}
+		if storedRef != existing.APIKeyRef {
+			_ = a.secrets.Delete(ctx, storedRef)
+			return LLMProviderView{}, fmt.Errorf("update LLM Provider: secret adapter changed the Provider reference")
+		}
+	}
 	updated, err := repository.UpdateLLMProvider(ctx, provider)
 	if err != nil {
+		if previousAPIKey != "" {
+			if restoreErr := a.restoreProviderAPIKey(ctx, provider.ID, existing.APIKeyRef, previousAPIKey); restoreErr != nil {
+				return LLMProviderView{}, fmt.Errorf("update LLM Provider: %w; restore API Key after persistence failure: %v", err, restoreErr)
+			}
+		}
 		return LLMProviderView{}, fmt.Errorf("update LLM Provider: %w", err)
 	}
 	return llmProviderView(updated, nil), nil
 }
 
-// DeleteLLMProvider soft-deletes a Provider from future default resolution.
-func (a *Application) DeleteLLMProvider(ctx context.Context, providerID string) error {
+func activeProvider(ctx context.Context, repository productworkflow.LLMSettingsRepository, providerID string) (productworkflow.LLMProvider, error) {
+	settings, err := repository.GetLLMSettings(ctx)
+	if err != nil {
+		return productworkflow.LLMProvider{}, err
+	}
+	providerID = strings.TrimSpace(providerID)
+	for _, provider := range settings.Providers {
+		if provider.ID == providerID {
+			return provider, nil
+		}
+	}
+	return productworkflow.LLMProvider{}, fmt.Errorf("llm provider %s: not found", providerID)
+}
+
+// DeleteLLMProvider removes a confirmed Provider and its external credential.
+func (a *Application) DeleteLLMProvider(ctx context.Context, input DeleteLLMProviderInput) error {
 	repository, err := a.requireLLMSettings()
 	if err != nil {
 		return err
 	}
-	if err := repository.DeleteLLMProvider(ctx, strings.TrimSpace(providerID)); err != nil {
+	if !input.Confirmed {
+		return fmt.Errorf("delete LLM Provider: confirmation is required")
+	}
+	if err := a.requireSecrets(); err != nil {
+		return err
+	}
+	provider, err := activeProvider(ctx, repository, input.ProviderID)
+	if err != nil {
 		return fmt.Errorf("delete LLM Provider: %w", err)
+	}
+	value, err := a.secrets.Resolve(ctx, provider.APIKeyRef)
+	if err != nil {
+		return fmt.Errorf("delete LLM Provider: resolve API Key: %w", err)
+	}
+	if err := a.secrets.Delete(ctx, provider.APIKeyRef); err != nil {
+		return fmt.Errorf("delete LLM Provider: delete API Key: %w", err)
+	}
+	if err := repository.DeleteLLMProvider(ctx, provider.ID); err != nil {
+		if restoreErr := a.restoreProviderAPIKey(ctx, provider.ID, provider.APIKeyRef, value); restoreErr != nil {
+			return fmt.Errorf("delete LLM Provider: %w; restore API Key after failure: %v", err, restoreErr)
+		}
+		return fmt.Errorf("delete LLM Provider: %w", err)
+	}
+	return nil
+}
+
+func (a *Application) restoreProviderAPIKey(ctx context.Context, providerID, expectedRef, value string) error {
+	restoredRef, err := a.secrets.Store(ctx, "llm-provider/"+providerID, value)
+	if err != nil {
+		return err
+	}
+	if restoredRef != expectedRef {
+		return fmt.Errorf("secret adapter changed the Provider reference")
 	}
 	return nil
 }
@@ -303,7 +398,7 @@ func llmSettingsView(settings productworkflow.LLMSettings) LLMSettingsView {
 }
 
 func llmProviderView(provider productworkflow.LLMProvider, models []productworkflow.LLMModel) LLMProviderView {
-	view := LLMProviderView{ID: provider.ID, Name: provider.Name, Protocol: provider.Protocol, BaseURL: provider.BaseURL, APIKeyRef: provider.APIKeyRef, ExplicitDefault: provider.ExplicitDefault, EffectiveDefault: provider.EffectiveDefault, CreatedAt: provider.CreatedAt, Models: make([]LLMModelView, 0, len(models))}
+	view := LLMProviderView{ID: provider.ID, Name: provider.Name, Protocol: provider.Protocol, BaseURL: provider.BaseURL, HasAPIKey: provider.APIKeyRef != "", ExplicitDefault: provider.ExplicitDefault, EffectiveDefault: provider.EffectiveDefault, CreatedAt: provider.CreatedAt, Models: make([]LLMModelView, 0, len(models))}
 	for _, model := range models {
 		view.Models = append(view.Models, llmModelView(model))
 	}

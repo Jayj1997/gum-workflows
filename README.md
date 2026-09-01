@@ -8,13 +8,13 @@ Workflow 通过 Node 的 Input / Output Contract 组合工作过程，Node 之�
 
 项目遵循“现实工作流优先”：Agent 直接修改用户项目，Automation 在同一份工作状态上执行检查；Gum 负责组合、调度、结果留存和诊断，不默认复制项目、创建内部代码 Revision 或接管代码恢复。
 
-当前 YAML、CLI 与 Mock Agent 主要服务 Runtime 开发、验证和演示。macOS 产品壳已经可以通过通用 Application seam 在 SQLite 中创作 Product Workflow、管理用户级 LLM Provider / Model Slot，并用 deterministic fake executor 完成一次持久化 Product Run 与 Conversation 结果查看；真实 LLM 闭环仍按后续票逐步交付。
+当前 YAML、CLI 与 Mock Agent 主要服务 Runtime 开发、验证和演示。macOS 产品壳已经可以通过通用 Application seam 在 SQLite 中创作 Product Workflow、管理用户级 LLM Provider / Model Slot，并把 API Key 保存到 macOS Keychain；deterministic fake executor 可完成一次持久化 Product Run 与 Conversation 结果查看，真实 LLM 请求仍按后续票交付。
 
 ## 项目规划
 
 基础 Runtime、平台核心和首个 14 后产品模块已经完成。后续产品化按 [`Gum-Workflows 产品化阶段设计计划`](<plans/Gum-Workflows 产品化阶段：本地 GUI、Node 能力与 LLM Config 设计计划.md>) 推进，主要方向包括：
 
-- 在已完成的 SQLite Provider / Model 设置上接入 Keychain，并实现真实 OpenAI-compatible LLM Client 与 `llm-chat` Agent Node；
+- 使用已完成的 Keychain 凭据边界实现真实 OpenAI-compatible LLM Client 与 `llm-chat` Agent Node；
 - 在已完成的只读 Revision/Run 分层历史浏览上补齐 Interrupted 标记、Resume/Rerun，并在后续支持 Windows；
 - 完善 Artifact 预览、来源追踪、多版本比较和人工替换；
 - 设计结构化 Run Event，以及 Resume、Retry、Rerun、Fork 和崩溃恢复；
@@ -25,6 +25,19 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 任何新模块都需要先形成设计文档和开发票，再修改实现。模块完成后的 README 与进度文档同步方法见 [`README 更新规范`](<plans/README 更新规范：模块完成后的进度同步.md>)。
 
 ## 项目当前进展
+
+### macOS Keychain Secret Adapter — 已完成
+
+该切片让 macOS 用户在通用 Provider 设置界面中直接保存 API Key，同时把明文凭据限制在 Product Application 与注入的 Secret Adapter 边界内；SQLite、普通 ViewModel、Diagnostics、日志与 Artifact 都不保存或返回明文 Key。
+
+主要交付：
+
+- Desktop 通过注入的 macOS Keychain Adapter 保存、读取和删除 Provider 凭据；SQLite 只保存稳定、不可推出明文的 `keychain://` 引用；
+- Provider 创建和 Key 轮换接受密码输入，普通 ViewModel 只返回 `hasApiKey`；留空更新保留原 Key，删除前由 UI 确认并同步删除凭据；
+- Keychain 不可用时 Application 明确失败，不降级为 SQLite 明文；持久化失败路径会清理或恢复外部凭据；
+- Browser Mock 与 Go 测试注入进程内 Memory Adapter，不访问真实用户 Keychain；macOS Adapter 通过 Security.framework 工作，并在注入的原生边界上验证错误文本不泄漏 Secret。
+
+详细范围见 [product-workflow spec](.scratch/product-workflow/spec.md) 和 [issue 09](.scratch/product-workflow/issues/09-macos-keychain-secret-adapter.md)。
 
 ### Product Workflow Revision reuse 与 Run history UI — 已完成
 
@@ -58,7 +71,7 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 
 主要交付：
 
-- 用户可以创建、编辑和删除多个 Provider，并在每个 Provider 下手工管理多个 Model Slot；SQLite 只保存通过 URI 校验的 API Key Secret 引用，不接受明文凭据；
+- 用户可以创建、编辑和删除多个 Provider，并在每个 Provider 下手工管理多个 Model Slot；SQLite 层只持久化通过 URI 校验的 API Key Secret 引用；
 - Provider 与 Model Slot 的 UUID 在名称、Base URL、Provider Model ID 或生成默认值编辑后保持不变，Model UUID 明确表示可变配置槽；
 - 每层最多一个显式 default；没有显式 default 或删除 default 后，按 `(created_at ASC, UUID ASC)` 选择有效 default；
 - 没有 Provider 或有效 Provider 没有 Model 时，Application resolver 返回可定位、可理解的设置 Diagnostic；
@@ -163,7 +176,7 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 - 四个内置 Code Quality Check 当前只支持 Darwin / Linux，Windows 原生、PowerShell 与 WSL 后端尚未实现；
 - Host Execution Environment 继承用户的 PATH、Go 配置、缓存、工具链与网络策略，适合受信任项目，但不是安全沙箱，也不提供容器、CPU / 内存隔离或自动 timeout；
 - Static 只代表 `go vet`，Coverage 只报告本次 full-scope 测试的 statement coverage，Race 只报告本次是否观察到 race；
-- macOS GUI 当前支持 Product Workflow 创建、Draft autosave、通用 Node/端口创作、只读 Preview、SQLite Provider / Model Slot 设置，deterministic fake StartRun、Revision、Run/Node Run 与本次 Conversation Artifact 查看，以及只读 Revision/Run 分层历史浏览（重启后可查询）；Keychain、真实 LLM、人工输入、Interrupted 标记与运行恢复仍属于后续规划。
+- macOS GUI 当前支持 Product Workflow 创建、Draft autosave、通用 Node/端口创作、只读 Preview、SQLite Provider / Model Slot 设置与 Keychain API Key 保存，deterministic fake StartRun、Revision、Run/Node Run 与本次 Conversation Artifact 查看，以及只读 Revision/Run 分层历史浏览（重启后可查询）；真实 LLM、人工输入、Interrupted 标记与运行恢复仍属于后续规划。
 
 ## 使用与文档
 

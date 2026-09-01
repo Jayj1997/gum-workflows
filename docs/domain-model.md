@@ -1,6 +1,6 @@
 # Gum-Workflows Domain Model
 
-本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 01–08 的 SQLite identity、Draft、创作/Preview、LLM 设置、P9 fake StartRun 与只读分层 Run history。术语以根目录 `CONTEXT.md` 为权威；真实 LLM、人工输入、Interrupted、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
+本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 01–09 的 SQLite identity、Draft、创作/Preview、LLM 设置、macOS Keychain Secret Adapter、P9 fake StartRun 与只读分层 Run history。术语以根目录 `CONTEXT.md` 为权威；真实 LLM、人工输入、Interrupted、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
 
 ## 0. Product Workflow identity
 
@@ -18,11 +18,11 @@ Gum Config Schema 是小型产品领域合同，支持 string、markdown、integ
 
 ## 0.1 Product LLM settings
 
-产品 LLM 设置只以 `product.db` 为事实来源，不读取或兼容 workflow/v1 的用户级 `llm.yaml`。Provider 保存稳定 Gum UUID、显示名称、协议、Base URL、API Key Secret 引用、创建时间、显式 default 与软删除状态；Model Slot 保存全局稳定 Gum Model UUID、所属 Provider、显示名称、可编辑 Provider Model ID、可选 temperature/max output tokens 生成默认值、创建时间、显式 default 与软删除状态。API Key 字段只接受 URI 形式的 Secret 引用，SQLite schema 不提供明文 Secret 列。
+产品 LLM 设置只以 `product.db` 为事实来源，不读取或兼容 workflow/v1 的用户级 `llm.yaml`。Provider 保存稳定 Gum UUID、显示名称、协议、Base URL、API Key Secret 引用、创建时间、显式 default 与软删除状态；Model Slot 保存全局稳定 Gum Model UUID、所属 Provider、显示名称、可编辑 Provider Model ID、可选 temperature/max output tokens 生成默认值、创建时间、显式 default 与软删除状态。Desktop UI 把 API Key 明文交给 Product Application，Application 再调用注入的 macOS Keychain Adapter；SQLite schema 只接受 URI 形式的引用且没有明文 Secret 列。普通 Provider ViewModel 只暴露 `hasApiKey`，不返回明文或 Secret 引用。
 
 Provider 与每个 Provider 下的 Model 各自最多一个显式 default。Resolver 只考虑未删除项：优先显式 default，否则按 `(created_at ASC, UUID ASC)` 取第一个；删除显式 default 后立即按同一规则产生新的有效 default。没有 Provider 或有效 Provider 没有 Model 时返回结构化设置 Diagnostic。重命名 Provider、修改 Base URL 或 Provider Model ID 不改变 Gum UUID。
 
-Desktop 与 Browser Mock 经同一 WorkflowClient 和 Product Application 用例创建、编辑、删除并设置 default。当前设置不调用 `/models`，不维护 Capability、position、enable/disable 或自动 Provider failover。StartRun 对空 Model Preference 按双层 default 物化 Gum Model UUID；Keychain Secret Adapter 与真实协议请求属于后续票。
+Desktop 与 Browser Mock 经同一 WorkflowClient 和 Product Application 用例创建、编辑、删除并设置 default。Provider 更新时空 Key 保留原凭据，非空 Key 在同一稳定引用上轮换；删除必须携带用户确认并删除对应凭据。Keychain 不可用时操作明确失败，不回退为 SQLite 明文。Browser Mock 与 Go 测试使用注入的进程内 Memory Adapter，不访问真实用户 Keychain。当前设置不调用 `/models`，不维护 Capability、position、enable/disable 或自动 Provider failover。StartRun 对空 Model Preference 按双层 default 物化 Gum Model UUID；真实协议请求属于后续票。
 
 ## 0.2 P9 StartRun、Revision 与 fake Artifact
 

@@ -1,7 +1,27 @@
 // Browser Mock settings mirror the Product Application behavior without SQLite.
+export function createMemorySecretAdapter() {
+	const values = new Map();
+	return {
+		store(name, value) {
+			if (!value) throw new Error("Secret value must not be empty");
+			const reference = `memory://gum-workflows/${encodeURIComponent(name)}`;
+			values.set(reference, value);
+			return reference;
+		},
+		resolve(reference) {
+			if (!values.has(reference)) throw new Error("Secret reference not found");
+			return values.get(reference);
+		},
+		delete(reference) {
+			if (!values.delete(reference)) throw new Error("Secret reference not found");
+		},
+	};
+}
+
 export function createBrowserLLMSettings(options = {}) {
 	const newID = options.newID ?? (() => crypto.randomUUID());
 	const now = options.now ?? (() => new Date().toISOString());
+	const secrets = options.secrets ?? createMemorySecretAdapter();
 	const providers = [];
 	const byCreatedAtAndId = (left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
 
@@ -10,11 +30,11 @@ export function createBrowserLLMSettings(options = {}) {
 		const effectiveProvider = activeProviders.find((provider) => provider.explicitDefault) ?? activeProviders[0];
 		return {
 			providers: activeProviders.map((provider) => {
-				const { deleted: _deletedProvider, ...activeProvider } = provider;
+				const { deleted: _deletedProvider, apiKeyRef: _apiKeyRef, ...activeProvider } = provider;
 				const models = provider.models.filter((model) => !model.deleted).sort(byCreatedAtAndId);
 				const effectiveModel = models.find((model) => model.explicitDefault) ?? models[0];
 				return {
-					...activeProvider,
+					...activeProvider, hasApiKey: Boolean(provider.apiKeyRef),
 					models: models.map((model) => {
 						const { deleted: _deletedModel, ...activeModel } = model;
 						return { ...activeModel, effectiveDefault: model === effectiveModel };
@@ -41,16 +61,27 @@ export function createBrowserLLMSettings(options = {}) {
 	return {
 		getSettings,
 		createProvider(input) {
-			const provider = { id: newID(), ...structuredClone(input), explicitDefault: false, effectiveDefault: false, createdAt: now(), models: [] };
+			const id = newID();
+			const apiKeyRef = secrets.store(`llm-provider/${id}`, input.apiKey);
+			const provider = { id, name: input.name, protocol: input.protocol, baseUrl: input.baseUrl, apiKeyRef, explicitDefault: false, effectiveDefault: false, createdAt: now(), models: [] };
 			providers.push(provider);
 			return structuredClone(providerView(provider.id));
 		},
 		updateProvider(input) {
 			const provider = providers.find((candidate) => candidate.id === input.id && !candidate.deleted);
-			Object.assign(provider, structuredClone({ name: input.name, protocol: input.protocol, baseUrl: input.baseUrl, apiKeyRef: input.apiKeyRef }));
+			if (input.apiKey) {
+				const reference = secrets.store(`llm-provider/${provider.id}`, input.apiKey);
+				if (reference !== provider.apiKeyRef) throw new Error("Secret Adapter changed the Provider reference");
+			}
+			Object.assign(provider, structuredClone({ name: input.name, protocol: input.protocol, baseUrl: input.baseUrl }));
 			return structuredClone(providerView(provider.id));
 		},
-		deleteProvider(providerID) { providers.find((provider) => provider.id === providerID).deleted = true; },
+		deleteProvider(input) {
+			if (!input.confirmed) throw new Error("Provider deletion requires confirmation");
+			const provider = providers.find((candidate) => candidate.id === input.providerId && !candidate.deleted);
+			secrets.delete(provider.apiKeyRef);
+			provider.deleted = true;
+		},
 		setDefaultProvider(providerID) {
 			for (const provider of providers) provider.explicitDefault = provider.id === providerID && !provider.deleted;
 			return structuredClone(getSettings());

@@ -32,7 +32,7 @@
 				<input id="provider-name" required placeholder="Provider name" aria-label="Provider name" />
 				<select id="provider-protocol" aria-label="Provider protocol"><option value="openai-chat-completions">OpenAI-compatible Chat Completions</option></select>
 				<input id="provider-base-url" type="url" required placeholder="https://api.example/v1" aria-label="Base URL" />
-				<input id="provider-api-key-ref" required placeholder="keychain://provider" aria-label="API Key reference" />
+				<input id="provider-api-key" type="password" required autocomplete="new-password" placeholder="API Key" aria-label="API Key" />
 				<button type="submit">Add Provider</button>
 			</form>
 			<ul id="llm-settings-diagnostics" class="settings-diagnostics"></ul>

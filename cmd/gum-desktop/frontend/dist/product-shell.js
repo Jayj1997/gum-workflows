@@ -178,7 +178,7 @@ export function createProductShell(view, client, options = {}) {
   });
 	view.onCreateLLMProvider?.((input) => changeLLMSettings(() => client.createLLMProvider(input)));
 	view.onUpdateLLMProvider?.((input) => changeLLMSettings(() => client.updateLLMProvider(input)));
-	view.onDeleteLLMProvider?.((providerId) => changeLLMSettings(() => client.deleteLLMProvider(providerId)));
+	view.onDeleteLLMProvider?.((input) => changeLLMSettings(() => client.deleteLLMProvider(input)));
 	view.onSetDefaultLLMProvider?.((providerId) => changeLLMSettings(() => client.setDefaultLLMProvider(providerId)));
 	view.onCreateLLMModel?.((input) => changeLLMSettings(() => client.createLLMModel(input)));
 	view.onUpdateLLMModel?.((input) => changeLLMSettings(() => client.updateLLMModel(input)));

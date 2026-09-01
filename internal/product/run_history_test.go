@@ -9,6 +9,7 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/product"
 	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
 	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
+	"github.com/Jayj1997/gum-workflows/internal/secret"
 )
 
 // newTracerApplication opens a fresh SQLite store with a Provider, a Model and the
@@ -26,7 +27,7 @@ func newTracerApplication(t *testing.T, ctx context.Context) (*product.Applicati
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	application := newTestApplicationWithRuns(t, store, paths)
-	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKeyRef: "env://TEST_API_KEY"})
+	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKey: "test-api-key"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +233,7 @@ func TestApplicationRunHistorySurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
-	reopenedApp := product.NewApplication(reopened, mustCatalog(t), product.WithRunPaths(paths))
+	reopenedApp := product.NewApplication(reopened, mustCatalog(t), product.WithRunPaths(paths), product.WithSecretAdapter(secret.NewMemoryAdapter()))
 
 	revisions, err := reopenedApp.ListRevisions(ctx, workflow.ID)
 	if err != nil {

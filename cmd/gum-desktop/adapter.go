@@ -91,8 +91,8 @@ func (a *DesktopAdapter) UpdateLLMProvider(input product.UpdateLLMProviderInput)
 }
 
 // DeleteLLMProvider forwards Provider deletion through WorkflowApplication.
-func (a *DesktopAdapter) DeleteLLMProvider(providerID string) error {
-	return a.application.DeleteLLMProvider(a.ctx, providerID)
+func (a *DesktopAdapter) DeleteLLMProvider(input product.DeleteLLMProviderInput) error {
+	return a.application.DeleteLLMProvider(a.ctx, input)
 }
 
 // SetDefaultLLMProvider forwards explicit Provider default selection.

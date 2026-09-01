@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -17,7 +18,168 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
 	productworkflow "github.com/Jayj1997/gum-workflows/internal/product/workflow"
 	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
+	"github.com/Jayj1997/gum-workflows/internal/secret"
 )
+
+func TestApplicationStoresProviderAPIKeyOutsideSQLiteAndReturnsNoPlaintext(t *testing.T) {
+	ctx := context.Background()
+	databasePath := filepath.Join(t.TempDir(), "product.db")
+	store, err := history.Open(ctx, databasePath)
+	if err != nil {
+		t.Fatalf("open product database: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	secrets := secret.NewMemoryAdapter()
+	registry, err := nodecatalog.NewBuiltinRegistry()
+	if err != nil {
+		t.Fatalf("load product Node Catalog: %v", err)
+	}
+	application := product.NewApplication(store, registry, product.WithSecretAdapter(secrets))
+
+	created, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{
+		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKey: "sk-super-secret",
+	})
+	if err != nil {
+		t.Fatalf("create Provider: %v", err)
+	}
+	if !created.HasAPIKey {
+		t.Fatal("created Provider does not report a configured API Key")
+	}
+	encoded, err := json.Marshal(created)
+	if err != nil {
+		t.Fatalf("encode Provider view: %v", err)
+	}
+	if strings.Contains(string(encoded), "sk-super-secret") {
+		t.Fatalf("Provider ViewModel contains plaintext API Key: %s", encoded)
+	}
+	database, err := os.ReadFile(databasePath)
+	if err != nil {
+		t.Fatalf("read SQLite database: %v", err)
+	}
+	if strings.Contains(string(database), "sk-super-secret") {
+		t.Fatal("SQLite database contains plaintext API Key")
+	}
+}
+
+func TestApplicationDeletesProviderCredentialOnlyAfterConfirmation(t *testing.T) {
+	ctx := context.Background()
+	store, err := history.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	if err != nil {
+		t.Fatalf("open product database: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	secrets := secret.NewMemoryAdapter()
+	registry, err := nodecatalog.NewBuiltinRegistry()
+	if err != nil {
+		t.Fatalf("load product Node Catalog: %v", err)
+	}
+	application := product.NewApplication(store, registry, product.WithSecretAdapter(secrets))
+	created, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{
+		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKey: "sk-delete-me",
+	})
+	if err != nil {
+		t.Fatalf("create Provider: %v", err)
+	}
+	settings, err := store.GetLLMSettings(ctx)
+	if err != nil {
+		t.Fatalf("get persisted Provider: %v", err)
+	}
+	reference := settings.Providers[0].APIKeyRef
+
+	if err := application.DeleteLLMProvider(ctx, product.DeleteLLMProviderInput{ProviderID: created.ID}); err == nil {
+		t.Fatal("delete Provider succeeded without confirmation")
+	}
+	if _, err := secrets.Resolve(ctx, reference); err != nil {
+		t.Fatalf("unconfirmed delete removed credential: %v", err)
+	}
+	if err := application.DeleteLLMProvider(ctx, product.DeleteLLMProviderInput{ProviderID: created.ID, Confirmed: true}); err != nil {
+		t.Fatalf("delete confirmed Provider: %v", err)
+	}
+	if _, err := secrets.Resolve(ctx, reference); err == nil {
+		t.Fatal("confirmed Provider delete left credential in Secret Adapter")
+	}
+}
+
+func TestApplicationUpdatesProviderWithoutReturningOrPersistingAPIKey(t *testing.T) {
+	ctx := context.Background()
+	store, err := history.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	if err != nil {
+		t.Fatalf("open product database: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	secrets := secret.NewMemoryAdapter()
+	registry, err := nodecatalog.NewBuiltinRegistry()
+	if err != nil {
+		t.Fatalf("load product Node Catalog: %v", err)
+	}
+	application := product.NewApplication(store, registry, product.WithSecretAdapter(secrets))
+	created, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{
+		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKey: "sk-original",
+	})
+	if err != nil {
+		t.Fatalf("create Provider: %v", err)
+	}
+	settings, err := store.GetLLMSettings(ctx)
+	if err != nil {
+		t.Fatalf("get persisted Provider: %v", err)
+	}
+	reference := settings.Providers[0].APIKeyRef
+
+	if _, err := application.UpdateLLMProvider(ctx, product.UpdateLLMProviderInput{
+		ID: created.ID, Name: "Renamed", Protocol: created.Protocol, BaseURL: created.BaseURL,
+	}); err != nil {
+		t.Fatalf("update Provider without rotating Key: %v", err)
+	}
+	if value, err := secrets.Resolve(ctx, reference); err != nil || value != "sk-original" {
+		t.Fatalf("preserved API Key = %q, %v", value, err)
+	}
+	updated, err := application.UpdateLLMProvider(ctx, product.UpdateLLMProviderInput{
+		ID: created.ID, Name: "Renamed", Protocol: created.Protocol, BaseURL: created.BaseURL, APIKey: "sk-rotated",
+	})
+	if err != nil {
+		t.Fatalf("rotate Provider Key: %v", err)
+	}
+	if value, err := secrets.Resolve(ctx, reference); err != nil || value != "sk-rotated" {
+		t.Fatalf("rotated API Key = %q, %v", value, err)
+	}
+	encoded, err := json.Marshal(updated)
+	if err != nil {
+		t.Fatalf("encode updated Provider: %v", err)
+	}
+	if strings.Contains(string(encoded), "sk-original") || strings.Contains(string(encoded), "sk-rotated") {
+		t.Fatalf("updated Provider ViewModel contains plaintext API Key: %s", encoded)
+	}
+}
+
+func TestApplicationFailsWhenSecretAdapterIsUnavailable(t *testing.T) {
+	ctx := context.Background()
+	store, err := history.Open(ctx, filepath.Join(t.TempDir(), "product.db"))
+	if err != nil {
+		t.Fatalf("open product database: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	registry, err := nodecatalog.NewBuiltinRegistry()
+	if err != nil {
+		t.Fatalf("load product Node Catalog: %v", err)
+	}
+	application := product.NewApplication(store, registry)
+	_, err = application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{
+		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKey: "sk-must-not-leak",
+	})
+	if err == nil || !strings.Contains(err.Error(), "secret adapter is not configured") {
+		t.Fatalf("create Provider error = %v", err)
+	}
+	if strings.Contains(err.Error(), "sk-must-not-leak") {
+		t.Fatalf("create Provider error contains API Key: %v", err)
+	}
+	settings, err := store.GetLLMSettings(ctx)
+	if err != nil {
+		t.Fatalf("get settings after failed create: %v", err)
+	}
+	if len(settings.Providers) != 0 {
+		t.Fatalf("failed create persisted Providers: %#v", settings.Providers)
+	}
+}
 
 func TestApplicationStartsFakeConversationRunFromVisibleDraft(t *testing.T) {
 	ctx := context.Background()
@@ -35,10 +197,10 @@ func TestApplicationStartsFakeConversationRunFromVisibleDraft(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load product Node Catalog: %v", err)
 	}
-	application := product.NewApplication(store, registry, product.WithRunPaths(paths))
+	application := product.NewApplication(store, registry, product.WithRunPaths(paths), product.WithSecretAdapter(secret.NewMemoryAdapter()))
 
 	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{
-		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKeyRef: "env://TEST_API_KEY",
+		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKey: "test-api-key",
 	})
 	if err != nil {
 		t.Fatalf("create Provider: %v", err)
@@ -127,7 +289,7 @@ func TestApplicationFakeRunConsumesTheAuthoredConversationDataEdge(t *testing.T)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	application := newTestApplicationWithRuns(t, store, paths)
-	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKeyRef: "env://TEST_API_KEY"})
+	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKey: "test-api-key"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +336,7 @@ func TestApplicationStartRunRejectsStaleDraftWithoutMaterializingModel(t *testin
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	application := newTestApplicationWithRuns(t, store, paths)
-	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKeyRef: "env://TEST_API_KEY"})
+	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKey: "test-api-key"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +413,7 @@ func TestApplicationRepeatedStartRunReusesRevisionAndCreatesNewRun(t *testing.T)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	application := newTestApplicationWithRuns(t, store, paths)
-	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKeyRef: "env://TEST_API_KEY"})
+	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKey: "test-api-key"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +462,7 @@ func TestApplicationArtifactFailureDoesNotMaterializeDraft(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	application := newTestApplicationWithRuns(t, store, paths)
-	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKeyRef: "env://TEST_API_KEY"})
+	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKey: "test-api-key"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +488,7 @@ func newTestApplicationWithRuns(t *testing.T, store *history.Store, paths runtim
 	if err != nil {
 		t.Fatalf("load product Node Catalog: %v", err)
 	}
-	return product.NewApplication(store, registry, product.WithRunPaths(paths))
+	return product.NewApplication(store, registry, product.WithRunPaths(paths), product.WithSecretAdapter(secret.NewMemoryAdapter()))
 }
 
 func saveTracerDraft(t *testing.T, ctx context.Context, application *product.Application) (product.WorkflowView, product.DraftUpdateView) {
@@ -374,7 +536,7 @@ func TestApplicationManagesProviderModelSettingsAndResolvesDefaults(t *testing.T
 	application := newTestApplication(t, store)
 
 	first, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{
-		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://primary.example/v1", APIKeyRef: "keychain://primary",
+		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://primary.example/v1", APIKey: "primary-secret",
 	})
 	if err != nil {
 		t.Fatalf("create first Provider: %v", err)
@@ -383,7 +545,7 @@ func TestApplicationManagesProviderModelSettingsAndResolvesDefaults(t *testing.T
 		t.Fatalf("first Provider defaults = effective %t explicit %t", first.EffectiveDefault, first.ExplicitDefault)
 	}
 	second, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{
-		Name: "Secondary", Protocol: "openai-chat-completions", BaseURL: "https://secondary.example/v1", APIKeyRef: "keychain://secondary",
+		Name: "Secondary", Protocol: "openai-chat-completions", BaseURL: "https://secondary.example/v1", APIKey: "secondary-secret",
 	})
 	if err != nil {
 		t.Fatalf("create second Provider: %v", err)
@@ -435,7 +597,7 @@ func TestApplicationManagesProviderModelSettingsAndResolvesDefaults(t *testing.T
 	}
 
 	updatedProvider, err := application.UpdateLLMProvider(ctx, product.UpdateLLMProviderInput{
-		ID: first.ID, Name: "Primary renamed", Protocol: "openai-chat-completions", BaseURL: "https://new.example/v1", APIKeyRef: "keychain://rotated",
+		ID: first.ID, Name: "Primary renamed", Protocol: "openai-chat-completions", BaseURL: "https://new.example/v1", APIKey: "rotated-secret",
 	})
 	if err != nil {
 		t.Fatalf("update Provider: %v", err)
@@ -454,7 +616,7 @@ func TestApplicationManagesProviderModelSettingsAndResolvesDefaults(t *testing.T
 		t.Fatalf("updated generation defaults = %#v", updatedModel.GenerationDefaults)
 	}
 
-	if err := application.DeleteLLMProvider(ctx, second.ID); err != nil {
+	if err := application.DeleteLLMProvider(ctx, product.DeleteLLMProviderInput{ProviderID: second.ID, Confirmed: true}); err != nil {
 		t.Fatalf("delete explicit default Provider: %v", err)
 	}
 	resolved, err = application.ResolveDefaultLLMModel(ctx)
@@ -505,7 +667,7 @@ func TestApplicationReturnsSettingsDiagnosticsWhenDefaultCannotResolve(t *testin
 	t.Cleanup(func() { _ = store.Close() })
 	application := newTestApplication(t, store)
 	if _, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{
-		Name: "Unsafe", Protocol: "openai-chat-completions", BaseURL: "https://api.example/v1", APIKeyRef: "plaintext-secret",
+		Name: "Unsafe", Protocol: "openai-chat-completions", BaseURL: "https://api.example/v1",
 	}); err == nil {
 		t.Fatal("create Provider accepted a plaintext API Key instead of a Secret reference")
 	}
@@ -518,7 +680,7 @@ func TestApplicationReturnsSettingsDiagnosticsWhenDefaultCannotResolve(t *testin
 		t.Fatalf("diagnostics without Provider = %#v", resolved.Diagnostics)
 	}
 	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{
-		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://api.example/v1", APIKeyRef: "keychain://primary",
+		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://api.example/v1", APIKey: "primary-secret",
 	})
 	if err != nil {
 		t.Fatalf("create Provider: %v", err)
@@ -538,7 +700,7 @@ func newTestApplication(t *testing.T, store *history.Store) *product.Application
 	if err != nil {
 		t.Fatalf("load product Node Catalog: %v", err)
 	}
-	return product.NewApplication(store, registry)
+	return product.NewApplication(store, registry, product.WithSecretAdapter(secret.NewMemoryAdapter()))
 }
 
 func TestApplicationCreatesAndListsSQLiteWorkflowsAcrossRestart(t *testing.T) {
