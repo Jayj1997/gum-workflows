@@ -177,14 +177,40 @@ func TestApplicationFirstModelUuidMaterializationCreatesNewRevision(t *testing.T
 	if second.RevisionID != first.RevisionID {
 		t.Fatalf("materialized re-run created a new Revision: %q vs %q", second.RevisionID, first.RevisionID)
 	}
-	// The pre-materialization Draft (no modelUuid) hashes differently from the
-	// materialized one, so the Revision here reflects the materialized semantics.
+
+	// Selecting a different Model UUID changes the execution semantics, so the
+	// next StartRun must create a new immutable Revision.
+	settings, err := application.GetLLMSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(settings.Providers) != 1 || len(settings.Providers[0].Models) != 1 {
+		t.Fatalf("settings = %#v, want one Provider with one Model", settings)
+	}
+	other, err := application.CreateLLMModel(ctx, product.CreateLLMModelInput{ProviderID: settings.Providers[0].ID, DisplayName: "Other", ProviderModelID: "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := application.UpdateDraft(ctx, product.UpdateDraftInput{
+		WorkflowID: workflow.ID, ExpectedLockVersion: second.Draft.LockVersion,
+		Content: withAgentModelUUID(t, second.Draft.Content, other.ID),
+	})
+	if err != nil {
+		t.Fatalf("model selection autosave: %v", err)
+	}
+	third, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: updated.Draft.LockVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.RevisionID == first.RevisionID {
+		t.Fatalf("model UUID change reused Revision %q", first.RevisionID)
+	}
 	revisions, err := application.ListRevisions(ctx, workflow.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(revisions) != 1 {
-		t.Fatalf("revisions = %d, want 1 (single materialized semantic version)", len(revisions))
+	if len(revisions) != 2 {
+		t.Fatalf("revisions = %d, want 2 (materialized default and explicit model UUID)", len(revisions))
 	}
 }
 
@@ -255,6 +281,27 @@ func withAgentDependsOn(t *testing.T, content map[string]any) map[string]any {
 		if node["id"] == "answer" {
 			node["dependsOn"] = []any{"prompt"}
 		}
+	}
+	return clone
+}
+
+// withAgentModelUUID returns a copy of the tracer Draft content with the agent
+// node's LLM preference pointed at the given Gum Model UUID.
+func withAgentModelUUID(t *testing.T, content map[string]any, modelUUID string) map[string]any {
+	t.Helper()
+	clone := cloneMap(t, content)
+	nodes := clone["nodes"].([]any)
+	for _, value := range nodes {
+		node := value.(map[string]any)
+		if node["id"] != "answer" {
+			continue
+		}
+		preference, _ := node["llm"].(map[string]any)
+		if preference == nil {
+			preference = map[string]any{}
+			node["llm"] = preference
+		}
+		preference["modelUuid"] = modelUUID
 	}
 	return clone
 }

@@ -130,20 +130,27 @@ const client = createBrowserWorkflowClient({
 			nodeRuns: [human, agent].map((node) => ({ id: crypto.randomUUID(), nodeId: node.id, nodeDefinition: node.definition, nodeExecutor: node.executor, status: "succeeded" })),
 			artifacts: [{ id: crypto.randomUUID(), nodeId: agent.id, port: "conversation", type: "Conversation", version: "2", uri: "2.json", messages }],
 		};
-		runs.set(run.id, { workflowId: input.workflowId, revisionId: run.revisionId, id: run.id, status: run.status, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), nodeRuns: structuredClone(run.nodeRuns), artifacts: structuredClone(run.artifacts) });
+		runs.set(run.id, {
+			workflowId: input.workflowId, revisionId: run.revisionId, id: run.id, status: run.status,
+			startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(),
+			// The Revision content and Run Snapshot that actually ran; getRunHistory
+			// replays them even after the live Draft moves on.
+			revisionContent: structuredClone(materialized), snapshot: structuredClone(run.snapshot),
+			nodeRuns: structuredClone(run.nodeRuns), artifacts: structuredClone(run.artifacts),
+		});
 		return structuredClone(run);
 	},
 	async listRevisions(workflowId) {
 		const counts = new Map();
 		for (const run of runs.values()) {
 			if (run.workflowId !== workflowId) continue;
-			counts.set(run.revisionId, (counts.get(run.revisionId) ?? 0) + 1);
+			counts.set(run.revisionId, { count: (counts.get(run.revisionId)?.count ?? 0) + 1, createdAt: run.startedAt });
 		}
 		const seen = new Map();
 		for (const [key, revisionId] of revisions) {
-			if (!counts.has(revisionId)) continue;
-			if (seen.has(revisionId)) continue;
-			seen.set(revisionId, { id: revisionId, semanticHash: key, runCount: counts.get(revisionId), createdAt: new Date().toISOString() });
+			const info = counts.get(revisionId);
+			if (!info || seen.has(revisionId)) continue;
+			seen.set(revisionId, { id: revisionId, semanticHash: key, runCount: info.count, createdAt: info.createdAt });
 		}
 		return [...seen.values()];
 	},
@@ -155,9 +162,14 @@ const client = createBrowserWorkflowClient({
 	async getRunHistory(runId) {
 		const run = runs.get(runId);
 		if (!run) throw new Error(`Run ${runId} not found`);
-		const draft = structuredClone(drafts.get(run.workflowId));
+		const draft = {
+			workflowId: run.workflowId,
+			content: structuredClone(run.revisionContent),
+			lockVersion: 0,
+			updatedAt: run.startedAt,
+		};
 		draft.preview = createWorkflowPreview(draft.content, nodeRegistry);
-		return { id: run.id, revisionId: run.revisionId, status: run.status, draft, snapshot: { executors: [], llmSelections: [] }, nodeRuns: structuredClone(run.nodeRuns), artifacts: structuredClone(run.artifacts) };
+		return { id: run.id, revisionId: run.revisionId, status: run.status, draft, snapshot: structuredClone(run.snapshot), nodeRuns: structuredClone(run.nodeRuns), artifacts: structuredClone(run.artifacts) };
 	},
 	async getLLMSettings() { return llmSettings.getSettings(); },
 	async createLLMProvider(input) { return llmSettings.createProvider(input); },

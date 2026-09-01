@@ -188,6 +188,48 @@ test("Run flushes pending autosave and uses the latest Draft lock token", async 
 	assert.equal(renderedRuns.at(-1).artifacts[0].messages[1].text, "Fake response");
 });
 
+test("History drill-down loads Revisions after a Run, then Runs and the Run detail", async () => {
+	let selectWorkflow, startRun, selectRevision, selectRun, refreshRevisions;
+	const renderedRevisions = [];
+	const renderedRevisionRuns = [];
+	const renderedHistoryRuns = [];
+	const view = {
+		onOpenWorkspace() {}, onCreateWorkflow() {}, onSelectWorkflow(handler) { selectWorkflow = handler; },
+		onDraftDirty() {}, onEditDraft() {}, onStartRun(handler) { startRun = handler; },
+		onRefreshRevisions(handler) { refreshRevisions = handler; },
+		onSelectRevision(handler) { selectRevision = handler; },
+		onSelectRun(handler) { selectRun = handler; },
+		render() {}, renderDraft() {}, renderDraftLoading() {}, renderNodeEditor() {},
+		renderRevisions(revisions) { renderedRevisions.push(structuredClone(revisions)); },
+		renderRevisionRuns(runs) { renderedRevisionRuns.push(structuredClone(runs)); },
+		renderHistoryRun(run) { renderedHistoryRuns.push(structuredClone(run)); },
+	};
+	const runResult = { ...structuredClone(expectedRun), draft: structuredClone(expectedDraft) };
+	const revisionRunListCalls = [];
+	const runHistoryCalls = [];
+	const client = createBrowserWorkflowClient({
+		async openWorkspace() { return expectedView; }, async createWorkflow() {}, async listWorkflows() { return []; },
+		async getDraft() { return structuredClone(expectedDraft); }, async updateDraft() {},
+		async startRun() { return structuredClone(runResult); },
+		async listRevisions(workflowId) { return [{ ...expectedRevisions[0], id: expectedRun.revisionId, runCount: 2 }]; },
+		async listRevisionRuns(revisionId) { revisionRunListCalls.push(revisionId); return structuredClone(expectedRevisionRuns); },
+		async getRunHistory(runId) { runHistoryCalls.push(runId); return structuredClone(runResult); },
+	});
+	createProductShell(view, client);
+	await selectWorkflow(expectedWorkflow.id);
+	await startRun();
+	refreshRevisions();
+	await selectRevision("revision-uuid");
+	await selectRun("run-uuid");
+
+	// Revisions render on workflow selection and again after a successful Run.
+	assert.deepEqual(renderedRevisions.at(-1), [{ ...expectedRevisions[0], id: expectedRun.revisionId, runCount: 2 }]);
+	assert.deepEqual(revisionRunListCalls, ["revision-uuid"]);
+	assert.deepEqual(renderedRevisionRuns.at(-1), expectedRevisionRuns);
+	assert.deepEqual(runHistoryCalls, ["run-uuid"]);
+	assert.equal(renderedHistoryRuns.at(-1).artifacts[0].messages[1].text, "Fake response");
+});
+
 test("Browser Mock settings use UUID tie-breaks and truthful mutation defaults", () => {
 	const ids = ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "cccccccc-cccc-4ccc-8ccc-cccccccccccc"];
 	const settings = createBrowserLLMSettings({ newID: () => ids.shift(), now: () => "2026-09-01T00:00:00Z" });
