@@ -40,10 +40,16 @@ const runButton = document.querySelector("#start-run");
 const runStatus = document.querySelector("#run-status");
 const nodeRunList = document.querySelector("#node-run-list");
 const artifactList = document.querySelector("#artifact-list");
+const historyRefreshButton = document.querySelector("#history-refresh");
+const revisionList = document.querySelector("#revision-list");
+const revisionRunList = document.querySelector("#revision-run-list");
+const historyRunStatus = document.querySelector("#history-run-status");
+const historyNodeRunList = document.querySelector("#history-node-run-list");
+const historyArtifactList = document.querySelector("#history-artifact-list");
 
 createProductShell(
   createProductDOMView(
-		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKeyRef, llmProviderList, llmDiagnosticList, runButton, runStatus, nodeRunList, artifactList },
+		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKeyRef, llmProviderList, llmDiagnosticList, runButton, runStatus, nodeRunList, artifactList, historyRefreshButton, revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList },
     productStatusMessage,
   ),
   client,

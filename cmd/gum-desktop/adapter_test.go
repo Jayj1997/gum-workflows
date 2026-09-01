@@ -24,6 +24,8 @@ type applicationStub struct {
 	updateInput  product.UpdateDraftInput
 	startInput   product.StartRunInput
 	run          product.RunView
+	revisions    []product.RevisionView
+	runSummaries []product.RunSummaryView
 	catalog      []nodecatalog.Entry
 }
 
@@ -54,6 +56,18 @@ func (s *applicationStub) UpdateDraft(_ context.Context, input product.UpdateDra
 
 func (s *applicationStub) StartRun(_ context.Context, input product.StartRunInput) (product.RunView, error) {
 	s.startInput = input
+	return s.run, s.err
+}
+
+func (s *applicationStub) ListRevisions(context.Context, string) ([]product.RevisionView, error) {
+	return s.revisions, s.err
+}
+
+func (s *applicationStub) ListRevisionRuns(context.Context, string) ([]product.RunSummaryView, error) {
+	return s.runSummaries, s.err
+}
+
+func (s *applicationStub) GetRunHistory(context.Context, string) (product.RunView, error) {
 	return s.run, s.err
 }
 
@@ -187,6 +201,37 @@ func TestDesktopAdapterStartsRunThroughWorkflowApplication(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(application.startInput, input) {
 		t.Fatalf("Run/input = %#v/%#v, want %#v/%#v", got, application.startInput, want, input)
+	}
+}
+
+func TestDesktopAdapterListsRevisionsRunsAndGetsRunThroughWorkflowApplication(t *testing.T) {
+	t.Parallel()
+
+	revisions := []product.RevisionView{{ID: "revision-id", SemanticHash: "abc", RunCount: 2}}
+	runSummaries := []product.RunSummaryView{{ID: "run-id", RevisionID: "revision-id", Status: "succeeded"}}
+	run := product.RunView{ID: "run-id", RevisionID: "revision-id", Status: "succeeded"}
+	adapter := newDesktopAdapter(&applicationStub{revisions: revisions, runSummaries: runSummaries, run: run})
+
+	gotRevisions, err := adapter.ListRevisions("workflow-id")
+	if err != nil {
+		t.Fatalf("list revisions: %v", err)
+	}
+	if !reflect.DeepEqual(gotRevisions, revisions) {
+		t.Fatalf("revisions = %#v, want %#v", gotRevisions, revisions)
+	}
+	gotRuns, err := adapter.ListRevisionRuns("revision-id")
+	if err != nil {
+		t.Fatalf("list revision runs: %v", err)
+	}
+	if !reflect.DeepEqual(gotRuns, runSummaries) {
+		t.Fatalf("revision runs = %#v, want %#v", gotRuns, runSummaries)
+	}
+	gotRun, err := adapter.GetRunHistory("run-id")
+	if err != nil {
+		t.Fatalf("get run history: %v", err)
+	}
+	if !reflect.DeepEqual(gotRun, run) {
+		t.Fatalf("run history = %#v, want %#v", gotRun, run)
 	}
 }
 

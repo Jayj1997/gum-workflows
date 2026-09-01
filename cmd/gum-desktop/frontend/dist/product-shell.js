@@ -25,6 +25,7 @@ export function createProductShell(view, client, options = {}) {
 	let currentDraft;
 	let nodeCatalog = [];
 	let selectedNodeId = "";
+	let activeWorkflowId = "";
 	let editSequence = 0;
 	let selectionSequence = 0;
 	let saveQueue = Promise.resolve();
@@ -35,6 +36,14 @@ export function createProductShell(view, client, options = {}) {
 	async function refreshLLMSettings() {
 		if (!view.renderLLMSettings || !client.getLLMSettings) return;
 		view.renderLLMSettings(await client.getLLMSettings());
+	}
+	async function refreshRevisions() {
+		if (!activeWorkflowId || !view.renderRevisions || !client.listRevisions) return;
+		try {
+			view.renderRevisions(await client.listRevisions(activeWorkflowId));
+		} catch (error) {
+			view.render({ status: "error", title: "Gum Workflows", message: errorMessage(error) });
+		}
 	}
 	async function changeLLMSettings(action) {
 		try {
@@ -182,7 +191,10 @@ export function createProductShell(view, client, options = {}) {
 		saveQueue = Promise.resolve();
 		currentDraft = undefined;
 		selectedNodeId = "";
+		activeWorkflowId = workflowId;
 		view.renderDraftLoading();
+		view.renderRevisions?.([]);
+		view.renderRevisionRuns?.([]);
 		try {
 			const draft = await client.getDraft(workflowId);
 			if (selection !== selectionSequence) return;
@@ -190,6 +202,7 @@ export function createProductShell(view, client, options = {}) {
 			currentDraft = draft;
 			view.renderDraft({ draft: currentDraft, preview: currentDraft.preview });
 			renderSelectedNode();
+			await refreshRevisions();
 		} catch (error) {
 			view.render({ status: "error", title: "Gum Workflows", message: errorMessage(error) });
 		}
@@ -212,6 +225,24 @@ export function createProductShell(view, client, options = {}) {
 			currentDraft = result.draft;
 			view.renderDraft?.({ draft: currentDraft, preview: currentDraft.preview });
 			view.renderRun?.(result);
+			await refreshRevisions();
+		} catch (error) {
+			view.render({ status: "error", title: "Gum Workflows", message: errorMessage(error) });
+		}
+	});
+	view.onRefreshRevisions?.(refreshRevisions);
+	view.onSelectRevision?.(async (revisionId) => {
+		if (!view.renderRevisionRuns || !client.listRevisionRuns) return;
+		try {
+			view.renderRevisionRuns(await client.listRevisionRuns(revisionId));
+		} catch (error) {
+			view.render({ status: "error", title: "Gum Workflows", message: errorMessage(error) });
+		}
+	});
+	view.onSelectRun?.(async (runId) => {
+		if (!view.renderHistoryRun || !client.getRunHistory) return;
+		try {
+			view.renderHistoryRun(await client.getRunHistory(runId));
 		} catch (error) {
 			view.render({ status: "error", title: "Gum Workflows", message: errorMessage(error) });
 		}

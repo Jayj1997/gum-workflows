@@ -4,12 +4,18 @@
 
 **Blocked by:** 07: Fake StartRun、Revision 与 Conversation Artifact
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 相同规范化语义哈希的 Draft 重复 StartRun 复用同一 Revision。
-- [ ] 每次成功 StartRun 都创建新的 Run UUID，并分别记录 Node Run 和 Artifact。
-- [ ] 修改执行语义或首次物化 Model UUID 会创建新的 Revision。
-- [ ] 展示文案、Presentation Hint 和 UI view preference 变化不创建 Revision。
-- [ ] UI 可以从 Workflow 查看 Revision 列表、每个 Revision 的 Runs 和每次 Run 的 Node/Artifact 摘要。
-- [ ] 应用重启后 fake tracer 的历史仍可查询。
+- [x] 相同规范化语义哈希的 Draft 重复 StartRun 复用同一 Revision。
+- [x] 每次成功 StartRun 都创建新的 Run UUID，并分别记录 Node Run 和 Artifact。
+- [x] 修改执行语义或首次物化 Model UUID 会创建新的 Revision。
+- [x] 展示文案、Presentation Hint 和 UI view preference 变化不创建 Revision。
+- [x] UI 可以从 Workflow 查看 Revision 列表、每个 Revision 的 Runs 和每次 Run 的 Node/Artifact 摘要。
+- [x] 应用重启后 fake tracer 的历史仍可查询。
 
+## Comments
+
+- 2026-09-01：新增独立只读 `RunHistoryRepository` 读 seam（`ListProductWorkflowRevisions` / `ListProductWorkflowRevisionRuns` / `GetProductRun`），从既有 `product_workflow_revision / run / node_run / artifact` 表查询，不写也不改 Workflow Run 状态，无需新增 schema 迁移。Product Application 暴露 `ListRevisions` / `ListRevisionRuns` / `GetRunHistory` 用例并加入 `WorkflowApplication`，Desktop Adapter 与 Browser Mock 通过同一 WorkflowClient 提供分层历史浏览。
+- Revision reuse 与新 Run 身份复用 07 已落地的 SQLite 写链；本票补齐显式测试：相同语义重复运行复用 Revision、执行语义或首次物化 Model UUID 变化产生新 Revision、展示文案/Presentation/view preference 不进入哈希。Run 详情复用 Run View 形态，Conversation 消息从同一 Run 的 filesystem Artifact Store 还原。
+- UI 新增 Workflow History 面板：Revision 列表 → 每个 Revision 的 Runs → 选中 Run 的 Node Run/Conversation Artifact 摘要；StartRun 后自动刷新 Revision 列表。history 落在 SQLite 与 Local Data Root，重启后已完成 Run、Node Run、Resolved LLM Selection 与 Conversation Artifact 仍可查询。
+- 覆盖测试：Store 与 Application 级历史查询、Revision reuse / 新 Revision / presentation 不创建 Revision / 首次物化 Model UUID 产生新 Revision、重启后历史可查询；Desktop Adapter 转发测试与前端合同测试（node --test）同步扩展。分层历史为只读浏览，Interrupted 标记、Resume 与真实 LLM 仍属 issue 10/13。

@@ -15,7 +15,7 @@ Workflow 通过 Node 的 Input / Output Contract 组合工作过程，Node 之�
 基础 Runtime、平台核心和首个 14 后产品模块已经完成。后续产品化按 [`Gum-Workflows 产品化阶段设计计划`](<plans/Gum-Workflows 产品化阶段：本地 GUI、Node 能力与 LLM Config 设计计划.md>) 推进，主要方向包括：
 
 - 在已完成的 SQLite Provider / Model 设置上接入 Keychain，并实现真实 OpenAI-compatible LLM Client 与 `llm-chat` Agent Node；
-- 扩展当前 macOS 产品壳的 Revision/Run 分层历史浏览，并在后续支持 Windows；
+- 在已完成的只读 Revision/Run 分层历史浏览上补齐 Interrupted 标记、Resume/Rerun，并在后续支持 Windows；
 - 完善 Artifact 预览、来源追踪、多版本比较和人工替换；
 - 设计结构化 Run Event，以及 Resume、Retry、Rerun、Fork 和崩溃恢复；
 - 在领域模型稳定后，再规划 Workflow 导入导出、Pack、AI 修改 Workflow 和云同步。
@@ -25,6 +25,18 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 任何新模块都需要先形成设计文档和开发票，再修改实现。模块完成后的 README 与进度文档同步方法见 [`README 更新规范`](<plans/README 更新规范：模块完成后的进度同步.md>)。
 
 ## 项目当前进展
+
+### Product Workflow Revision reuse 与 Run history UI — 已完成
+
+该切片让用户区分“定义版本”与“执行次数”：相同语义内容重复运行复用同一 immutable Revision，但每次创建新 Run，并能在 UI 中按 Workflow → Revision → Run → Node Run/Artifact 逐层浏览历史，应用重启后历史仍可查询。
+
+主要交付：
+
+- 独立只读 `RunHistoryRepository` 读 seam 从 `product_workflow_revision / run / node_run / artifact` 表查询，不写也不改 Workflow Run 状态；Product Application 暴露 `ListRevisions` / `ListRevisionRuns` / `GetRunHistory` 用例；
+- 相同规范化语义哈希重复 StartRun 复用同一 Revision；执行语义或首次物化 Model UUID 变化产生新 Revision，而展示文案、Presentation Hint 与 UI view preference 不进入哈希；
+- Run 详情复用 Run View 形态，Conversation 消息从同一 Run 的 filesystem Artifact Store 还原；Desktop 与 Browser Mock 通过同一 WorkflowClient 提供分层历史浏览；
+- 历史、Run Snapshot 与 Conversation Artifact 落在 SQLite 与 Local Data Root，重启后已完成 Run 仍可查询；
+- 分层历史为只读浏览，当前不包含 Interrupted 标记、Resume 或真实 LLM。
 
 ### Product Workflow fake StartRun 与 Conversation Artifact — 已完成
 
@@ -36,7 +48,7 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 - 空 LLM Preference 在 StartRun preflight 中按双层 default 物化 Gum Model UUID，随后按规范化执行语义创建或复用 Revision；相同语义重复运行复用 Revision，但每次生成新 Run；
 - Run Snapshot 固定 Revision 与 Resolved LLM Selection，不保存 API Key；启动后不再回写 Draft 或 Revision；
 - deterministic fake `human-chat(source) -> llm-chat` 产生两次成功 Node Run 和 filesystem-backed Conversation Artifact，Desktop 与 Browser Mock 共用 Run/结果 UI；
-- SQLite 写链与 Artifact 发布失败会回滚或清理，不留下用户可见半状态。当前仍不包含真实 LLM、人工输入、分层历史 UI、Interrupted 或 Resume。
+- SQLite 写链与 Artifact 发布失败会回滚或清理，不留下用户可见半状态。当前仍不包含真实 LLM、人工输入、Interrupted 或 Resume（分层历史浏览已由后续模块交付）。
 
 详细范围见 [product-workflow spec](.scratch/product-workflow/spec.md) 和 [issue 07](.scratch/product-workflow/issues/07-fake-start-run-revision-artifact.md)。
 
@@ -151,7 +163,7 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 - 四个内置 Code Quality Check 当前只支持 Darwin / Linux，Windows 原生、PowerShell 与 WSL 后端尚未实现；
 - Host Execution Environment 继承用户的 PATH、Go 配置、缓存、工具链与网络策略，适合受信任项目，但不是安全沙箱，也不提供容器、CPU / 内存隔离或自动 timeout；
 - Static 只代表 `go vet`，Coverage 只报告本次 full-scope 测试的 statement coverage，Race 只报告本次是否观察到 race；
-- macOS GUI 当前支持 Product Workflow 创建、Draft autosave、通用 Node/端口创作、只读 Preview、SQLite Provider / Model Slot 设置，以及 deterministic fake StartRun、Revision、Run/Node Run 与本次 Conversation Artifact 查看；Keychain、真实 LLM、人工输入、分层历史浏览和运行恢复仍属于后续规划。
+- macOS GUI 当前支持 Product Workflow 创建、Draft autosave、通用 Node/端口创作、只读 Preview、SQLite Provider / Model Slot 设置，deterministic fake StartRun、Revision、Run/Node Run 与本次 Conversation Artifact 查看，以及只读 Revision/Run 分层历史浏览（重启后可查询）；Keychain、真实 LLM、人工输入、Interrupted 标记与运行恢复仍属于后续规划。
 
 ## 使用与文档
 

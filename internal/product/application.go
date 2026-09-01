@@ -40,6 +40,9 @@ type WorkflowApplication interface {
 	SetDefaultLLMModel(ctx context.Context, providerID, modelID string) (LLMSettingsView, error)
 	ResolveDefaultLLMModel(ctx context.Context) (ResolvedLLMModelView, error)
 	StartRun(ctx context.Context, input StartRunInput) (RunView, error)
+	ListRevisions(ctx context.Context, workflowID string) ([]RevisionView, error)
+	ListRevisionRuns(ctx context.Context, revisionID string) ([]RunSummaryView, error)
+	GetRunHistory(ctx context.Context, runID string) (RunView, error)
 }
 
 // DraftView is the current mutable Product Workflow definition returned to UI adapters.
@@ -125,6 +128,7 @@ type Application struct {
 	catalog     *nodecatalog.Registry
 	runPaths    runtimepath.Paths
 	runRepo     productworkflow.RunRepository
+	runHistory  productworkflow.RunHistoryRepository
 }
 
 // ApplicationOption configures optional product runtime dependencies.
@@ -140,7 +144,8 @@ func WithRunPaths(paths runtimepath.Paths) ApplicationOption {
 func NewApplication(repository productworkflow.Repository, catalog *nodecatalog.Registry, options ...ApplicationOption) *Application {
 	settings, _ := repository.(productworkflow.LLMSettingsRepository)
 	runs, _ := repository.(productworkflow.RunRepository)
-	application := &Application{repository: repository, llmSettings: settings, runRepo: runs, catalog: catalog}
+	runHistory, _ := repository.(productworkflow.RunHistoryRepository)
+	application := &Application{repository: repository, llmSettings: settings, runRepo: runs, runHistory: runHistory, catalog: catalog}
 	for _, option := range options {
 		option(application)
 	}

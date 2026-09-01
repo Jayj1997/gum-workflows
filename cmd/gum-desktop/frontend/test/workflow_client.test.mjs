@@ -35,6 +35,12 @@ const expectedRun = {
 	],
 	artifacts: [{ id: "artifact-uuid", nodeId: "answer", port: "conversation", type: "Conversation", version: "2", uri: "2.json", messages: [{ role: "user", text: "Hello" }, { role: "assistant", text: "Fake response" }] }],
 };
+const expectedRevisions = [
+	{ id: "revision-uuid", semanticHash: "abc12345", runCount: 1, createdAt: "2026-08-31T09:00:00Z" },
+];
+const expectedRevisionRuns = [
+	{ id: "run-uuid", revisionId: "revision-uuid", status: "succeeded", startedAt: "2026-08-31T09:00:00Z", finishedAt: "2026-08-31T09:00:01Z" },
+];
 const expectedSettings = {
 	providers: [{
 		id: "provider-uuid", name: "Primary", protocol: "openai-chat-completions", baseUrl: "https://api.example/v1",
@@ -77,6 +83,9 @@ const clientContract = [
 			return { draft: { ...expectedDraft, ...input, lockVersion: 2 }, preview: { nodes: [], edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
 		},
 		async startRun() { return expectedRun; },
+		async listRevisions() { return expectedRevisions; },
+		async listRevisionRuns() { return expectedRevisionRuns; },
+		async getRunHistory() { return expectedRun; },
 		async listNodeCatalog() { return expectedCatalog; },
 		async getLLMSettings() { return expectedSettings; },
 		async createLLMProvider(input) { return { ...expectedSettings.providers[0], ...input }; },
@@ -107,6 +116,9 @@ const clientContract = [
 			return { draft: { ...expectedDraft, ...input, lockVersion: 2 }, preview: { nodes: [], edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
 		},
 		async StartRun() { return expectedRun; },
+		async ListRevisions() { return expectedRevisions; },
+		async ListRevisionRuns() { return expectedRevisionRuns; },
+		async GetRunHistory() { return expectedRun; },
 		async ListNodeCatalog() { return expectedCatalog; },
 		async GetLLMSettings() { return expectedSettings; },
 		async CreateLLMProvider(input) { return { ...expectedSettings.providers[0], ...input }; },
@@ -128,6 +140,9 @@ for (const [name, createClient] of clientContract) {
 	assert.deepEqual(await client.getDraft(expectedWorkflow.id), expectedDraft);
 	assert.equal((await client.updateDraft({ workflowId: expectedWorkflow.id, expectedLockVersion: 1, content: expectedDraft.content })).draft.lockVersion, 2);
 	assert.deepEqual(await client.startRun({ workflowId: expectedWorkflow.id, expectedLockVersion: 1 }), expectedRun);
+	assert.deepEqual(await client.listRevisions(expectedWorkflow.id), expectedRevisions);
+	assert.deepEqual(await client.listRevisionRuns("revision-uuid"), expectedRevisionRuns);
+	assert.deepEqual(await client.getRunHistory("run-uuid"), expectedRun);
 	assert.deepEqual(await client.listNodeCatalog(), expectedCatalog);
 	assert.deepEqual(await client.getLLMSettings(), expectedSettings);
 	assert.equal((await client.createLLMProvider({ name: "Primary" })).name, "Primary");
@@ -807,6 +822,46 @@ test("the DOM Run action renders successful Node Runs and Conversation messages"
 	assert.equal(runStatus.textContent, "Run succeeded · revision revision-uuid");
 	assert.deepEqual(nodeRunList.items.map((item) => item.textContent), ["prompt · human-chat@v1 · succeeded", "answer · llm-chat@v1 · succeeded"]);
 	assert.equal(artifactList.items[0].children[1].children[1].textContent, "assistant: Fake response");
+});
+
+test("the DOM history panel renders Revisions, Revision Runs and a historical Run", async () => {
+	const document = {
+		createElement(tag) {
+			return {
+				tag, children: [], textContent: "", listeners: {},
+				append(...children) { this.children.push(...children); },
+				addEventListener(event, handler) { this.listeners[event] = handler; },
+			};
+		},
+	};
+	const revisionList = { ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } };
+	const revisionRunList = { ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } };
+	const historyRunStatus = { textContent: "" };
+	const historyNodeRunList = { ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } };
+	const historyArtifactList = { ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } };
+	const view = createProductDOMView({
+		title: {}, message: {}, status: { dataset: {} }, button: { addEventListener() {} }, form: { addEventListener() {} }, nameInput: {},
+		workflowList: { replaceChildren() {} }, draftEditor: { addEventListener() {} }, draftStatus: {}, diagnosticList: { replaceChildren() {} },
+		revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList,
+	}, productStatusMessage);
+	let selectedRevision = "";
+	let selectedRun = "";
+	view.onSelectRevision((revisionId) => { selectedRevision = revisionId; });
+	view.onSelectRun((runId) => { selectedRun = runId; });
+
+	view.renderRevisions(expectedRevisions);
+	view.renderRevisionRuns(expectedRevisionRuns);
+	view.renderHistoryRun(expectedRun);
+
+	assert.equal(revisionList.items[0].children[0].textContent, "Revision abc12345 · 1 run(s)");
+	await revisionList.items[0].children[0].listeners.click();
+	assert.equal(selectedRevision, "revision-uuid");
+	assert.equal(revisionRunList.items[0].children[0].textContent, "Run succeeded · run-uuid");
+	await revisionRunList.items[0].children[0].listeners.click();
+	assert.equal(selectedRun, "run-uuid");
+	assert.equal(historyRunStatus.textContent, "Run succeeded · revision revision-uuid");
+	assert.deepEqual(historyNodeRunList.items.map((item) => item.textContent), ["prompt · human-chat@v1 · succeeded", "answer · llm-chat@v1 · succeeded"]);
+	assert.equal(historyArtifactList.items[0].children[1].children[1].textContent, "assistant: Fake response");
 });
 
 test("the Node editor renders distinct Input Binding and Control Dependency controls", async () => {

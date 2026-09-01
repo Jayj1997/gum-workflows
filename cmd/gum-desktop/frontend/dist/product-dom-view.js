@@ -87,6 +87,7 @@ export function createProductDOMView(elements, statusMessage) {
 		previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset,
 			providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKeyRef, llmProviderList, llmDiagnosticList,
 			runButton, runStatus, nodeRunList, artifactList,
+			historyRefreshButton, revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList,
 	} = elements;
 	let selectWorkflow = () => {};
 	let draftDirty = () => {};
@@ -107,6 +108,9 @@ export function createProductDOMView(elements, statusMessage) {
 	let deleteLLMModel = () => {};
 		let setDefaultLLMModel = () => {};
 		let startRun = () => {};
+	let refreshRevisions = () => {};
+	let selectRevision = () => {};
+	let selectRun = () => {};
 	let pendingDraftEdit;
 	let activeWorkflowId = "";
 	let activeNodeId = "";
@@ -206,6 +210,12 @@ export function createProductDOMView(elements, statusMessage) {
 				startRun = handler;
 				runButton?.addEventListener("click", () => startRun());
 			},
+			onRefreshRevisions(handler) {
+				refreshRevisions = handler;
+				historyRefreshButton?.addEventListener("click", () => refreshRevisions());
+			},
+			onSelectRevision(handler) { selectRevision = handler; },
+			onSelectRun(handler) { selectRun = handler; },
 		render(state) {
 			title.textContent = state.title;
 			message.textContent = state.message;
@@ -337,6 +347,59 @@ export function createProductDOMView(elements, statusMessage) {
 				if (artifactList) {
 					const document = artifactList.ownerDocument;
 					artifactList.replaceChildren(...run.artifacts.map((artifact) => {
+						const item = document.createElement("li");
+						const heading = document.createElement("strong");
+						const messages = document.createElement("ol");
+						heading.textContent = `${artifact.nodeId}.${artifact.port} · ${artifact.type} v${artifact.version}`;
+						messages.append(...(artifact.messages ?? []).map((message) => {
+							const row = document.createElement("li");
+							row.textContent = `${message.role}: ${message.text}`;
+							return row;
+						}));
+						item.append(heading, messages);
+						return item;
+					}));
+				}
+			},
+			renderRevisions(revisions) {
+				if (!revisionList) return;
+				const document = revisionList.ownerDocument;
+				revisionList.replaceChildren(...revisions.map((revision) => {
+					const item = document.createElement("li");
+					const control = document.createElement("button");
+					control.type = "button";
+					control.textContent = `Revision ${revision.semanticHash.slice(0, 8)} · ${revision.runCount} run(s)`;
+					control.addEventListener("click", () => selectRevision(revision.id));
+					item.append(control);
+					return item;
+				}));
+			},
+			renderRevisionRuns(runs) {
+				if (!revisionRunList) return;
+				const document = revisionRunList.ownerDocument;
+				revisionRunList.replaceChildren(...runs.map((run) => {
+					const item = document.createElement("li");
+					const control = document.createElement("button");
+					control.type = "button";
+					control.textContent = `Run ${run.status} · ${run.id.slice(0, 8)}`;
+					control.addEventListener("click", () => selectRun(run.id));
+					item.append(control);
+					return item;
+				}));
+			},
+			renderHistoryRun(run) {
+				if (historyRunStatus) historyRunStatus.textContent = `Run ${run.status} · revision ${run.revisionId}`;
+				if (historyNodeRunList) {
+					const document = historyNodeRunList.ownerDocument;
+					historyNodeRunList.replaceChildren(...run.nodeRuns.map((nodeRun) => {
+						const item = document.createElement("li");
+						item.textContent = `${nodeRun.nodeId} · ${nodeRun.nodeDefinition}@${nodeRun.nodeExecutor} · ${nodeRun.status}`;
+						return item;
+					}));
+				}
+				if (historyArtifactList) {
+					const document = historyArtifactList.ownerDocument;
+					historyArtifactList.replaceChildren(...run.artifacts.map((artifact) => {
 						const item = document.createElement("li");
 						const heading = document.createElement("strong");
 						const messages = document.createElement("ol");

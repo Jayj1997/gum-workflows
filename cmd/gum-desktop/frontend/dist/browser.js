@@ -11,6 +11,7 @@ const drafts = new Map();
 const nodeRegistry = createBuiltinNodeRegistry();
 const llmSettings = createBrowserLLMSettings();
 const revisions = new Map();
+const runs = new Map();
 
 function normalize(value) {
 	if (Array.isArray(value)) return value.map(normalize);
@@ -119,7 +120,7 @@ const client = createBrowserWorkflowClient({
 		const messages = [{ role: "user", text: "Hello from the P9 fake executor." }, { role: "assistant", text: "Fake model response." }];
 		const draft = structuredClone(current);
 		draft.preview = createWorkflowPreview(draft.content, nodeRegistry);
-		return {
+		const run = {
 			id: runId, revisionId, status: "succeeded", draft,
 			snapshot: {
 				executors: materialized.nodes.map((node) => ({ nodeId: node.id, definitionId: node.definition, version: node.executor })),
@@ -129,6 +130,34 @@ const client = createBrowserWorkflowClient({
 			nodeRuns: [human, agent].map((node) => ({ id: crypto.randomUUID(), nodeId: node.id, nodeDefinition: node.definition, nodeExecutor: node.executor, status: "succeeded" })),
 			artifacts: [{ id: crypto.randomUUID(), nodeId: agent.id, port: "conversation", type: "Conversation", version: "2", uri: "2.json", messages }],
 		};
+		runs.set(run.id, { workflowId: input.workflowId, revisionId: run.revisionId, id: run.id, status: run.status, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), nodeRuns: structuredClone(run.nodeRuns), artifacts: structuredClone(run.artifacts) });
+		return structuredClone(run);
+	},
+	async listRevisions(workflowId) {
+		const counts = new Map();
+		for (const run of runs.values()) {
+			if (run.workflowId !== workflowId) continue;
+			counts.set(run.revisionId, (counts.get(run.revisionId) ?? 0) + 1);
+		}
+		const seen = new Map();
+		for (const [key, revisionId] of revisions) {
+			if (!counts.has(revisionId)) continue;
+			if (seen.has(revisionId)) continue;
+			seen.set(revisionId, { id: revisionId, semanticHash: key, runCount: counts.get(revisionId), createdAt: new Date().toISOString() });
+		}
+		return [...seen.values()];
+	},
+	async listRevisionRuns(revisionId) {
+		return [...runs.values()].filter((run) => run.revisionId === revisionId).map((run) => ({
+			id: run.id, revisionId: run.revisionId, status: run.status, startedAt: run.startedAt, finishedAt: run.finishedAt,
+		}));
+	},
+	async getRunHistory(runId) {
+		const run = runs.get(runId);
+		if (!run) throw new Error(`Run ${runId} not found`);
+		const draft = structuredClone(drafts.get(run.workflowId));
+		draft.preview = createWorkflowPreview(draft.content, nodeRegistry);
+		return { id: run.id, revisionId: run.revisionId, status: run.status, draft, snapshot: { executors: [], llmSelections: [] }, nodeRuns: structuredClone(run.nodeRuns), artifacts: structuredClone(run.artifacts) };
 	},
 	async getLLMSettings() { return llmSettings.getSettings(); },
 	async createLLMProvider(input) { return llmSettings.createProvider(input); },
@@ -176,10 +205,16 @@ const runButton = document.querySelector("#start-run");
 const runStatus = document.querySelector("#run-status");
 const nodeRunList = document.querySelector("#node-run-list");
 const artifactList = document.querySelector("#artifact-list");
+const historyRefreshButton = document.querySelector("#history-refresh");
+const revisionList = document.querySelector("#revision-list");
+const revisionRunList = document.querySelector("#revision-run-list");
+const historyRunStatus = document.querySelector("#history-run-status");
+const historyNodeRunList = document.querySelector("#history-node-run-list");
+const historyArtifactList = document.querySelector("#history-artifact-list");
 
 createProductShell(
   createProductDOMView(
-		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKeyRef, llmProviderList, llmDiagnosticList, runButton, runStatus, nodeRunList, artifactList },
+		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKeyRef, llmProviderList, llmDiagnosticList, runButton, runStatus, nodeRunList, artifactList, historyRefreshButton, revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList },
     productStatusMessage,
   ),
   client,

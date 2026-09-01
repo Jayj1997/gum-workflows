@@ -1,6 +1,6 @@
 # Gum-Workflows Domain Model
 
-本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 01–07 的 SQLite identity、Draft、创作/Preview、LLM 设置与 P9 fake StartRun。术语以根目录 `CONTEXT.md` 为权威；真实 LLM、人工输入、分层 Run history、Interrupted、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
+本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 01–08 的 SQLite identity、Draft、创作/Preview、LLM 设置、P9 fake StartRun 与只读分层 Run history。术语以根目录 `CONTEXT.md` 为权威；真实 LLM、人工输入、Interrupted、Resume/Rerun/Fork 等尚未实现能力不在本文范围。
 
 ## 0. Product Workflow identity
 
@@ -30,7 +30,9 @@ UI 点击 Run 时先 flush 待保存编辑，再把当前 Draft 的 expected `lo
 
 物化后的执行语义先规范化：Node 顺序、Control Dependency 集合与 map 顺序不影响 SHA-256，Workflow/Node 展示文本、Presentation/View 状态不进入哈希。SQLite 以 `(workflow_id, semantic_hash)` 复用 immutable Revision；每次成功 StartRun 仍创建独立 Run UUID。Run Snapshot 固定 Revision 与各 Agent Node 的 Provider/Model 解析结果，但不包含 API Key 引用或明文。
 
-P9 fake executor 只跑当前 tracer 拓扑：`human-chat(source)` 产生一条 user message，`llm-chat` 追加 deterministic assistant message。两次 Node Run、ArtifactRef 与元数据在同一 SQLite 事务发布，Conversation 本体保存在 Local Data Root 的 `runs/<run-id>/artifacts/`。Desktop 与 Browser Mock 通过同一 WorkflowClient 展示本次 Run、Node Run 与消息；分层历史查询属于后续票。
+P9 fake executor 只跑当前 tracer 拓扑：`human-chat(source)` 产生一条 user message，`llm-chat` 追加 deterministic assistant message。两次 Node Run、ArtifactRef 与元数据在同一 SQLite 事务发布，Conversation 本体保存在 Local Data Root 的 `runs/<run-id>/artifacts/`。Desktop 与 Browser Mock 通过同一 WorkflowClient 展示本次 Run、Node Run 与消息。
+
+只读分层 Run history 通过独立 `RunHistoryRepository` 读 seam 从 `product_workflow_revision / run / node_run / artifact` 表查询，不写也不改 Workflow Run 状态。UI 按 Workflow → Revision 列表 → 每个 Revision 的 Runs → 每次 Run 的 Node Run 与 Artifact 摘要逐层浏览：相同规范化语义哈希重复运行复用同一 immutable Revision，但每次 StartRun 仍创建独立 Run、Node Run 与 Artifact；执行语义或首次物化 Model UUID 变化产生新 Revision，而展示文案、Presentation Hint 与 UI view preference 不进入哈希。Run 详情复用 Run View 形态，Conversation 消息从同一 Run 的 filesystem Artifact Store 还原。历史为只读浏览，数据落在 SQLite 与 Local Data Root，因此应用重启后已完成 Run、Node Run、Resolved LLM Selection 与 Conversation Artifact 仍可查询；Interrupted 标记、Resume 与 Rerun/Fork 仍属后续票。
 
 首批产品 Catalog 同时声明 `human-chat.conversation: Conversation` output，以及 `llm-chat.conversation: Conversation` input/output。Input Binding 使用 `inputs.<input>.from: <node-id>.<output>` 形成 Data Edge；Control Dependency 使用独立 `dependsOn` 控件形成 Control Edge。只读 Preview 由 Draft 派生，不暴露渲染或布局库结构；自动网格坐标、缩放、节点折叠和最近选择保留在 UI，不写入 Draft 语义内容。
 

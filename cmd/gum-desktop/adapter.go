@@ -55,6 +55,21 @@ func (a *DesktopAdapter) StartRun(input product.StartRunInput) (product.RunView,
 	return a.application.StartRun(a.ctx, input)
 }
 
+// ListRevisions forwards the Product Workflow Revision history list.
+func (a *DesktopAdapter) ListRevisions(workflowID string) ([]product.RevisionView, error) {
+	return a.application.ListRevisions(a.ctx, workflowID)
+}
+
+// ListRevisionRuns forwards the Run list for one Revision.
+func (a *DesktopAdapter) ListRevisionRuns(revisionID string) ([]product.RunSummaryView, error) {
+	return a.application.ListRevisionRuns(a.ctx, revisionID)
+}
+
+// GetRunHistory forwards one historical Run detail query.
+func (a *DesktopAdapter) GetRunHistory(runID string) (product.RunView, error) {
+	return a.application.GetRunHistory(a.ctx, runID)
+}
+
 // ListNodeCatalog forwards the registered product Node Catalog.
 func (a *DesktopAdapter) ListNodeCatalog() ([]nodecatalog.Entry, error) {
 	return a.application.ListNodeCatalog(a.ctx)
