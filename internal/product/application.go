@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Jayj1997/gum-workflows/internal/chat"
 	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
 	productworkflow "github.com/Jayj1997/gum-workflows/internal/product/workflow"
 	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
@@ -131,6 +132,7 @@ type Application struct {
 	runRepo     productworkflow.RunRepository
 	runHistory  productworkflow.RunHistoryRepository
 	secrets     secret.Adapter
+	chat        chat.Adapter
 }
 
 // ApplicationOption configures optional product runtime dependencies.
@@ -146,13 +148,19 @@ func WithSecretAdapter(adapter secret.Adapter) ApplicationOption {
 	return func(application *Application) { application.secrets = adapter }
 }
 
-// NewApplication creates the Product Application with injected persistence and
-// the explicitly assembled product Node Definition/Executor registry.
+// WithChatAdapter configures the protocol Adapter used by real model calls.
+func WithChatAdapter(adapter chat.Adapter) ApplicationOption {
+	return func(application *Application) { application.chat = adapter }
+}
+
+// NewApplication creates the Product Application with injected persistence, the
+// explicitly assembled product Node Definition/Executor registry, and the default
+// OpenAI-compatible protocol Adapter for real model calls.
 func NewApplication(repository productworkflow.Repository, catalog *nodecatalog.Registry, options ...ApplicationOption) *Application {
 	settings, _ := repository.(productworkflow.LLMSettingsRepository)
 	runs, _ := repository.(productworkflow.RunRepository)
 	runHistory, _ := repository.(productworkflow.RunHistoryRepository)
-	application := &Application{repository: repository, llmSettings: settings, runRepo: runs, runHistory: runHistory, catalog: catalog}
+	application := &Application{repository: repository, llmSettings: settings, runRepo: runs, runHistory: runHistory, catalog: catalog, chat: chat.NewOpenAIChatAdapter(nil)}
 	for _, option := range options {
 		option(application)
 	}

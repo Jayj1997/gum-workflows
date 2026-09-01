@@ -32,6 +32,7 @@ gum-workflows/
 ├── cmd/gum-desktop/              # macOS Wails Adapter 与共享 Browser Mock 前端
 ├── internal/
 │   ├── product/                  # Product Application、Node Catalog/Config Schema、Workflow identity 与 LLM 设置
+│   ├── chat/                     # Canonical Conversation/GenerateRequest 与 OpenAI-compatible 非流式 Protocol Adapter
 │   ├── secret/                   # 可注入 Secret Adapter、Memory 测试实现与 macOS Keychain 实现
 │   ├── definition/               # Node Type / Definition / Executor、TypeExpr、Registry
 │   ├── llm/                      # 用户级 llm.yaml、严格加载与默认链解析
@@ -66,7 +67,8 @@ cmd/workflow
   └─ node/builtins ──> definition / node / agent / artifact
 
 cmd/gum-desktop ──> product / history / runtimepath / secret
-product ──> product/workflow / artifact / runtimepath / secret <── history
+product ──> product/workflow / artifact / chat / runtimepath / secret <── history
+chat ──> 标准库
 
 definition ──> artifact          node ──> definition / artifact / project
 workflow ──(引用校验经 validation)──> definition / llm

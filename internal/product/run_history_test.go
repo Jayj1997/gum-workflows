@@ -2,6 +2,9 @@ package product_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
@@ -12,9 +15,42 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/secret"
 )
 
-// newTracerApplication opens a fresh SQLite store with a Provider, a Model and the
-// tracer Draft so each history test starts from one runnable Workflow.
+// fixtureCompletionBody is one valid non-streaming Chat Completions response.
+const fixtureCompletionBody = `{"id":"chatcmpl-fixture-1","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"Real model response."}}],"usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19}}`
+
+// fixtureLLMRequest is one recorded fixture-server Chat Completions call.
+type fixtureLLMRequest struct {
+	Auth string
+	Body map[string]any
+}
+
+// startFixtureLLMServer returns a local OpenAI-compatible fixture recording
+// requests so tests never touch the real network.
+func startFixtureLLMServer(t *testing.T) (*httptest.Server, *[]fixtureLLMRequest) {
+	t.Helper()
+	var requests []fixtureLLMRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		requests = append(requests, fixtureLLMRequest{Auth: r.Header.Get("Authorization"), Body: body})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(fixtureCompletionBody))
+	}))
+	t.Cleanup(server.Close)
+	return server, &requests
+}
+
+// newTracerApplication opens a fresh SQLite store with a fixture-backed
+// Provider, a Model and the tracer Draft so each history test starts from one
+// runnable Workflow.
 func newTracerApplication(t *testing.T, ctx context.Context) (*product.Application, runtimepath.Paths, *history.Store) {
+	t.Helper()
+	return newTracerApplicationAt(t, ctx, nil)
+}
+
+// newTracerApplicationAt also accepts an explicit fixture server for tests
+// that assert request details; nil starts a fresh one.
+func newTracerApplicationAt(t *testing.T, ctx context.Context, server *httptest.Server) (*product.Application, runtimepath.Paths, *history.Store) {
 	t.Helper()
 	root := t.TempDir()
 	paths, err := runtimepath.New(filepath.Join(root, "product.db"), filepath.Join(root, "runs"))
@@ -27,7 +63,10 @@ func newTracerApplication(t *testing.T, ctx context.Context) (*product.Applicati
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	application := newTestApplicationWithRuns(t, store, paths)
-	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKey: "test-api-key"})
+	if server == nil {
+		server, _ = startFixtureLLMServer(t)
+	}
+	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: server.URL + "/v1", APIKey: "test-api-key"})
 	if err != nil {
 		t.Fatal(err)
 	}

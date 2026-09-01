@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Jayj1997/gum-workflows/internal/chat"
 	"github.com/Jayj1997/gum-workflows/internal/history"
 	"github.com/Jayj1997/gum-workflows/internal/product"
 	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
@@ -181,7 +184,7 @@ func TestApplicationFailsWhenSecretAdapterIsUnavailable(t *testing.T) {
 	}
 }
 
-func TestApplicationStartsFakeConversationRunFromVisibleDraft(t *testing.T) {
+func TestApplicationStartsRealConversationRunFromVisibleDraft(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	paths, err := runtimepath.New(filepath.Join(root, "product.db"), filepath.Join(root, "runs"))
@@ -197,16 +200,17 @@ func TestApplicationStartsFakeConversationRunFromVisibleDraft(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load product Node Catalog: %v", err)
 	}
-	application := product.NewApplication(store, registry, product.WithRunPaths(paths), product.WithSecretAdapter(secret.NewMemoryAdapter()))
+	server, requests := startFixtureLLMServer(t)
+	application := product.NewApplication(store, registry, product.WithRunPaths(paths), product.WithSecretAdapter(secret.NewMemoryAdapter()), product.WithChatAdapter(chat.NewOpenAIChatAdapter(server.Client())))
 
 	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{
-		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKey: "test-api-key",
+		Name: "Primary", Protocol: "openai-chat-completions", BaseURL: server.URL + "/v1", APIKey: "test-api-key",
 	})
 	if err != nil {
 		t.Fatalf("create Provider: %v", err)
 	}
 	model, err := application.CreateLLMModel(ctx, product.CreateLLMModelInput{
-		ProviderID: provider.ID, DisplayName: "Fake model", ProviderModelID: "fake-model",
+		ProviderID: provider.ID, DisplayName: "Fixture model", ProviderModelID: "fake-model",
 		GenerationDefaults: productworkflow.GenerationDefaults{Temperature: float64Pointer(0.2), MaxOutputTokens: intPointer(32)},
 	})
 	if err != nil {
@@ -224,7 +228,7 @@ func TestApplicationStartsFakeConversationRunFromVisibleDraft(t *testing.T) {
 			"nodes": []any{
 				map[string]any{"id": "prompt", "definition": "human-chat", "executor": "v1", "displayName": "Prompt", "config": map[string]any{}},
 				map[string]any{
-					"id": "answer", "definition": "llm-chat", "executor": "v1", "displayName": "Answer", "config": map[string]any{"temperature": 0.8, "max_output_tokens": 64},
+					"id": "answer", "definition": "llm-chat", "executor": "v1", "displayName": "Answer", "config": map[string]any{"temperature": 0.8, "max_output_tokens": 64, "instructions": "Answer tersely."},
 					"inputs": map[string]any{"conversation": map[string]any{"from": "prompt.conversation"}},
 				},
 			},
@@ -238,7 +242,7 @@ func TestApplicationStartsFakeConversationRunFromVisibleDraft(t *testing.T) {
 		WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion,
 	})
 	if err != nil {
-		t.Fatalf("start fake Run: %v", err)
+		t.Fatalf("start real Run: %v", err)
 	}
 
 	if run.Status != "succeeded" || run.ID == "" || run.RevisionID == "" {
@@ -255,6 +259,19 @@ func TestApplicationStartsFakeConversationRunFromVisibleDraft(t *testing.T) {
 	if len(run.NodeRuns) != 2 || run.NodeRuns[0].Status != "succeeded" || run.NodeRuns[1].Status != "succeeded" {
 		t.Fatalf("Node Runs = %#v, want two successful rounds", run.NodeRuns)
 	}
+	// The real call's usage, finish reason and Provider request ID are visible
+	// on the agent Node Run.
+	agentRun := run.NodeRuns[1]
+	if agentRun.Diagnostics["providerRequestId"] != "chatcmpl-fixture-1" || agentRun.Diagnostics["finishReason"] != "stop" {
+		t.Fatalf("agent Node Run diagnostics = %#v", agentRun.Diagnostics)
+	}
+	usage, ok := agentRun.Diagnostics["usage"].(*chat.Usage)
+	if !ok {
+		t.Fatalf("agent Node Run usage = %#v", agentRun.Diagnostics["usage"])
+	}
+	if usage.InputTokens != 12 || usage.OutputTokens != 7 || usage.TotalTokens != 19 {
+		t.Fatalf("agent Node Run usage = %#v", usage)
+	}
 	if len(run.Snapshot.Executors) != 2 || run.Snapshot.Executors[1].NodeID != "answer" || run.Snapshot.Executors[1].Version != "v1" {
 		t.Fatalf("Run Snapshot Executors = %#v", run.Snapshot.Executors)
 	}
@@ -268,15 +285,37 @@ func TestApplicationStartsFakeConversationRunFromVisibleDraft(t *testing.T) {
 		t.Fatalf("Artifacts = %#v, want source and assistant Conversation versions", run.Artifacts)
 	}
 	conversation := run.Artifacts[1]
-	if conversation.Type != "Conversation" || len(conversation.Messages) != 2 || conversation.Messages[0].Role != "user" || conversation.Messages[1].Role != "assistant" {
+	if conversation.Type != "Conversation" || len(conversation.Messages) != 2 || conversation.Messages[0].Role != "user" || conversation.Messages[1].Role != "assistant" || conversation.Messages[1].Text != "Real model response." {
 		t.Fatalf("Conversation Artifact = %#v", conversation)
 	}
 	if _, err := os.Stat(filepath.Join(paths.ArtifactsDir(run.ID), conversation.URI)); err != nil {
 		t.Fatalf("persisted Conversation Artifact: %v", err)
 	}
+
+	// The fixture saw exactly one authenticated call with the mapped single-turn
+	// body: developer instructions, one user message, the Provider Model ID and
+	// the effective generation parameters.
+	if len(*requests) != 1 {
+		t.Fatalf("fixture requests = %d, want one", len(*requests))
+	}
+	got := (*requests)[0]
+	if got.Auth != "Bearer test-api-key" {
+		t.Fatalf("fixture authorization = %q", got.Auth)
+	}
+	messages := got.Body["messages"].([]any)
+	wantMessages := []any{
+		map[string]any{"role": "developer", "content": "Answer tersely."},
+		map[string]any{"role": "user", "content": "Hello from the product UI."},
+	}
+	if fmt.Sprint(messages) != fmt.Sprint(wantMessages) {
+		t.Fatalf("fixture messages = %#v, want %#v", messages, wantMessages)
+	}
+	if got.Body["model"] != "fake-model" || got.Body["temperature"] != 0.8 || got.Body["max_tokens"] != float64(64) {
+		t.Fatalf("fixture model/params = %#v", got.Body)
+	}
 }
 
-func TestApplicationFakeRunConsumesTheAuthoredConversationDataEdge(t *testing.T) {
+func TestApplicationRealRunConsumesTheAuthoredConversationDataEdge(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	paths, err := runtimepath.New(filepath.Join(root, "product.db"), filepath.Join(root, "runs"))
@@ -288,12 +327,13 @@ func TestApplicationFakeRunConsumesTheAuthoredConversationDataEdge(t *testing.T)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	application := newTestApplicationWithRuns(t, store, paths)
-	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKey: "test-api-key"})
+	server, _ := startFixtureLLMServer(t)
+	application := newTestApplicationWithRunsAt(t, store, paths, server)
+	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: server.URL + "/v1", APIKey: "test-api-key"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := application.CreateLLMModel(ctx, product.CreateLLMModelInput{ProviderID: provider.ID, DisplayName: "Fake", ProviderModelID: "fake"}); err != nil {
+	if _, err := application.CreateLLMModel(ctx, product.CreateLLMModelInput{ProviderID: provider.ID, DisplayName: "Fixture", ProviderModelID: "fake"}); err != nil {
 		t.Fatal(err)
 	}
 	workflow, err := application.CreateWorkflow(ctx, product.CreateWorkflowInput{DisplayName: "Conversation"})
@@ -316,7 +356,7 @@ func TestApplicationFakeRunConsumesTheAuthoredConversationDataEdge(t *testing.T)
 		t.Fatal(err)
 	}
 	if run.NodeRuns[0].NodeID != "prompt" || run.Artifacts[0].NodeID != "prompt" {
-		t.Fatalf("fake source = Node Run %q Artifact %q, want authored source prompt", run.NodeRuns[0].NodeID, run.Artifacts[0].NodeID)
+		t.Fatalf("real source = Node Run %q Artifact %q, want authored source prompt", run.NodeRuns[0].NodeID, run.Artifacts[0].NodeID)
 	}
 }
 
@@ -412,12 +452,13 @@ func TestApplicationRepeatedStartRunReusesRevisionAndCreatesNewRun(t *testing.T)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	application := newTestApplicationWithRuns(t, store, paths)
-	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: "https://example.test/v1", APIKey: "test-api-key"})
+	server, _ := startFixtureLLMServer(t)
+	application := newTestApplicationWithRunsAt(t, store, paths, server)
+	provider, err := application.CreateLLMProvider(ctx, product.CreateLLMProviderInput{Name: "Primary", Protocol: "openai-chat-completions", BaseURL: server.URL + "/v1", APIKey: "test-api-key"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := application.CreateLLMModel(ctx, product.CreateLLMModelInput{ProviderID: provider.ID, DisplayName: "Fake", ProviderModelID: "fake"}); err != nil {
+	if _, err := application.CreateLLMModel(ctx, product.CreateLLMModelInput{ProviderID: provider.ID, DisplayName: "Fixture", ProviderModelID: "fake"}); err != nil {
 		t.Fatal(err)
 	}
 	workflow, saved := saveTracerDraft(t, ctx, application)
@@ -489,6 +530,17 @@ func newTestApplicationWithRuns(t *testing.T, store *history.Store, paths runtim
 		t.Fatalf("load product Node Catalog: %v", err)
 	}
 	return product.NewApplication(store, registry, product.WithRunPaths(paths), product.WithSecretAdapter(secret.NewMemoryAdapter()))
+}
+
+// newTestApplicationWithRunsAt additionally points the chat protocol Adapter
+// at a local fixture server so StartRun exercises a real HTTP call.
+func newTestApplicationWithRunsAt(t *testing.T, store *history.Store, paths runtimepath.Paths, server *httptest.Server) *product.Application {
+	t.Helper()
+	registry, err := nodecatalog.NewBuiltinRegistry()
+	if err != nil {
+		t.Fatalf("load product Node Catalog: %v", err)
+	}
+	return product.NewApplication(store, registry, product.WithRunPaths(paths), product.WithSecretAdapter(secret.NewMemoryAdapter()), product.WithChatAdapter(chat.NewOpenAIChatAdapter(server.Client())))
 }
 
 func saveTracerDraft(t *testing.T, ctx context.Context, application *product.Application) (product.WorkflowView, product.DraftUpdateView) {

@@ -5,13 +5,17 @@ import { createBuiltinNodeRegistry } from "./node-registry.js";
 import { createWorkflowPreview } from "./workflow-preview.js";
 import { createBrowserLLMSettings } from "./browser-llm-settings.js";
 import { productRevisionKey } from "./browser-run.js";
+import { createFixtureChatAdapter } from "./browser-chat-fixture.js";
 
 const workflows = [];
 const drafts = new Map();
 const nodeRegistry = createBuiltinNodeRegistry();
-const llmSettings = createBrowserLLMSettings();
+const secrets = createMemorySecretAdapterForBrowser();
+const llmSettings = createBrowserLLMSettings({ secrets });
 const revisions = new Map();
 const runs = new Map();
+const llmRequests = [];
+const chatAdapter = createFixtureChatAdapter({ secrets, requests: llmRequests });
 
 function normalize(value) {
 	if (Array.isArray(value)) return value.map(normalize);
@@ -24,6 +28,10 @@ function normalize(value) {
 function sameContent(left, right) {
 	return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
 }
+
+// The Browser Mock shares one Secret Adapter instance between settings and the
+// fixture chat Adapter, mirroring the Product Application's injected seam.
+import { createMemorySecretAdapter as createMemorySecretAdapterForBrowser } from "./browser-llm-settings.js";
 
 const client = createBrowserWorkflowClient({
   async openWorkspace() {
@@ -100,6 +108,7 @@ const client = createBrowserWorkflowClient({
 				baseUrl: provider.baseUrl, modelUuid: model.id, providerModelId: model.providerModelId,
 				temperature: node.config?.temperature ?? model.generationDefaults?.temperature,
 				maxOutputTokens: node.config?.max_output_tokens ?? model.generationDefaults?.maxOutputTokens,
+				apiKeyRef: llmSettings.referenceFor(provider.id),
 			});
 		}
 		if (!sameContent(current.content, materialized)) {
@@ -112,22 +121,38 @@ const client = createBrowserWorkflowClient({
 		revisions.set(key, revisionId);
 		const runId = crypto.randomUUID();
 		const agents = materialized.nodes.filter((node) => node.definition === "llm-chat");
-		if (agents.length !== 1) throw new Error("Fake executor supports exactly one LLM chat Node");
+		if (agents.length !== 1) throw new Error("Single-turn executor supports exactly one LLM chat Node");
 		const agent = agents[0];
 		const sourceId = agent.inputs?.conversation?.from?.split(".")[0];
 		const human = materialized.nodes.find((node) => node.id === sourceId && node.definition === "human-chat");
-		if (!human || agent.inputs.conversation.from !== `${human.id}.conversation`) throw new Error("Fake executor requires the authored human-chat Conversation Data Edge");
-		const messages = [{ role: "user", text: "Hello from the P9 fake executor." }, { role: "assistant", text: "Fake model response." }];
+		if (!human || agent.inputs.conversation.from !== `${human.id}.conversation`) throw new Error("Single-turn executor requires the authored human-chat Conversation Data Edge");
+		const selection = selections.find((candidate) => candidate.nodeId === agent.id);
+		// One real single-turn model call through the fixture Adapter; the
+		// assistant reply is appended only after the complete response.
+		const result = chatAdapter.generate(
+			{ protocol: selection.protocol, baseUrl: selection.baseUrl, providerModelId: selection.providerModelId, apiKeyRef: selection.apiKeyRef },
+			{
+				model: selection.providerModelId,
+				instructions: agent.config?.instructions ? [{ kind: "text", text: agent.config.instructions }] : [],
+				messages: [{ role: "user", parts: [{ kind: "text", text: "Hello from the product UI." }] }],
+				config: {
+					temperature: selection.temperature ?? undefined,
+					maxOutputTokens: selection.maxOutputTokens ?? undefined,
+				},
+			},
+		);
+		const sourceMessages = [{ role: "user", text: "Hello from the product UI." }];
+		const messages = [...sourceMessages, { role: "assistant", text: result.assistant.parts.map((part) => part.text).join("\n") }];
 		const draft = structuredClone(current);
 		draft.preview = createWorkflowPreview(draft.content, nodeRegistry);
 		const run = {
 			id: runId, revisionId, status: "succeeded", draft,
 			snapshot: {
 				executors: materialized.nodes.map((node) => ({ nodeId: node.id, definitionId: node.definition, version: node.executor })),
-				llmSelections: selections,
+				llmSelections: selections.map(({ apiKeyRef: _apiKeyRef, ...selectionView }) => selectionView),
 				...(materialized.project ? { project: structuredClone(materialized.project) } : {}),
 			},
-			nodeRuns: [human, agent].map((node) => ({ id: crypto.randomUUID(), nodeId: node.id, nodeDefinition: node.definition, nodeExecutor: node.executor, status: "succeeded" })),
+			nodeRuns: [human, agent].map((node, index) => ({ id: crypto.randomUUID(), nodeId: node.id, nodeDefinition: node.definition, nodeExecutor: node.executor, status: "succeeded", ...(index === 1 ? { diagnostics: { providerRequestId: result.providerRequestId, finishReason: result.finishReason, usage: result.usage } } : {}) })),
 			artifacts: [{ id: crypto.randomUUID(), nodeId: agent.id, port: "conversation", type: "Conversation", version: "2", uri: "2.json", messages }],
 		};
 		runs.set(run.id, {

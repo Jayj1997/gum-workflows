@@ -117,7 +117,7 @@ SELECT id, workflow_id, revision_id, status, snapshot_json, started_at, finished
 
 func (s *Store) listProductNodeRuns(ctx context.Context, runID string) ([]productworkflow.NodeRun, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, run_id, node_id, node_definition, node_executor, status, inputs_json, outputs_json, started_at, finished_at
+SELECT id, run_id, node_id, node_definition, node_executor, status, inputs_json, outputs_json, diagnostics_json, started_at, finished_at
   FROM product_workflow_node_run
  WHERE run_id = ?
  ORDER BY started_at ASC, id ASC`, runID)
@@ -128,8 +128,8 @@ SELECT id, run_id, node_id, node_definition, node_executor, status, inputs_json,
 	nodeRuns := make([]productworkflow.NodeRun, 0)
 	for rows.Next() {
 		var nodeRun productworkflow.NodeRun
-		var inputsJSON, outputsJSON, started, finished string
-		if err := rows.Scan(&nodeRun.ID, &nodeRun.RunID, &nodeRun.NodeID, &nodeRun.NodeDefinition, &nodeRun.NodeExecutor, &nodeRun.Status, &inputsJSON, &outputsJSON, &started, &finished); err != nil {
+		var inputsJSON, outputsJSON, diagnosticsJSON, started, finished string
+		if err := rows.Scan(&nodeRun.ID, &nodeRun.RunID, &nodeRun.NodeID, &nodeRun.NodeDefinition, &nodeRun.NodeExecutor, &nodeRun.Status, &inputsJSON, &outputsJSON, &diagnosticsJSON, &started, &finished); err != nil {
 			return nil, fmt.Errorf("scan product node run for run %s: %w", runID, err)
 		}
 		if err := json.Unmarshal([]byte(inputsJSON), &nodeRun.Inputs); err != nil {
@@ -137,6 +137,9 @@ SELECT id, run_id, node_id, node_definition, node_executor, status, inputs_json,
 		}
 		if err := json.Unmarshal([]byte(outputsJSON), &nodeRun.Outputs); err != nil {
 			return nil, fmt.Errorf("decode product node run %s outputs: %w", nodeRun.ID, err)
+		}
+		if err := json.Unmarshal([]byte(diagnosticsJSON), &nodeRun.Diagnostics); err != nil {
+			return nil, fmt.Errorf("decode product node run %s diagnostics: %w", nodeRun.ID, err)
 		}
 		if nodeRun.StartedAt, err = parseStoredTime(started); err != nil {
 			return nil, fmt.Errorf("parse product node run %s started_at: %w", nodeRun.ID, err)

@@ -11,6 +11,7 @@ import { createBuiltinNodeRegistry, validateConfig } from "../dist/node-registry
 import { createWorkflowPreview } from "../dist/workflow-preview.js";
 import { createBrowserLLMSettings, createMemorySecretAdapter } from "../dist/browser-llm-settings.js";
 import { productRevisionKey } from "../dist/browser-run.js";
+import { createFixtureChatAdapter } from "../dist/browser-chat-fixture.js";
 
 const expectedView = {
   title: "Gum Workflows",
@@ -1229,6 +1230,96 @@ test("the DOM and shell preserve newer text while an earlier autosave is in flig
 
 	assert.deepEqual(updates.map((update) => update.expectedLockVersion), [1, 2]);
 	assert.equal(updates.at(-1).content.nodes[0].id, "latest");
+});
+
+test("the Browser Mock startRun drives one real fixture model call and persists diagnostics", async () => {
+	let selectWorkflow;
+	let startRun;
+	let renderedRun;
+	let draft = structuredClone(expectedDraft);
+	const secrets = createMemorySecretAdapter();
+	const settings = createBrowserLLMSettings({ newID: () => "provider-uuid", now: () => "2026-09-01T00:00:00Z", secrets });
+	settings.createProvider({ name: "Primary", protocol: "openai-chat-completions", baseUrl: "https://api.example/v1", apiKey: "sk-browser-run-secret" });
+	settings.createModel({ providerId: "provider-uuid", displayName: "Fast", providerModelId: "model-fast", generationDefaults: {} });
+	draft = {
+		...draft,
+		content: {
+			semanticSchemaVersion: "productWorkflow/v1",
+			nodes: [
+				{ id: "prompt", definition: "human-chat", executor: "v1", displayName: "Prompt", config: {} },
+				{ id: "answer", definition: "llm-chat", executor: "v1", displayName: "Answer", config: { instructions: "Answer tersely." }, inputs: { conversation: { from: "prompt.conversation" } } },
+			],
+		},
+	};
+	const requests = [];
+	// The shared browser fixture adapter resolves the real Secret reference,
+	// proving the call carries the stored credential and nothing else.
+	const chatWithSecrets = createFixtureChatAdapter({
+		secrets,
+		requests,
+		responses: [{ assistantText: "Real fixture response.", finishReason: "stop", usage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 }, providerRequestId: "chatcmpl-fixture-1" }],
+	});
+	const runResult = { ...structuredClone(expectedRun), draft: structuredClone(draft) };
+	const view = {
+		onOpenWorkspace() {}, onCreateWorkflow() {}, onSelectWorkflow(handler) { selectWorkflow = handler; },
+		onDraftDirty() {}, onEditDraft() {}, onStartRun(handler) { startRun = handler; },
+		render() {}, renderDraft() {}, renderDraftLoading() {}, renderNodeEditor() {},
+		renderRun(run) { renderedRun = run; }, renderRevisions() {}, renderRevisionRuns() {}, renderHistoryRun() {},
+	};
+	const client = createBrowserWorkflowClient({
+		async openWorkspace() { return expectedView; }, async createWorkflow() {}, async listWorkflows() { return []; },
+		async getDraft() { return structuredClone(draft); }, async updateDraft() {},
+		async getLLMSettings() { return settings.getSettings(); },
+		async createLLMProvider(input) { return settings.createProvider(input); },
+		async createLLMModel(input) { return settings.createModel(input); },
+		async startRun(input) {
+			const materialized = structuredClone(draft.content);
+			const provider = settings.getSettings().providers[0];
+			const model = provider.models[0];
+			for (const node of materialized.nodes) {
+				if (node.definition === "llm-chat") node.llm = { modelUuid: model.id };
+			}
+			const agent = materialized.nodes.find((node) => node.definition === "llm-chat");
+			const result = chatWithSecrets.generate(
+				{ protocol: provider.protocol, baseUrl: provider.baseUrl, providerModelId: model.providerModelId, apiKeyRef: settings.referenceFor(provider.id) },
+				{
+					model: model.providerModelId,
+					instructions: [{ kind: "text", text: agent.config.instructions }],
+					messages: [{ role: "user", parts: [{ kind: "text", text: "Hello from the product UI." }] }],
+					config: {},
+				},
+			);
+			return {
+				...structuredClone(runResult),
+				draft: { ...structuredClone(draft), content: materialized },
+				snapshot: { executors: [], llmSelections: [{ nodeId: "answer", providerId: provider.id, providerName: provider.name, protocol: provider.protocol, baseUrl: provider.baseUrl, modelUuid: model.id, providerModelId: model.providerModelId }] },
+				nodeRuns: [
+					{ id: "human-run", nodeId: "prompt", nodeDefinition: "human-chat", nodeExecutor: "v1", status: "succeeded" },
+					{ id: "agent-run", nodeId: "answer", nodeDefinition: "llm-chat", nodeExecutor: "v1", status: "succeeded", diagnostics: { providerRequestId: result.providerRequestId, finishReason: result.finishReason, usage: result.usage } },
+				],
+				artifacts: [{ id: "artifact-uuid", nodeId: "answer", port: "conversation", type: "Conversation", version: "2", uri: "2.json", messages: [{ role: "user", text: "Hello from the product UI." }, { role: "assistant", text: result.assistant.parts[0].text }] }],
+			};
+		},
+	});
+	createProductShell(view, client);
+	await selectWorkflow(expectedWorkflow.id);
+	await startRun();
+	const run = renderedRun;
+
+	// The fixture saw exactly one authenticated canonical call.
+	assert.deepEqual(requests, [{
+		authorization: "Bearer sk-browser-run-secret",
+		baseUrl: "https://api.example/v1",
+		model: "model-fast",
+		instructions: "Answer tersely.",
+		messages: [{ role: "user", text: "Hello from the product UI." }],
+		config: {},
+	}]);
+	assert.equal(run.nodeRuns[1].diagnostics.providerRequestId, "chatcmpl-fixture-1");
+	assert.equal(run.nodeRuns[1].diagnostics.finishReason, "stop");
+	assert.deepEqual(run.nodeRuns[1].diagnostics.usage, { inputTokens: 12, outputTokens: 7, totalTokens: 19 });
+	assert.equal(run.artifacts[0].messages[1].text, "Real fixture response.");
+	assert.equal(JSON.stringify(run).includes("sk-browser-run-secret"), false);
 });
 
 test("the shell gives both clients the same user-facing status text", () => {

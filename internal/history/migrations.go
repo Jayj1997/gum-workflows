@@ -33,8 +33,12 @@ const ProductWorkflowDraftSchemaVersion = 6
 // ProductLLMSettingsSchemaVersion adds SQLite-backed Provider and Model Slots.
 const ProductLLMSettingsSchemaVersion = 7
 
-// ProductWorkflowRunSchemaVersion adds immutable Revisions and P9 fake Run history.
+// ProductWorkflowRunSchemaVersion adds immutable Revisions and Product Run history.
 const ProductWorkflowRunSchemaVersion = 8
+
+// ProductNodeRunDiagnosticsSchemaVersion persists real model call telemetry
+// on product Node Runs.
+const ProductNodeRunDiagnosticsSchemaVersion = 9
 
 // 新增迁移只允许 append（不改写历史迁移），保证已迁移的库向前兼容。
 var migrations = []migration{
@@ -251,6 +255,12 @@ ON product_workflow_run (revision_id, started_at ASC, id ASC)`,
   created_at  TEXT NOT NULL,
   UNIQUE (run_id, node_id, port, version)
 )`,
+		},
+	},
+	{
+		version: ProductNodeRunDiagnosticsSchemaVersion,
+		stmts: []string{
+			`ALTER TABLE product_workflow_node_run ADD COLUMN diagnostics_json TEXT NOT NULL DEFAULT '{}'`,
 		},
 	},
 }

@@ -81,7 +81,7 @@ func (a *Application) GetRunHistory(ctx context.Context, runID string) (RunView,
 	draft := a.revisionDraftView(ctx, run)
 	nodeRunViews := make([]NodeRunView, 0, len(nodeRuns))
 	for _, nodeRun := range nodeRuns {
-		nodeRunViews = append(nodeRunViews, NodeRunView{ID: nodeRun.ID, NodeID: nodeRun.NodeID, NodeDefinition: nodeRun.NodeDefinition, NodeExecutor: nodeRun.NodeExecutor, Status: nodeRun.Status})
+		nodeRunViews = append(nodeRunViews, nodeRunView(nodeRun))
 	}
 	artifactViews := a.reconstructArtifactViews(run.ID, artifacts)
 	return RunView{ID: run.ID, RevisionID: run.RevisionID, Status: run.Status, Draft: draft, Snapshot: runSnapshotView(run.Snapshot), NodeRuns: nodeRunViews, Artifacts: artifactViews}, nil

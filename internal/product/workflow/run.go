@@ -10,26 +10,42 @@ import (
 	"time"
 
 	"github.com/Jayj1997/gum-workflows/internal/artifact"
+	"github.com/Jayj1997/gum-workflows/internal/chat"
 )
 
-// ChatMessage is one user-visible message in a Conversation Artifact.
-type ChatMessage struct {
-	Role string `json:"role"`
-	Text string `json:"text"`
+// ChatMessage is one user-visible message in a Conversation Artifact. It is the
+// canonical chat model; the product workflow package re-exports it so run
+// persistence keeps one conversation identity across views and history.
+type ChatMessage = chat.ChatMessage
+
+// Conversation is the canonical body persisted by chat Nodes.
+type Conversation = chat.Conversation
+
+// NodeRunDiagnostics carries sanitized per-call observations into Node Run
+// history. It must never contain API keys, headers or raw wire bodies.
+type NodeRunDiagnostics struct {
+	// ProviderRequestID, FinishReason and Usage record the completed real
+	// model call for this Node Run.
+	ProviderRequestID string `json:"providerRequestId,omitempty"`
+	FinishReason      string `json:"finishReason,omitempty"`
+	Usage             *Usage `json:"usage,omitempty"`
+	// Error records a sanitized failure summary for failed Node Runs.
+	Error string `json:"error,omitempty"`
 }
 
-// Conversation is the canonical body used by the P9 fake executor.
-type Conversation struct {
-	Messages []ChatMessage `json:"messages"`
-}
+// Usage re-exports the canonical token accounting for persistence.
+type Usage = chat.Usage
 
-// ResolvedLLMSelection freezes the non-secret model connection facts used by a Run.
+// ResolvedLLMSelection freezes the non-secret model connection facts used by a
+// Run. APIKeyRef names the Secret holding the credential; the value itself is
+// resolved through the Secret Adapter at call time and never persisted.
 type ResolvedLLMSelection struct {
 	NodeID              string             `json:"nodeId"`
 	ProviderID          string             `json:"providerId"`
 	ProviderName        string             `json:"providerName"`
 	Protocol            string             `json:"protocol"`
 	BaseURL             string             `json:"baseUrl"`
+	APIKeyRef           string             `json:"apiKeyRef"`
 	ModelUUID           string             `json:"modelUuid"`
 	ProviderModelID     string             `json:"providerModelId"`
 	EffectiveGeneration GenerationDefaults `json:"effectiveGeneration"`
@@ -70,7 +86,7 @@ type Run struct {
 	FinishedAt time.Time
 }
 
-// NodeRun is one persisted fake-executor Node invocation.
+// NodeRun is one persisted Node invocation of a Product Run.
 type NodeRun struct {
 	ID             string
 	RunID          string
@@ -80,6 +96,7 @@ type NodeRun struct {
 	Status         string
 	Inputs         map[string]artifact.ArtifactRef
 	Outputs        map[string]artifact.ArtifactRef
+	Diagnostics    NodeRunDiagnostics
 	StartedAt      time.Time
 	FinishedAt     time.Time
 }

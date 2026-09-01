@@ -60,6 +60,11 @@ export function createBrowserLLMSettings(options = {}) {
 
 	return {
 		getSettings,
+		// referenceFor returns the internal Secret reference of one Provider so
+		// the fixture chat Adapter can resolve credentials like the real seam.
+		referenceFor(providerID) {
+			return providers.find((candidate) => candidate.id === providerID && !candidate.deleted)?.apiKeyRef;
+		},
 		createProvider(input) {
 			const id = newID();
 			const apiKeyRef = secrets.store(`llm-provider/${id}`, input.apiKey);

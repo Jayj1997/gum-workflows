@@ -121,7 +121,7 @@ WHERE workflow_id = ?`, workflowID), workflowID)
 }
 
 // StartProductWorkflowRun atomically materializes the visible Draft, reuses or
-// creates its immutable Revision, and persists one completed P9 fake Run.
+// creates its immutable Revision, and persists one completed Product Run.
 func (s *Store) StartProductWorkflowRun(ctx context.Context, request productworkflow.StartRunRequest) (productworkflow.StartRunResult, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -203,10 +203,14 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`, run.ID, request.WorkflowID, run.RevisionID, run.S
 		if err != nil {
 			return productworkflow.StartRunResult{}, fmt.Errorf("encode product Node Run %s outputs: %w", nodeRun.ID, err)
 		}
+		diagnosticsJSON, err := json.Marshal(nodeRun.Diagnostics)
+		if err != nil {
+			return productworkflow.StartRunResult{}, fmt.Errorf("encode product Node Run %s diagnostics: %w", nodeRun.ID, err)
+		}
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO product_workflow_node_run
-  (id, run_id, node_id, node_definition, node_executor, status, inputs_json, outputs_json, started_at, finished_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nodeRun.ID, run.ID, nodeRun.NodeID, nodeRun.NodeDefinition, nodeRun.NodeExecutor, nodeRun.Status, string(inputsJSON), string(outputsJSON), nodeRun.StartedAt.Format(time.RFC3339Nano), nodeRun.FinishedAt.Format(time.RFC3339Nano)); err != nil {
+  (id, run_id, node_id, node_definition, node_executor, status, inputs_json, outputs_json, diagnostics_json, started_at, finished_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nodeRun.ID, run.ID, nodeRun.NodeID, nodeRun.NodeDefinition, nodeRun.NodeExecutor, nodeRun.Status, string(inputsJSON), string(outputsJSON), string(diagnosticsJSON), nodeRun.StartedAt.Format(time.RFC3339Nano), nodeRun.FinishedAt.Format(time.RFC3339Nano)); err != nil {
 			return productworkflow.StartRunResult{}, fmt.Errorf("create product Node Run %s: %w", nodeRun.ID, err)
 		}
 	}

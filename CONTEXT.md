@@ -38,6 +38,18 @@ workflow/v1 中的一个大模型服务接入点（url + 协议类型 + apikey �
 **LLM Model（模型）**:
 Provider 下一个用户配置的模型槽，拥有全局稳定的 Gum Model UUID，并携带可编辑的 Provider Model ID 和生成默认值。UUID 标识配置槽而非不可变底层模型；修改 Provider Model ID 会影响未来 Run，历史 Run Snapshot 保留旧值。默认解析链：默认 Provider（显式 default，否则取未删除项按 created_at、UUID 升序的第一个）-> 默认 Model（同理）。Gum 不维护或匹配模型能力。
 
+**Conversation（对话）**:
+`llm-chat` 等对话 Node 的正式 Artifact 本体，由有序 ChatMessage 组成，只在完整成功响应后一次性产生新版本；user/assistant 消息按顺序持久化，system/developer 指令来自 Node config 的 Instructions，不混入业务对话。
+_Avoid_: 在 Node Executor 内保存隐藏 session、把 Provider 原始 JSON 字段当作文档模型的一部分。
+
+**ChatMessage / ContentPart（消息与内容片段）**:
+Canonical 对话文档模型的组成单元：消息有 user/assistant 角色并携带有序内容片段，首版只有 text 片段。Protocol Adapter 负责与 Provider 线格式互转；Canonical 层不泄漏 Provider 字段。
+_Avoid_: 直接持久化 OpenAI/Anthropic 的 wire message 结构。
+
+**Protocol Adapter（协议适配器）**:
+把 Canonical GenerateRequest 转换为某个真实 Provider 协议（首版 OpenAI-compatible Chat Completions 非流式）并把响应规范化回 Canonical 结果的边界。它通过注入的 HTTP Client 工作；认证、限流、网络、协议损坏与 Provider 拒绝请求都归为 Structural Error，错误不携带 API Key。
+_Avoid_: 让 Canonical 模型感知特定 Provider、在协议层自动重试或切换 Provider。
+
 ### 14 后产品侧（已确认、部分已实现）
 
 **LLM Preference（模型偏好）**:
