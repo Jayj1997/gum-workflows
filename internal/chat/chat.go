@@ -5,7 +5,6 @@ package chat
 
 import (
 	"context"
-	"time"
 )
 
 // ContentPart is one typed part of a message body. The first product closure
@@ -123,15 +122,4 @@ const (
 // P10 implements non-streaming only; a streaming seam is added separately.
 type Adapter interface {
 	Generate(ctx context.Context, conn Connection, req GenerateRequest) (GenerateResult, error)
-}
-
-// RequestTelemetry is the sanitized per-request observation persisted into
-// Node Run diagnostics. It must never contain headers, secrets or full
-// request/response bodies.
-type RequestTelemetry struct {
-	ProviderRequestID string    `json:"providerRequestId,omitempty"`
-	FinishReason      string    `json:"finishReason,omitempty"`
-	Usage             Usage     `json:"usage"`
-	LatencyMS         int64     `json:"latencyMs"`
-	StartedAt         time.Time `json:"startedAt"`
 }

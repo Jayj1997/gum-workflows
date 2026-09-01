@@ -164,7 +164,7 @@ func TestOpenAIChatAdapterClassifiesStructuralErrors(t *testing.T) {
 			if openAIError.Kind != testCase.wantKind || openAIError.StatusCode != testCase.status {
 				t.Fatalf("error = %v, want kind %q status %d", err, testCase.wantKind, testCase.status)
 			}
-			if openAIError.ProviderMessage != "" && strings.Contains(testCase.body, openAIError.ProviderMessage) == false {
+			if openAIError.ProviderMessage != "" && !strings.Contains(testCase.body, openAIError.ProviderMessage) {
 				t.Fatalf("provider message = %q not from fixture", openAIError.ProviderMessage)
 			}
 		})

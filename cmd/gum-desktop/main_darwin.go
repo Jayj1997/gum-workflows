@@ -6,7 +6,6 @@ import (
 	"context"
 	"log"
 
-	"github.com/Jayj1997/gum-workflows/internal/chat"
 	"github.com/Jayj1997/gum-workflows/internal/history"
 	"github.com/Jayj1997/gum-workflows/internal/product"
 	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
@@ -36,7 +35,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	adapter := newDesktopAdapter(product.NewApplication(store, catalog, product.WithRunPaths(paths), product.WithSecretAdapter(secret.NewKeychainAdapter(nil)), product.WithChatAdapter(chat.NewOpenAIChatAdapter(nil))))
+	adapter := newDesktopAdapter(product.NewApplication(store, catalog, product.WithRunPaths(paths), product.WithSecretAdapter(secret.NewKeychainAdapter(nil))))
 	if err := wails.Run(&options.App{
 		Title:     "Gum Workflows",
 		Width:     1080,

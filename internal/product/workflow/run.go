@@ -29,16 +29,14 @@ type NodeRunDiagnostics struct {
 	ProviderRequestID string `json:"providerRequestId,omitempty"`
 	FinishReason      string `json:"finishReason,omitempty"`
 	Usage             *Usage `json:"usage,omitempty"`
-	// Error records a sanitized failure summary for failed Node Runs.
-	Error string `json:"error,omitempty"`
 }
 
 // Usage re-exports the canonical token accounting for persistence.
 type Usage = chat.Usage
 
-// ResolvedLLMSelection freezes the non-secret model connection facts used by a
-// Run. APIKeyRef names the Secret holding the credential; the value itself is
-// resolved through the Secret Adapter at call time and never persisted.
+// ResolvedLLMSelection freezes the model connection facts used by a Run. The
+// API Key itself never appears: APIKeyRef names the Secret resolved through
+// the Secret Adapter at call time, and no other field carries secrets.
 type ResolvedLLMSelection struct {
 	NodeID              string             `json:"nodeId"`
 	ProviderID          string             `json:"providerId"`

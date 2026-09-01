@@ -3,19 +3,20 @@ import { createProductDOMView } from "./product-dom-view.js";
 import { createProductShell, productStatusMessage } from "./product-shell.js";
 import { createBuiltinNodeRegistry } from "./node-registry.js";
 import { createWorkflowPreview } from "./workflow-preview.js";
-import { createBrowserLLMSettings } from "./browser-llm-settings.js";
+import { createBrowserLLMSettings, createMemorySecretAdapter } from "./browser-llm-settings.js";
 import { productRevisionKey } from "./browser-run.js";
 import { createFixtureChatAdapter } from "./browser-chat-fixture.js";
 
 const workflows = [];
 const drafts = new Map();
 const nodeRegistry = createBuiltinNodeRegistry();
-const secrets = createMemorySecretAdapterForBrowser();
+// One Secret Adapter instance is shared between settings and the fixture chat
+// Adapter, mirroring the Product Application's injected seam.
+const secrets = createMemorySecretAdapter();
 const llmSettings = createBrowserLLMSettings({ secrets });
 const revisions = new Map();
 const runs = new Map();
-const llmRequests = [];
-const chatAdapter = createFixtureChatAdapter({ secrets, requests: llmRequests });
+const chatAdapter = createFixtureChatAdapter({ secrets });
 
 function normalize(value) {
 	if (Array.isArray(value)) return value.map(normalize);
@@ -28,10 +29,6 @@ function normalize(value) {
 function sameContent(left, right) {
 	return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
 }
-
-// The Browser Mock shares one Secret Adapter instance between settings and the
-// fixture chat Adapter, mirroring the Product Application's injected seam.
-import { createMemorySecretAdapter as createMemorySecretAdapterForBrowser } from "./browser-llm-settings.js";
 
 const client = createBrowserWorkflowClient({
   async openWorkspace() {

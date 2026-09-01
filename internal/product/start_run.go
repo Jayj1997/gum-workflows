@@ -351,8 +351,9 @@ func agentInstructions(agent map[string]any) []chat.ContentPart {
 	return []chat.ContentPart{chat.TextPart(instructions)}
 }
 
-// redactSecret removes resolved secret values from an error while keeping the
-// chain inspectable for typed errors such as *chat.OpenAIError.
+// redactSecret removes resolved secret values from an error. Typed protocol
+// errors keep their identity (so errors.As keeps working); other errors are
+// flattened only when the pattern actually matched something to redact.
 func redactSecret(err error) error {
 	if err == nil {
 		return nil
@@ -364,11 +365,10 @@ func redactSecret(err error) error {
 		}
 		return err
 	}
-	message := secretPattern.ReplaceAllString(err.Error(), "[redacted]")
-	if message == err.Error() {
-		return err
+	if message := secretPattern.ReplaceAllString(err.Error(), "[redacted]"); message != err.Error() {
+		return fmt.Errorf("%s", message)
 	}
-	return fmt.Errorf("%s", message)
+	return err
 }
 
 // secretPattern matches common bearer-token shapes in error text.
@@ -415,7 +415,7 @@ func nodeRunView(nodeRun productworkflow.NodeRun) NodeRunView {
 		ID: nodeRun.ID, NodeID: nodeRun.NodeID, NodeDefinition: nodeRun.NodeDefinition,
 		NodeExecutor: nodeRun.NodeExecutor, Status: nodeRun.Status,
 	}
-	if nodeRun.Diagnostics.ProviderRequestID == "" && nodeRun.Diagnostics.FinishReason == "" && nodeRun.Diagnostics.Usage == nil && nodeRun.Diagnostics.Error == "" {
+	if nodeRun.Diagnostics.ProviderRequestID == "" && nodeRun.Diagnostics.FinishReason == "" && nodeRun.Diagnostics.Usage == nil {
 		return view
 	}
 	diagnostics := map[string]any{}
@@ -427,9 +427,6 @@ func nodeRunView(nodeRun productworkflow.NodeRun) NodeRunView {
 	}
 	if nodeRun.Diagnostics.Usage != nil {
 		diagnostics["usage"] = nodeRun.Diagnostics.Usage
-	}
-	if nodeRun.Diagnostics.Error != "" {
-		diagnostics["error"] = nodeRun.Diagnostics.Error
 	}
 	view.Diagnostics = diagnostics
 	return view

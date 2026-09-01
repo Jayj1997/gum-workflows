@@ -18,13 +18,12 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/secret"
 )
 
-// findOpenAIError walks the error chain for the protocol adapter's
-// Structural Error, which the Application wraps with context.
+// findOpenAIError returns the protocol adapter's Structural Error from the
+// Application-wrapped chain, if any.
 func findOpenAIError(err error) *chat.OpenAIError {
-	for candidate := err; candidate != nil; candidate = errors.Unwrap(candidate) {
-		if target, ok := candidate.(*chat.OpenAIError); ok {
-			return target
-		}
+	var openAIError *chat.OpenAIError
+	if errors.As(err, &openAIError) {
+		return openAIError
 	}
 	return nil
 }
@@ -140,7 +139,7 @@ func TestApplicationRealRunFailsWithoutPartialStateWhenProviderFails(t *testing.
 		_, _ = w.Write([]byte(`{"error":{"message":"upstream capacity"}}`))
 	}))
 	t.Cleanup(server.Close)
-	application, paths, store, workflow, lockVersion := openRealRunApplication(t, ctx, server)
+	application, paths, _, workflow, lockVersion := openRealRunApplication(t, ctx, server)
 
 	_, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: lockVersion})
 	if err == nil {
@@ -164,9 +163,6 @@ func TestApplicationRealRunFailsWithoutPartialStateWhenProviderFails(t *testing.
 	}
 	if entries, readErr := os.ReadDir(paths.RunsDir()); readErr == nil && len(entries) > 0 {
 		t.Fatalf("failed Run left run directories: %#v", entries)
-	} else if !os.IsNotExist(readErr) {
-		// An empty runs root is fine; a populated one is not.
-		_ = store
 	}
 }
 
@@ -212,24 +208,18 @@ func TestApplicationRealRunWithoutSecretResolutionFailsBeforeAnyWrite(t *testing
 		t.Fatal(err)
 	}
 	workflow, saved := saveTracerDraft(t, ctx, application)
-	// Wipe the secret so resolution fails before the model call.
-	wiped := secret.NewMemoryAdapter()
-	wipeApp := product.NewApplication(store, mustCatalog(t), product.WithRunPaths(paths), product.WithSecretAdapter(wiped), product.WithChatAdapter(chat.NewOpenAIChatAdapter(server.Client())))
-	_ = wipeApp
-	// Simulate missing credential by removing it from the adapter the app uses.
-	// Rebuild the application with a second memory adapter that never stored it.
-	application2 := product.NewApplication(store, mustCatalog(t), product.WithRunPaths(paths), product.WithSecretAdapter(secret.NewMemoryAdapter()), product.WithChatAdapter(chat.NewOpenAIChatAdapter(server.Client())))
-	_, err = application2.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion})
+	// A second application over the same database uses a fresh Secret Adapter
+	// that never stored the Provider credential, so resolution fails before
+	// the model call and before any Run state is created.
+	withoutCredential := product.NewApplication(store, mustCatalog(t), product.WithRunPaths(paths), product.WithSecretAdapter(secret.NewMemoryAdapter()), product.WithChatAdapter(chat.NewOpenAIChatAdapter(server.Client())))
+	_, err = withoutCredential.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion})
 	if err == nil {
 		t.Fatal("start Run with unresolvable secret = nil error")
 	}
 	if strings.Contains(err.Error(), "sk-gone-secret") {
 		t.Fatalf("secret error leaks value: %v", err)
 	}
-	if _, statErr := os.Stat(paths.RunsDir()); statErr == nil {
-		entries, readErr := os.ReadDir(paths.RunsDir())
-		if readErr == nil && len(entries) > 0 {
-			t.Fatalf("failed Run left run directories: %#v", entries)
-		}
+	if entries, readErr := os.ReadDir(paths.RunsDir()); readErr == nil && len(entries) > 0 {
+		t.Fatalf("failed Run left run directories: %#v", entries)
 	}
 }
