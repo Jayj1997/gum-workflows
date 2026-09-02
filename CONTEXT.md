@@ -53,7 +53,7 @@ _Avoid_: 让 Canonical 模型感知特定 Provider、在协议层自动重试或
 ### 14 后产品侧（已确认、部分已实现）
 
 **LLM Preference（模型偏好）**:
-Agent Node Instance 记录的 Gum Model UUID。未选择时，StartRun preflight 按默认 Provider/Model 解析并先写回 Draft；只要 UUID 对应的 Model 仍存在，默认值变化都不改变选择。UUID 被删除时不回退，必须由用户重新选择。
+Agent Node Instance 记录的 Gum Model UUID。未选择时，StartRun preflight 按默认 Provider/Model 解析并先写回 Draft；只要 UUID 对应的 Model 仍存在，默认值变化都不改变选择。UUID 被删除时不回退，必须由用户重新选择：当前 Draft 的 Preview 会给出指向 `nodes[i].llm.modelUuid` 的悬空诊断并阻止 StartRun，删除 Provider/Model 前的影响预告是只读查询，不改写任何 Draft。
 
 **Resolved LLM Selection（已解析模型选择）**:
 StartRun 根据已写入 Draft/Revision 的 Gum Model UUID，为 Agent Node 固定协议、Provider、Provider Model ID、instructions dialect、能力和有效生成参数。它进入 Run Snapshot，不包含 API Key 明文；历史 Run 即使原 Model 后来删除仍可显示当时的解析结果。

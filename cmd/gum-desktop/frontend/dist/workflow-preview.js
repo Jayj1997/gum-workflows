@@ -48,8 +48,13 @@ function cycleGroups(nodes, edges) {
 	return groups.sort((left, right) => left.nodeIds[0].localeCompare(right.nodeIds[0]));
 }
 
-export function createWorkflowPreview(content, registry) {
+export function createWorkflowPreview(content, registry, options = {}) {
 	const preview = { nodes: [], edges: [], groups: [], diagnostics: [] };
+	// modelUUIDs mirrors the Application's live Model Slot set: a missing or
+	// nil-like value skips dangling-preference diagnostics (history views must
+	// not flag Revisions whose Slots were deleted after the Run).
+	const modelUUIDs = options.modelUUIDs;
+	const hasModelUUIDs = modelUUIDs instanceof Set;
 	if (content?.semanticSchemaVersion !== "productWorkflow/v1") {
 		preview.diagnostics.push(diagnostic("invalid-semantic-schema-version", "semanticSchemaVersion", "semantic schema version must be productWorkflow/v1"));
 	}
@@ -81,6 +86,19 @@ export function createWorkflowPreview(content, registry) {
 			for (const issue of validateConfig(definition.config, config)) {
 				preview.diagnostics.push(diagnostic(`invalid-node-config-${issue.code}`, `nodes[${index}].config.${issue.field}`, issue.message));
 			}
+		}
+		if (definition.kind !== "agent" || !hasModelUUIDs) continue;
+		if (!node.llm || typeof node.llm !== "object" || Array.isArray(node.llm)) {
+			if (node.llm !== undefined && node.llm !== null) {
+				preview.diagnostics.push(diagnostic("invalid-llm-preference", `nodes[${index}].llm`, "llm preference must be an object"));
+			}
+			continue;
+		}
+		const modelUUID = node.llm.modelUuid;
+		if (typeof modelUUID !== "string" || modelUUID.trim() === "") {
+			preview.diagnostics.push(diagnostic("missing-model-uuid", `nodes[${index}].llm.modelUuid`, "select a Model for this agent Node"));
+		} else if (!modelUUIDs.has(modelUUID)) {
+			preview.diagnostics.push(diagnostic("dangling-model-uuid", `nodes[${index}].llm.modelUuid`, `Model ${JSON.stringify(modelUUID)} is deleted or no longer exists; select another Model before running`));
 		}
 	}
 	for (const { index, node, definition } of records) {

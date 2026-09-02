@@ -51,6 +51,34 @@ type ResolvedLLMModelView struct {
 	Diagnostics []Diagnostic    `json:"diagnostics"`
 }
 
+// AffectedWorkflowView is one Product Workflow whose current Draft selects a
+// Gum Model UUID that a pending Model or Provider deletion would dangle.
+type AffectedWorkflowView struct {
+	ID             string `json:"id"`
+	DisplayName    string `json:"displayName"`
+	NodeID         string `json:"nodeId"`
+	NodeDefinition string `json:"nodeDefinition"`
+	ModelUUID      string `json:"modelUuid"`
+}
+
+// AffectedModelSlotView is one Model Slot a Provider deletion would remove.
+type AffectedModelSlotView struct {
+	ID              string `json:"id"`
+	DisplayName     string `json:"displayName"`
+	ProviderModelID string `json:"providerModelId"`
+}
+
+// AffectedWorkflowsView previews the deletion impact of one Model Slot or one
+// whole Provider without modifying any Draft, Revision or historical Run.
+type AffectedWorkflowsView struct {
+	Workflows []AffectedWorkflowView `json:"workflows"`
+	// ModelSlots lists the Model Slots a Provider deletion removes; it is
+	// empty for a single Model deletion preview, which removes the one slot
+	// named by its arguments.
+	ModelSlots  []AffectedModelSlotView `json:"modelSlots"`
+	Diagnostics []Diagnostic            `json:"diagnostics"`
+}
+
 // CreateLLMProviderInput creates a Provider with a generated stable Gum UUID.
 type CreateLLMProviderInput struct {
 	Name     string `json:"name"`
@@ -98,6 +126,127 @@ func (a *Application) requireLLMSettings() (productworkflow.LLMSettingsRepositor
 		return nil, fmt.Errorf("llm settings repository is not configured")
 	}
 	return a.llmSettings, nil
+}
+
+func (a *Application) requireLLMUsage() (productworkflow.LLMUsageRepository, error) {
+	usage, ok := a.repository.(productworkflow.LLMUsageRepository)
+	if !ok {
+		return nil, fmt.Errorf("llm usage repository is not configured")
+	}
+	return usage, nil
+}
+
+// listModelReferences returns every current Draft's Gum Model UUID selection
+// together with each Workflow's display name for the deletion preview.
+func (a *Application) listModelReferences(ctx context.Context) ([]productworkflow.WorkflowModelReference, map[string]string, error) {
+	usage, err := a.requireLLMUsage()
+	if err != nil {
+		return nil, nil, err
+	}
+	references, err := usage.ListProductWorkflowDraftModelReferences(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list workflow model references: %w", err)
+	}
+	workflows, err := a.repository.ListProductWorkflows(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list workflows: %w", err)
+	}
+	names := make(map[string]string, len(workflows))
+	for _, workflow := range workflows {
+		names[workflow.ID] = workflow.DisplayName
+	}
+	return references, names, nil
+}
+
+// affectedWorkflowsView filters model references by the given UUID set and
+// maps them to user-visible Workflow identities in stable reference order.
+func affectedWorkflowsView(references []productworkflow.WorkflowModelReference, names map[string]string, dangling map[string]struct{}) AffectedWorkflowsView {
+	view := AffectedWorkflowsView{Workflows: []AffectedWorkflowView{}, ModelSlots: []AffectedModelSlotView{}, Diagnostics: []Diagnostic{}}
+	seen := make(map[string]struct{}, len(references))
+	for _, reference := range references {
+		if _, matches := dangling[reference.ModelUUID]; !matches {
+			continue
+		}
+		// References are deduplicated per Node Instance: a Draft's node holds
+		// exactly one modelUuid, so repeated rows only come from repeated
+		// reads, never from distinct Nodes.
+		key := reference.WorkflowID + "\x00" + reference.NodeID + "\x00" + reference.ModelUUID
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		view.Workflows = append(view.Workflows, AffectedWorkflowView{
+			ID: reference.WorkflowID, DisplayName: names[reference.WorkflowID],
+			NodeID: reference.NodeID, NodeDefinition: reference.NodeDefinition, ModelUUID: reference.ModelUUID,
+		})
+	}
+	return view
+}
+
+// ListModelDeletionImpact previews which current Drafts reference one Gum
+// Model UUID before the user confirms the Model Slot deletion. It never
+// mutates Drafts, Revisions or Runs.
+func (a *Application) ListModelDeletionImpact(ctx context.Context, providerID, modelID string) (AffectedWorkflowsView, error) {
+	repository, err := a.requireLLMSettings()
+	if err != nil {
+		return AffectedWorkflowsView{}, err
+	}
+	settings, err := repository.GetLLMSettings(ctx)
+	if err != nil {
+		return AffectedWorkflowsView{}, fmt.Errorf("list model deletion impact: %w", err)
+	}
+	modelUUID := strings.TrimSpace(modelID)
+	var model productworkflow.LLMModel
+	for _, candidate := range settings.Models[strings.TrimSpace(providerID)] {
+		if candidate.ID == modelUUID {
+			model = candidate
+			break
+		}
+	}
+	if model.ID == "" {
+		return AffectedWorkflowsView{}, fmt.Errorf("list model deletion impact: llm model %s: not found", modelUUID)
+	}
+	references, names, err := a.listModelReferences(ctx)
+	if err != nil {
+		return AffectedWorkflowsView{}, fmt.Errorf("list model deletion impact: %w", err)
+	}
+	return affectedWorkflowsView(references, names, map[string]struct{}{model.ID: {}}), nil
+}
+
+// ListProviderDeletionImpact previews every Model Slot a Provider deletion
+// removes together with the current Drafts referencing any of them. It never
+// mutates Drafts, Revisions or Runs.
+func (a *Application) ListProviderDeletionImpact(ctx context.Context, providerID string) (AffectedWorkflowsView, error) {
+	repository, err := a.requireLLMSettings()
+	if err != nil {
+		return AffectedWorkflowsView{}, err
+	}
+	settings, err := repository.GetLLMSettings(ctx)
+	if err != nil {
+		return AffectedWorkflowsView{}, fmt.Errorf("list provider deletion impact: %w", err)
+	}
+	models := settings.Models[strings.TrimSpace(providerID)]
+	if len(models) == 0 {
+		_, err := activeProvider(ctx, repository, providerID)
+		if err != nil {
+			return AffectedWorkflowsView{}, fmt.Errorf("list provider deletion impact: %w", err)
+		}
+	}
+	references, names, err := a.listModelReferences(ctx)
+	if err != nil {
+		return AffectedWorkflowsView{}, fmt.Errorf("list provider deletion impact: %w", err)
+	}
+	dangling := make(map[string]struct{}, len(models))
+	slots := make([]AffectedModelSlotView, 0, len(models))
+	for _, model := range models {
+		dangling[model.ID] = struct{}{}
+		slots = append(slots, AffectedModelSlotView{
+			ID: model.ID, DisplayName: model.DisplayName, ProviderModelID: model.ProviderModelID,
+		})
+	}
+	view := affectedWorkflowsView(references, names, dangling)
+	view.ModelSlots = slots
+	return view, nil
 }
 
 func (a *Application) requireSecrets() error {

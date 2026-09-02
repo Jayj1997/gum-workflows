@@ -66,9 +66,73 @@ function nodeRunTimeText(nodeRun) {
 	return nodeRun.startedAt && nodeRun.finishedAt ? `${nodeRun.startedAt} → ${nodeRun.finishedAt}` : "";
 }
 
+// nodeRunItem renders one Node Run row shared by the current Run and the
+// historical Run panels.
+function nodeRunItem(document, nodeRun) {
+	const item = document.createElement("li");
+	item.textContent = `${nodeRun.nodeId} · ${nodeRun.nodeDefinition}@${nodeRun.nodeExecutor} · node run ${nodeRun.id} · ${nodeRun.status}`;
+	const diagnostics = nodeRunDiagnosticsText(nodeRun.diagnostics);
+	if (diagnostics) {
+		const detail = document.createElement("small");
+		detail.textContent = diagnostics;
+		item.append(detail);
+	}
+	const timing = nodeRunTimeText(nodeRun);
+	if (timing) {
+		const detail = document.createElement("small");
+		detail.textContent = timing;
+		item.append(detail);
+	}
+	return item;
+}
+
+// deletionImpactText renders one pending Model/Provider deletion preview as
+// the confirmation the user reads before the destructive action.
+function deletionImpactText(title, impact) {
+	const affected = impact?.workflows ?? [];
+	const lines = [`${title}`];
+	const slots = impact?.modelSlots ?? [];
+	if (slots.length > 0) {
+		lines.push(`This removes ${slots.length} Model Slot(s):`);
+		for (const slot of slots) {
+			lines.push(`- ${slot.displayName || slot.id} (${slot.providerModelId})`);
+		}
+	}
+	if (affected.length === 0) {
+		lines.push("No current Workflow Draft references these Model(s).");
+	} else {
+		lines.push(`${affected.length} Workflow Draft node(s) will keep a dangling Model UUID until you re-select:`);
+		for (const entry of affected) {
+			lines.push(`- ${entry.displayName || entry.id} · ${entry.nodeDefinition || "node"} "${entry.nodeId ?? ""}"`);
+		}
+	}
+	return lines.join("\n");
+}
+
+function modelDeletionPrompt(listModelDeletionImpact, provider, model) {
+	return Promise.resolve(listModelDeletionImpact(provider.id, model.id))
+		.then((impact) => deletionImpactText(`Delete Model ${model.displayName} from Provider ${provider.name}?`, impact))
+		.catch((error) => `Delete Model ${model.displayName} from Provider ${provider.name}? (impact unavailable: ${error instanceof Error ? error.message : String(error)})`);
+}
+
+function providerDeletionPrompt(listProviderDeletionImpact, provider) {
+	return Promise.resolve(listProviderDeletionImpact(provider.id))
+		.then((impact) => deletionImpactText(`Delete Provider ${provider.name} and its saved API Key?`, impact))
+		.catch((error) => `Delete Provider ${provider.name} and its saved API Key? (impact unavailable: ${error instanceof Error ? error.message : String(error)})`);
+}
+
 function runStatusText(run) {
 	const base = `Run ${run.status} · revision ${run.revisionId}`;
 	return run.error ? `${base} · ${run.error.message} · ${run.error.userAction}` : base;
+}
+
+// llmSelectionText renders the frozen model selection of one Run so the
+// historical panel keeps showing Provider name and Provider Model ID even
+// after the referenced Model Slot was deleted.
+function llmSelectionText(run) {
+	return (run?.snapshot?.llmSelections ?? [])
+		.map((selection) => `${selection.nodeId}: ${selection.providerName} (${selection.providerModelId})`)
+		.join("; ");
 }
 
 function singleTurnHumanSource(content) {
@@ -125,6 +189,7 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 	let selectNode = () => {};
 	let renameNode = () => {};
 	let editNodeConfig = () => {};
+	let editNodeModel = () => {};
 	let bindNodeInput = () => {};
 	let editControlDependencies = () => {};
 	let removeNode = () => {};
@@ -132,10 +197,12 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 	let createLLMProvider = () => {};
 	let updateLLMProvider = () => {};
 	let deleteLLMProvider = () => {};
+	let listProviderDeletionImpact = () => {};
 	let setDefaultLLMProvider = () => {};
 	let createLLMModel = () => {};
 	let updateLLMModel = () => {};
 	let deleteLLMModel = () => {};
+	let listModelDeletionImpact = () => {};
 	let setDefaultLLMModel = () => {};
 	let startRun = () => {};
 	let refreshRevisions = () => {};
@@ -215,6 +282,7 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 			nodeName?.addEventListener("change", () => renameNode({ nodeId: activeNodeId, displayName: nodeName.value }));
 		},
 		onEditNodeConfig(handler) { editNodeConfig = handler; },
+		onEditNodeModel(handler) { editNodeModel = handler; },
 		onBindNodeInput(handler) { bindNodeInput = handler; },
 		onEditControlDependencies(handler) { editControlDependencies = handler; },
 		onRemoveNode(handler) {
@@ -231,10 +299,12 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 		},
 		onUpdateLLMProvider(handler) { updateLLMProvider = handler; },
 		onDeleteLLMProvider(handler) { deleteLLMProvider = handler; },
+		onListProviderDeletionImpact(handler) { listProviderDeletionImpact = handler; },
 		onSetDefaultLLMProvider(handler) { setDefaultLLMProvider = handler; },
 		onCreateLLMModel(handler) { createLLMModel = handler; },
 		onUpdateLLMModel(handler) { updateLLMModel = handler; },
 		onDeleteLLMModel(handler) { deleteLLMModel = handler; },
+		onListModelDeletionImpact(handler) { listModelDeletionImpact = handler; },
 		onSetDefaultLLMModel(handler) { setDefaultLLMModel = handler; },
 		onStartRun(handler) {
 			startRun = handler;
@@ -310,10 +380,9 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 				makeDefault.addEventListener("click", () => setDefaultLLMProvider(provider.id));
 				const remove = document.createElement("button");
 				remove.type = "button"; remove.className = "danger"; remove.textContent = "Delete Provider";
-				remove.addEventListener("click", () => {
-					if (confirmDelete(`Delete Provider ${provider.name} and its saved API Key?`)) {
-						deleteLLMProvider({ providerId: provider.id, confirmed: true });
-					}
+				remove.addEventListener("click", async () => {
+					if (!confirmDelete(await providerDeletionPrompt(listProviderDeletionImpact, provider))) return;
+					deleteLLMProvider({ providerId: provider.id, confirmed: true });
 				});
 				heading.append(name, protocol, dialect, baseURL, apiKey, save, makeDefault, remove);
 
@@ -336,7 +405,10 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 					defaultModel.addEventListener("click", () => setDefaultLLMModel(provider.id, model.id));
 					const removeModel = document.createElement("button");
 					removeModel.type = "button"; removeModel.className = "danger"; removeModel.textContent = "Delete Model";
-					removeModel.addEventListener("click", () => deleteLLMModel(provider.id, model.id));
+					removeModel.addEventListener("click", async () => {
+						if (!confirmDelete(await modelDeletionPrompt(listModelDeletionImpact, provider, model))) return;
+						deleteLLMModel(provider.id, model.id);
+					});
 					row.append(displayName, providerModelID, temperature, maxOutputTokens, saveModel, defaultModel, removeModel);
 					models.append(row);
 				}
@@ -383,24 +455,7 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 			renderRun(run) {
 				if (runStatus) runStatus.textContent = runStatusText(run);
 				if (nodeRunList) {
-					const document = nodeRunList.ownerDocument;
-					nodeRunList.replaceChildren(...run.nodeRuns.map((nodeRun) => {
-						const item = document.createElement("li");
-						item.textContent = `${nodeRun.nodeId} · ${nodeRun.nodeDefinition}@${nodeRun.nodeExecutor} · node run ${nodeRun.id} · ${nodeRun.status}`;
-						const diagnostics = nodeRunDiagnosticsText(nodeRun.diagnostics);
-						if (diagnostics) {
-							const detail = document.createElement("small");
-							detail.textContent = diagnostics;
-							item.append(detail);
-						}
-						const timing = nodeRunTimeText(nodeRun);
-						if (timing) {
-							const detail = document.createElement("small");
-							detail.textContent = timing;
-							item.append(detail);
-						}
-						return item;
-					}));
+					nodeRunList.replaceChildren(...run.nodeRuns.map((nodeRun) => nodeRunItem(nodeRunList.ownerDocument, nodeRun)));
 				}
 				if (artifactList) {
 					const document = artifactList.ownerDocument;
@@ -447,25 +502,10 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 			},
 			renderHistoryRun(run) {
 				if (historyRunStatus) historyRunStatus.textContent = runStatusText(run);
+				const selection = llmSelectionText(run);
+				if (historyRunStatus && selection) historyRunStatus.textContent += ` · ${selection}`;
 				if (historyNodeRunList) {
-					const document = historyNodeRunList.ownerDocument;
-					historyNodeRunList.replaceChildren(...run.nodeRuns.map((nodeRun) => {
-						const item = document.createElement("li");
-						item.textContent = `${nodeRun.nodeId} · ${nodeRun.nodeDefinition}@${nodeRun.nodeExecutor} · node run ${nodeRun.id} · ${nodeRun.status}`;
-						const diagnostics = nodeRunDiagnosticsText(nodeRun.diagnostics);
-						if (diagnostics) {
-							const detail = document.createElement("small");
-							detail.textContent = diagnostics;
-							item.append(detail);
-						}
-						const timing = nodeRunTimeText(nodeRun);
-						if (timing) {
-							const detail = document.createElement("small");
-							detail.textContent = timing;
-							item.append(detail);
-						}
-						return item;
-					}));
+					historyNodeRunList.replaceChildren(...run.nodeRuns.map((nodeRun) => nodeRunItem(historyNodeRunList.ownerDocument, nodeRun)));
 				}
 				if (historyArtifactList) {
 					const document = historyArtifactList.ownerDocument;
@@ -608,7 +648,10 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 			nodeEditorStatus.textContent = `${state.node.definition} · ${state.node.executor} · ${state.node.id}`;
 			nodeName.value = state.node.displayName;
 			const document = nodeConfigForm.ownerDocument;
-			nodeConfigForm.replaceChildren(...state.fields.map((field) => {
+			// Agent Nodes expose their LLM preference as a Model Slot selector;
+			// a dangling UUID stays visible as a "Deleted model" option until
+			// the user re-selects. Human Nodes render config fields only.
+			const fieldGroups = state.fields.map((field) => {
 				const group = document.createElement("label");
 				const heading = document.createElement("span");
 				heading.textContent = field.presentation.label || field.name;
@@ -618,7 +661,41 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 				if (state.focus?.section === "config" && state.focus.field === field.name) control.focus?.();
 				group.append(heading, control, help);
 				return group;
-			}));
+			});
+			const modelChoices = state.modelChoices ?? [];
+			if (modelChoices.length > 0) {
+				const group = document.createElement("label");
+				const heading = document.createElement("span");
+				heading.textContent = "Model Slot";
+				const select = document.createElement("select");
+				const empty = document.createElement("option");
+				empty.value = "";
+				empty.textContent = "Use default at Run";
+				select.append(empty);
+				const selectedUUID = state.node.llm?.modelUuid;
+				let selectedKnown = !selectedUUID;
+				for (const choice of modelChoices) {
+					const option = document.createElement("option");
+					option.value = choice.value;
+					option.textContent = choice.displayName;
+					select.append(option);
+					if (choice.value === selectedUUID) selectedKnown = true;
+				}
+				if (selectedUUID && !selectedKnown) {
+					const option = document.createElement("option");
+					option.value = selectedUUID;
+					option.textContent = `Deleted model ${selectedUUID}`;
+					select.append(option);
+				}
+				select.value = selectedUUID ?? "";
+				select.setAttribute?.("aria-label", "Model Slot");
+				select.addEventListener("change", () => editNodeModel({ nodeId: activeNodeId, modelUuid: select.value }));
+				if (state.focus?.section === "llm" && state.focus.field === "modelUuid") select.focus?.();
+				group.append(heading, select);
+				nodeConfigForm.replaceChildren(group, ...fieldGroups);
+			} else {
+				nodeConfigForm.replaceChildren(...fieldGroups);
+			}
 			if (nodeInputForm) {
 				nodeInputForm.replaceChildren(...Object.entries(state.inputs ?? {}).map(([name, contract]) => {
 					const group = document.createElement("label");

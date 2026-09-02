@@ -106,6 +106,12 @@ func (s *applicationStub) DeleteLLMModel(context.Context, string, string) error 
 func (s *applicationStub) SetDefaultLLMModel(context.Context, string, string) (product.LLMSettingsView, error) {
 	return product.LLMSettingsView{}, s.err
 }
+func (s *applicationStub) ListModelDeletionImpact(context.Context, string, string) (product.AffectedWorkflowsView, error) {
+	return product.AffectedWorkflowsView{}, s.err
+}
+func (s *applicationStub) ListProviderDeletionImpact(context.Context, string) (product.AffectedWorkflowsView, error) {
+	return product.AffectedWorkflowsView{}, s.err
+}
 func (s *applicationStub) ResolveDefaultLLMModel(context.Context) (product.ResolvedLLMModelView, error) {
 	return product.ResolvedLLMModelView{}, s.err
 }

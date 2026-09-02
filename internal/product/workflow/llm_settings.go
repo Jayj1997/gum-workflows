@@ -57,6 +57,32 @@ type ResolvedLLMModel struct {
 	Model    LLMModel
 }
 
+// WorkflowModelReference is one current Draft Node's selection of one Gum Model
+// UUID. NodeDefinition lets the Application keep the reference semantics of
+// agent Nodes without the store knowing the product Node Catalog; NodeID
+// identifies the referencing Node Instance inside that Draft.
+type WorkflowModelReference struct {
+	WorkflowID     string
+	NodeID         string
+	NodeDefinition string
+	ModelUUID      string
+}
+
+// Less orders references by Workflow, Node Instance, Definition and Model so
+// both the store query and the deletion preview share one stable order.
+func (r WorkflowModelReference) Less(other WorkflowModelReference) bool {
+	if r.WorkflowID != other.WorkflowID {
+		return r.WorkflowID < other.WorkflowID
+	}
+	if r.NodeID != other.NodeID {
+		return r.NodeID < other.NodeID
+	}
+	if r.NodeDefinition != other.NodeDefinition {
+		return r.NodeDefinition < other.NodeDefinition
+	}
+	return r.ModelUUID < other.ModelUUID
+}
+
 // LLMSettingsRepository persists and resolves user-level product LLM settings.
 type LLMSettingsRepository interface {
 	CreateLLMProvider(ctx context.Context, provider LLMProvider) (LLMProvider, error)
@@ -70,4 +96,10 @@ type LLMSettingsRepository interface {
 	GetLLMSettings(ctx context.Context) (LLMSettings, error)
 	ResolveDefaultLLMModel(ctx context.Context) (ResolvedLLMModel, error)
 	ResolveLLMModel(ctx context.Context, modelID string) (ResolvedLLMModel, error)
+}
+
+// LLMUsageRepository reads which current Product Workflow Drafts select Gum
+// Model UUIDs so Provider/Model deletion can preview affected Workflows.
+type LLMUsageRepository interface {
+	ListProductWorkflowDraftModelReferences(ctx context.Context) ([]WorkflowModelReference, error)
 }

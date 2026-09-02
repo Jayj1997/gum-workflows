@@ -92,10 +92,14 @@ const clientContract = [
 		async getLLMSettings() { return expectedSettings; },
 		async createLLMProvider(input) { return { ...expectedSettings.providers[0], ...input }; },
 		async updateLLMProvider(input) { return { ...expectedSettings.providers[0], ...input }; },
-		async deleteLLMProvider() {}, async setDefaultLLMProvider() { return expectedSettings; },
+		async deleteLLMProvider() {},
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [{ id: "model-uuid", displayName: "Fast", providerModelId: "model-fast" }], diagnostics: [] }; },
+		async setDefaultLLMProvider() { return expectedSettings; },
 		async createLLMModel(input) { return { ...expectedSettings.providers[0].models[0], ...input }; },
 		async updateLLMModel(input) { return { ...expectedSettings.providers[0].models[0], ...input }; },
-		async deleteLLMModel() {}, async setDefaultLLMModel() { return expectedSettings; },
+		async deleteLLMModel() {},
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async setDefaultLLMModel() { return expectedSettings; },
       }),
   ],
   [
@@ -125,10 +129,14 @@ const clientContract = [
 		async GetLLMSettings() { return expectedSettings; },
 		async CreateLLMProvider(input) { return { ...expectedSettings.providers[0], ...input }; },
 		async UpdateLLMProvider(input) { return { ...expectedSettings.providers[0], ...input }; },
-		async DeleteLLMProvider() {}, async SetDefaultLLMProvider() { return expectedSettings; },
+		async DeleteLLMProvider() {},
+		async ListProviderDeletionImpact() { return { workflows: [], modelSlots: [{ id: "model-uuid", displayName: "Fast", providerModelId: "model-fast" }], diagnostics: [] }; },
+		async SetDefaultLLMProvider() { return expectedSettings; },
 		async CreateLLMModel(input) { return { ...expectedSettings.providers[0].models[0], ...input }; },
 		async UpdateLLMModel(input) { return { ...expectedSettings.providers[0].models[0], ...input }; },
-		async DeleteLLMModel() {}, async SetDefaultLLMModel() { return expectedSettings; },
+		async DeleteLLMModel() {},
+		async ListModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async SetDefaultLLMModel() { return expectedSettings; },
       }),
   ],
 ];
@@ -150,10 +158,12 @@ for (const [name, createClient] of clientContract) {
 	assert.equal((await client.createLLMProvider({ name: "Primary" })).name, "Primary");
 	assert.equal((await client.updateLLMProvider({ id: "provider-uuid", name: "Renamed" })).name, "Renamed");
 	await client.deleteLLMProvider({ providerId: "provider-uuid", confirmed: true });
+	assert.deepEqual(await client.listProviderDeletionImpact("provider-uuid"), { workflows: [], modelSlots: [{ id: "model-uuid", displayName: "Fast", providerModelId: "model-fast" }], diagnostics: [] });
 	assert.deepEqual(await client.setDefaultLLMProvider("provider-uuid"), expectedSettings);
 	assert.equal((await client.createLLMModel({ providerId: "provider-uuid", displayName: "Fast" })).displayName, "Fast");
 	assert.equal((await client.updateLLMModel({ id: "model-uuid", providerId: "provider-uuid", displayName: "Strong" })).displayName, "Strong");
 	await client.deleteLLMModel("provider-uuid", "model-uuid");
+	assert.deepEqual(await client.listModelDeletionImpact("provider-uuid", "model-uuid"), { workflows: [], modelSlots: [], diagnostics: [] });
 	assert.deepEqual(await client.setDefaultLLMModel("provider-uuid", "model-uuid"), expectedSettings);
   });
 }
@@ -181,6 +191,8 @@ test("Run flushes pending autosave and uses the latest Draft lock token", async 
 			calls.push(["start", input.expectedLockVersion, input.humanInput]);
 			return { ...structuredClone(expectedRun), draft: structuredClone(draft) };
 		},
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 	createProductShell(view, client);
 	await selectWorkflow(expectedWorkflow.id);
@@ -206,6 +218,8 @@ test("a failed StartRun refreshes persisted history and shows the actionable err
 		async getDraft() { return structuredClone(expectedDraft); }, async updateDraft() {},
 		async startRun() { throw new Error("Run run-failed structural/authentication: key rejected; check the Provider API Key and start a new Run"); },
 		async listRevisions() { revisionCalls += 1; return [{ ...expectedRevisions[0], runCount: 1 }]; },
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 	createProductShell(view, client);
 	await selectWorkflow(expectedWorkflow.id);
@@ -242,6 +256,8 @@ test("History drill-down loads Revisions after a Run, then Runs and the Run deta
 		async listRevisions(workflowId) { return [{ ...expectedRevisions[0], id: expectedRun.revisionId, runCount: 2 }]; },
 		async listRevisionRuns(revisionId) { revisionRunListCalls.push(revisionId); return structuredClone(expectedRevisionRuns); },
 		async getRunHistory(runId) { runHistoryCalls.push(runId); return structuredClone(runResult); },
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 	createProductShell(view, client);
 	await selectWorkflow(expectedWorkflow.id);
@@ -360,6 +376,58 @@ test("Browser WorkflowClient persists failed execution progress through its publ
 	assert.equal(detail.nodeRuns[1].status, "failed");
 	assert.equal(detail.nodeRuns[1].diagnostics.error.code, "provider");
 	assert.equal(detail.artifacts.length, 1);
+});
+
+test("deleting a referenced Model dangles the UUID, blocks StartRun and keeps history visible", async () => {
+	const application = createBrowserApplication();
+	const client = createBrowserWorkflowClient(application);
+	await client.openWorkspace();
+	const { workflow, lockVersion } = await configureBrowserTracer(client);
+	const settings = await client.getLLMSettings();
+	const provider = settings.providers[0];
+	const model = provider.models[0];
+
+	// Bind the agent Node to the explicit Model UUID and run once.
+	await client.updateDraft({
+		workflowId: workflow.id, expectedLockVersion: lockVersion,
+		content: {
+			semanticSchemaVersion: "productWorkflow/v1",
+			nodes: [
+				{ id: "prompt", definition: "human-chat", executor: "v1", config: {} },
+				{ id: "answer", definition: "llm-chat", executor: "v1", config: {}, inputs: { conversation: { from: "prompt.conversation" } }, llm: { modelUuid: model.id } },
+			],
+		},
+	});
+	const first = await client.startRun({ workflowId: workflow.id, expectedLockVersion: lockVersion + 1, humanInput: { nodeId: "prompt", text: "Hello" } });
+	assert.equal(first.status, "succeeded");
+
+	// The deletion preview reports the referencing workflow and its Node.
+	const impact = await client.listModelDeletionImpact(provider.id, model.id);
+	assert.deepEqual(impact.workflows, [{ id: workflow.id, displayName: "Browser lifecycle", nodeId: "answer", nodeDefinition: "llm-chat", modelUuid: model.id }]);
+	assert.deepEqual(impact.modelSlots, []);
+
+	// After deletion the Draft keeps the UUID, the Preview dangles and the
+	// next StartRun is refused before any new Run appears.
+	await client.deleteLLMModel(provider.id, model.id);
+	const draft = await client.getDraft(workflow.id);
+	assert.equal(draft.content.nodes[1].llm.modelUuid, model.id);
+	const dangling = draft.preview.diagnostics.find((diagnostic) => diagnostic.code === "dangling-model-uuid");
+	assert.ok(dangling, `preview diagnostics = ${JSON.stringify(draft.preview.diagnostics)}`);
+	assert.equal(dangling.path, "nodes[1].llm.modelUuid");
+	await assert.rejects(
+		client.startRun({ workflowId: workflow.id, expectedLockVersion: draft.lockVersion, humanInput: { nodeId: "prompt", text: "Again" } }),
+		/dangling|diagnostics|Model/i,
+	);
+	const revisions = await client.listRevisions(workflow.id);
+	const runs = await client.listRevisionRuns(revisions[0].id);
+	assert.equal(runs.length, 1);
+
+	// The historical Run still resolves the deleted Slot's selection.
+	const detail = await client.getRunHistory(first.id);
+	assert.equal(detail.snapshot.llmSelections[0].providerName, provider.name);
+	assert.equal(detail.snapshot.llmSelections[0].providerModelId, model.providerModelId);
+	assert.equal(detail.snapshot.llmSelections[0].modelUuid, model.id);
+	assert.equal(detail.draft.preview.diagnostics.filter((diagnostic) => diagnostic.code === "dangling-model-uuid").length, 0);
 });
 
 test("Browser WorkflowClient only performs recovery on its first workspace open", async () => {
@@ -486,6 +554,8 @@ test("a user authors Node Instances and config through the registered Catalog", 
 			draft = { ...draft, content: structuredClone(input.content), lockVersion: draft.lockVersion + 1 };
 			return { draft: structuredClone(draft), preview: { nodes: draft.content.nodes, edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
 		},
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 	createProductShell(view, client, { createNodeId: () => "node-uuid" });
 	await openWorkspace();
@@ -528,6 +598,8 @@ test("a user manages Provider and Model Slots through the shared product shell",
 		async createLLMModel(input) { calls.push(["create-model", input]); }, async updateLLMModel(input) { calls.push(["update-model", input]); },
 		async deleteLLMModel(providerId, id) { calls.push(["delete-model", providerId, id]); },
 		async setDefaultLLMModel(providerId, id) { calls.push(["default-model", providerId, id]); },
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 	createProductShell(view, client);
 	await openWorkspace();
@@ -545,6 +617,59 @@ test("a user manages Provider and Model Slots through the shared product shell",
 	]);
 	assert.equal(rendered.length, 9);
 	assert.deepEqual(rendered.at(-1), settings);
+});
+
+test("the Node editor renders a Model Slot selector for agent Nodes", async () => {
+	const document = {
+		createElement(tag) {
+			return {
+				tag, children: [], listeners: {}, value: "", checked: false, open: true,
+				append(...children) { this.children.push(...children); },
+				addEventListener(event, handler) { this.listeners[event] = handler; },
+				setAttribute() {},
+				focus() { this.focused = true; },
+			};
+		},
+	};
+	const container = () => ({ ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } });
+	const configForm = container();
+	const inputForm = container();
+	const controlForm = container();
+	const modelEdits = [];
+	const view = createProductDOMView({
+		title: { textContent: "" }, message: { textContent: "" }, status: { textContent: "", dataset: {} },
+		button: { addEventListener() {} }, form: { addEventListener() {} }, nameInput: {}, workflowList: container(),
+		draftEditor: { addEventListener() {} }, draftStatus: {}, diagnosticList: container(),
+		nodeEditor: { hidden: true }, nodeEditorStatus: {}, nodeName: { addEventListener() {} }, removeNodeButton: { addEventListener() {} },
+		nodeConfigForm: configForm, nodeInputForm: inputForm, nodeControlForm: controlForm,
+	}, productStatusMessage);
+	view.onEditNodeModel((edit) => modelEdits.push(structuredClone(edit)));
+	view.renderNodeEditor({
+		node: { id: "answer", definition: "llm-chat", executor: "v1", displayName: "Answer", config: {}, inputs: {}, llm: { modelUuid: "deleted-model-uuid" }, dependsOn: [] },
+		fields: [], inputs: { conversation: { type: "Conversation" } },
+		modelChoices: [
+			{ value: "model-uuid", displayName: "Primary · Fast (model-fast)" },
+		],
+		inputSources: [], controlNodes: [], focus: { section: "llm", field: "modelUuid" },
+	});
+
+	// The selector lists the live Model Slots plus the dangling UUID so the
+	// current selection stays visible until the user re-selects.
+	const selector = configForm.items[0].children[1];
+	assert.deepEqual(selector.children.map((option) => option.textContent), ["Use default at Run", "Primary · Fast (model-fast)", "Deleted model deleted-model-uuid"]);
+	assert.equal(selector.value, "deleted-model-uuid");
+	assert.equal(selector.focused, true);
+
+	selector.value = "model-uuid";
+	await selector.listeners.change();
+	assert.deepEqual(modelEdits, [{ nodeId: "answer", modelUuid: "model-uuid" }]);
+
+	// Human Nodes do not get a Model selector at all.
+	view.renderNodeEditor({
+		node: { id: "prompt", definition: "human-chat", executor: "v1", displayName: "Prompt", config: {}, inputs: {}, dependsOn: [] },
+		fields: [], inputs: {}, modelChoices: [], inputSources: [], controlNodes: [],
+	});
+	assert.deepEqual(configForm.items, []);
 });
 
 test("input bindings and Control Dependencies use separate authoring actions", async () => {
@@ -590,6 +715,8 @@ test("input bindings and Control Dependencies use separate authoring actions", a
 			draft = { ...draft, content: structuredClone(input.content), lockVersion: draft.lockVersion + 1 };
 			return { draft: structuredClone(draft), preview: { nodes: [], edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
 		},
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 	createProductShell(view, client);
 	await openWorkspace();
@@ -629,6 +756,8 @@ test("structured Node edits flush pending Draft text before mutating the latest 
 			draft = { ...draft, content: structuredClone(input.content), lockVersion: draft.lockVersion + 1 };
 			return { draft: structuredClone(draft), preview: { nodes: draft.content.nodes, edges: [], groups: [], diagnostics: [] }, saved: true, conflict: false, refreshRequired: false };
 		},
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 	createProductShell(view, client, { createNodeId: () => "node-after-raw-edit" });
 	await openWorkspace();
@@ -670,6 +799,8 @@ test("a user action crosses WorkflowClient and renders the visible result", asyn
 		},
 		async getDraft() { return expectedDraft; },
 		async updateDraft() {},
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 
   createProductShell(view, client);
@@ -716,6 +847,8 @@ test("user creates a Product Workflow and sees the refreshed list", async () => 
 		},
 		async getDraft() { return expectedDraft; },
 		async updateDraft() {},
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 
 	createProductShell(view, client);
@@ -752,6 +885,8 @@ test("application failures become visible without leaking adapter details", asyn
 		},
 		async getDraft() { return expectedDraft; },
 		async updateDraft() {},
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 
   createProductShell(view, client);
@@ -795,6 +930,8 @@ test("selecting a workflow and editing content autosaves with the current concur
 				refreshRequired: false,
 			};
 		},
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 
 	createProductShell(view, client);
@@ -842,6 +979,8 @@ test("overlapping edits serialize autosaves with the latest returned lock token"
 				refreshRequired: false,
 			};
 		},
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 
 	createProductShell(view, client);
@@ -897,6 +1036,8 @@ test("a conflict stops queued autosaves and renders the latest stored Draft", as
 				refreshRequired: true,
 			};
 		},
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 
 	createProductShell(view, client);
@@ -945,6 +1086,8 @@ test("editing is suspended while another workflow Draft is loading", async () =>
 			updates.push(structuredClone(input));
 			throw new Error("must not autosave while selection is loading");
 		},
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 
 	createProductShell(view, client);
@@ -1077,6 +1220,15 @@ test("the DOM history panel renders Revisions, Revision Runs and a historical Ru
 	assert.match(historyNodeRunList.items[1].textContent, /agent-run/);
 	assert.equal(historyNodeRunList.items[1].children[0].textContent, "structural / authentication · openai-compatible request failed: authentication (status 401) · check the Provider API Key and start a new Run");
 	assert.equal(historyNodeRunList.items[1].children[1].textContent, "2026-09-02T10:00:00Z → 2026-09-02T10:00:01Z");
+
+	// A historical Run whose Model Slot was deleted still names the Provider
+	// and Provider Model ID fixed in its Run Snapshot.
+	const dangling = structuredClone(failed);
+	dangling.error = undefined;
+	dangling.status = "succeeded";
+	dangling.snapshot = { executors: [], llmSelections: [{ nodeId: "answer", providerId: "provider-uuid", providerName: "Primary", protocol: "openai-chat-completions", dialect: "developer", baseUrl: "https://api.example/v1", modelUuid: "deleted-model-uuid", providerModelId: "model-fast" }] };
+	view.renderHistoryRun(dangling);
+	assert.match(historyRunStatus.textContent, /answer: Primary \(model-fast\)/);
 });
 
 test("the Node editor renders distinct Input Binding and Control Dependency controls", async () => {
@@ -1136,16 +1288,19 @@ test("the DOM settings view renders editable Provider and Model controls", async
 	const providerList = container();
 	const diagnosticList = container();
 	const calls = [];
+	const confirmedMessages = [];
 	const view = createProductDOMView({
 		title: {}, message: {}, status: { dataset: {} }, button: { addEventListener() {} }, form: { addEventListener() {} }, nameInput: {},
 		workflowList: container(), draftEditor: { addEventListener() {} }, draftStatus: {}, diagnosticList: container(),
 		llmProviderList: providerList, llmDiagnosticList: diagnosticList,
-	}, productStatusMessage, { confirmDelete: () => true });
+	}, productStatusMessage, { confirmDelete: (message) => { confirmedMessages.push(message); return true; } });
 	view.onUpdateLLMProvider((input) => calls.push(["provider", input]));
 	view.onSetDefaultLLMProvider((id) => calls.push(["provider-default", id]));
+	view.onListProviderDeletionImpact(() => ({ workflows: [{ id: "workflow-uuid", displayName: "Release checklist", nodeId: "answer", nodeDefinition: "llm-chat", modelUuid: "model-uuid" }], modelSlots: [{ id: "model-uuid", displayName: "Fast", providerModelId: "model-fast" }], diagnostics: [] }));
 	view.onDeleteLLMProvider((id) => calls.push(["provider-delete", id]));
 	view.onCreateLLMModel((input) => calls.push(["model-create", input]));
 	view.onUpdateLLMModel((input) => calls.push(["model", input]));
+	view.onListModelDeletionImpact(() => ({ workflows: [], modelSlots: [], diagnostics: [] }));
 	view.onSetDefaultLLMModel((providerId, id) => calls.push(["model-default", providerId, id]));
 	view.onDeleteLLMModel((providerId, id) => calls.push(["model-delete", providerId, id]));
 	view.renderLLMSettings(expectedSettings);
@@ -1177,6 +1332,17 @@ test("the DOM settings view renders editable Provider and Model controls", async
 	const keyControl = providerControls.find((control) => control.type === "password");
 	assert.equal(keyControl.value, "");
 	assert.deepEqual(calls[2][1], { providerId: "provider-uuid", confirmed: true });
+	// The Provider confirmation shows the affected Model Slots and Workflows
+	// fetched through the deletion-impact seam before the destructive call.
+	assert.match(confirmedMessages[0], /Delete Provider Primary and its saved API Key\?/);
+	assert.match(confirmedMessages[0], /This removes 1 Model Slot\(s\):/);
+	assert.match(confirmedMessages[0], /Fast \(model-fast\)/);
+	assert.match(confirmedMessages[0], /Release checklist · llm-chat "answer"/);
+	// The Model confirmation reports no referencing workflows when none exist.
+	await modelControls[6].listeners.click();
+	assert.equal(calls.at(-1)[0], "model-delete");
+	assert.match(confirmedMessages[1], /Delete Model Fast from Provider Primary\?/);
+	assert.match(confirmedMessages[1], /No current Workflow Draft references these Model\(s\)\./);
 	assert.equal(calls[3][1].providerModelId, "model-fast-v2");
 	assert.deepEqual(calls[3][1].generationDefaults, { temperature: 0.5, maxOutputTokens: 2048 });
 	assert.equal(diagnosticList.items.length, 0);
@@ -1366,6 +1532,8 @@ test("the DOM and shell preserve newer text while an earlier autosave is in flig
 				refreshRequired: false,
 			};
 		},
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 	createProductShell(createProductDOMView(elements, productStatusMessage), client);
 	await openWorkspace();
@@ -1457,6 +1625,8 @@ test("the Browser Mock startRun drives one real fixture model call and persists 
 				artifacts: [{ id: "artifact-uuid", nodeId: "answer", port: "conversation", type: "Conversation", version: "2", uri: "2.json", messages: [{ role: "user", text: input.humanInput.text }, { role: "assistant", text: result.assistant.parts[0].text }] }],
 			};
 		},
+		async listModelDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
+		async listProviderDeletionImpact() { return { workflows: [], modelSlots: [], diagnostics: [] }; },
 	});
 	createProductShell(view, client);
 	await selectWorkflow(expectedWorkflow.id);

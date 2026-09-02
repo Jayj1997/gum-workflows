@@ -26,7 +26,24 @@ export function createBrowserApplication(options = {}) {
 	const drafts = new Map();
 	const nodeRegistry = createBuiltinNodeRegistry();
 	const secrets = options.secrets ?? createMemorySecretAdapter();
-	const llmSettings = createBrowserLLMSettings({ secrets });
+	const llmSettings = createBrowserLLMSettings({
+		secrets,
+		// Deletion previews read the same in-memory Drafts this mock serves,
+		// mirroring the SQLite store's cross-workflow reference query.
+		drafts,
+		workflowNames: new Map(workflows.map((workflow) => [workflow.id, workflow.displayName])),
+	});
+	// Keep the settings preview in sync with workflows created later.
+	const rememberWorkflow = (workflow) => llmSettings.rememberWorkflow?.(workflow);
+	// liveModelUUIDs mirrors the Application's activeModelUUIDs: the Preview
+	// flags dangling Model preferences using the same live settings seam.
+	function liveModelUUIDs() {
+		const uuids = new Set();
+		for (const provider of llmSettings.getSettings().providers) {
+			for (const model of provider.models) uuids.add(model.id);
+		}
+		return uuids;
+	}
 	const revisions = new Map();
 	const runs = new Map();
 	const chatAdapter = options.chatAdapter ?? createFixtureChatAdapter({ secrets });
@@ -50,6 +67,7 @@ export function createBrowserApplication(options = {}) {
       createdAt: new Date().toISOString(),
     };
     workflows.push(workflow);
+		rememberWorkflow(workflow);
 		drafts.set(workflow.id, {
 			workflowId: workflow.id,
 			content: { semanticSchemaVersion: "productWorkflow/v1", nodes: [] },
@@ -64,7 +82,7 @@ export function createBrowserApplication(options = {}) {
 	async listNodeCatalog() { return nodeRegistry.catalog(); },
 	async getDraft(workflowId) {
 		const draft = structuredClone(drafts.get(workflowId));
-		draft.preview = createWorkflowPreview(draft.content, nodeRegistry);
+		draft.preview = createWorkflowPreview(draft.content, nodeRegistry, { modelUUIDs: liveModelUUIDs() });
 		return draft;
 	},
 	async updateDraft(input) {
@@ -81,7 +99,7 @@ export function createBrowserApplication(options = {}) {
 		}
 		return {
 			draft: structuredClone(current),
-			preview: createWorkflowPreview(current.content, nodeRegistry),
+			preview: createWorkflowPreview(current.content, nodeRegistry, { modelUUIDs: liveModelUUIDs() }),
 			saved,
 			conflict,
 			refreshRequired: conflict,
@@ -90,7 +108,7 @@ export function createBrowserApplication(options = {}) {
 	async startRun(input) {
 		const current = drafts.get(input.workflowId);
 		if (!current || current.lockVersion !== input.expectedLockVersion) throw new Error("Draft lock version conflict; refresh before running");
-		const preview = createWorkflowPreview(current.content, nodeRegistry);
+		const preview = createWorkflowPreview(current.content, nodeRegistry, { modelUUIDs: liveModelUUIDs() });
 		if (preview.diagnostics.length > 0) throw new Error("Draft has diagnostics; fix the highlighted fields before running");
 		const settings = llmSettings.getSettings();
 		const defaultProvider = settings.providers.find((provider) => provider.effectiveDefault);
@@ -138,7 +156,10 @@ export function createBrowserApplication(options = {}) {
 		const sourceRef = { id: sourceArtifactId, kind: "Conversation", version: "1", uri: "1.json" };
 		const sourceMessages = [{ role: "user", text: input.humanInput.text }];
 		const draft = structuredClone(current);
-		draft.preview = createWorkflowPreview(draft.content, nodeRegistry);
+		// The materialized Draft re-checks against live settings: its UUID was
+		// just resolved, so a dangling diagnostic here would contradict the
+		// successful materialization above.
+		draft.preview = createWorkflowPreview(draft.content, nodeRegistry, { modelUUIDs: liveModelUUIDs() });
 		const snapshot = {
 				executors: materialized.nodes.map((node) => ({ nodeId: node.id, definitionId: node.definition, version: node.executor })),
 				llmSelections: selections.map(({ apiKeyRef: _apiKeyRef, ...selectionView }) => selectionView),
@@ -228,6 +249,9 @@ export function createBrowserApplication(options = {}) {
 			lockVersion: 0,
 			updatedAt: run.startedAt,
 		};
+		// Historical Revisions keep the Model UUID that ran; the Run Snapshot
+		// stays authoritative for the resolved selection, so the historical
+		// Preview deliberately skips live-settings checks.
 		draft.preview = createWorkflowPreview(draft.content, nodeRegistry);
 		return {
 			id: run.id, revisionId: run.revisionId, status: run.status,
@@ -240,10 +264,12 @@ export function createBrowserApplication(options = {}) {
 	async createLLMProvider(input) { return llmSettings.createProvider(input); },
 	async updateLLMProvider(input) { return llmSettings.updateProvider(input); },
 	async deleteLLMProvider(input) { llmSettings.deleteProvider(input); },
+	async listProviderDeletionImpact(providerId) { return llmSettings.providerDeletionImpact(providerId); },
 	async setDefaultLLMProvider(providerId) { return llmSettings.setDefaultProvider(providerId); },
 	async createLLMModel(input) { return llmSettings.createModel(input); },
 	async updateLLMModel(input) { return llmSettings.updateModel(input); },
 	async deleteLLMModel(providerId, modelId) { llmSettings.deleteModel(providerId, modelId); },
+	async listModelDeletionImpact(providerId, modelId) { return llmSettings.modelDeletionImpact(providerId, modelId); },
 	async setDefaultLLMModel(providerId, modelId) { return llmSettings.setDefaultModel(providerId, modelId); },
 	};
 }

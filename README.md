@@ -8,7 +8,7 @@ Workflow 通过 Node 的 Input / Output Contract 组合工作过程，Node 之�
 
 项目遵循“现实工作流优先”：Agent 直接修改用户项目，Automation 在同一份工作状态上执行检查；Gum 负责组合、调度、结果留存和诊断，不默认复制项目、创建内部代码 Revision 或接管代码恢复。
 
-当前 YAML、CLI 与 Mock Agent 主要服务 Runtime 开发、验证和演示。macOS 产品壳已经可以通过通用 Application seam 在 SQLite 中创作 Product Workflow、管理用户级 LLM Provider / Model Slot，把 API Key 保存到 macOS Keychain，并从 authored `human-chat(source)` 提交本轮 text，通过真实 OpenAI-compatible 非流式 Chat Completions 完成单轮 `human-chat -> llm-chat` 闭环与持久化 Conversation Artifact。真实执行会先持久化 Running Run，Structural Failure、取消和进程中断都能在 History 中查看；WaitingHuman、多轮回边、Interaction Error 同 Run Retry 与 Resume 仍按后续票交付。
+当前 YAML、CLI 与 Mock Agent 主要服务 Runtime 开发、验证和演示。macOS 产品壳已经可以通过通用 Application seam 在 SQLite 中创作 Product Workflow、管理用户级 LLM Provider / Model Slot，把 API Key 保存到 macOS Keychain，并从 authored `human-chat(source)` 提交本轮 text，通过真实 OpenAI-compatible 非流式 Chat Completions 完成单轮 `human-chat -> llm-chat` 闭环与持久化 Conversation Artifact。真实执行会先持久化 Running Run，Structural Failure、取消和进程中断都能在 History 中查看；删除 Provider/Model 会预告受影响 Workflow 并留下可修复的悬空 UUID 诊断。WaitingHuman、多轮回边、Interaction Error 同 Run Retry 与 Resume 仍按后续票交付。
 
 ## 项目规划
 
@@ -25,6 +25,20 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 任何新模块都需要先形成设计文档和开发票，再修改实现。模块完成后的 README 与进度文档同步方法见 [`README 更新规范`](<plans/README 更新规范：模块完成后的进度同步.md>)。
 
 ## 项目当前进展
+
+### 删除 Model 后的悬空 UUID 诊断 — 已完成
+
+该切片让用户可以安全删除 Provider/Model 而不悄悄改写任何 Workflow：删除前 UI 预告受影响范围，删除后相关 Node 在表单与 Preview 中定位到具体字段的红色诊断，并在用户重新选择模型前阻止 StartRun；历史 Run 继续展示当时的模型选择。
+
+主要交付：
+
+- 删除 Model 或 Provider 前，UI 通过 Application 用例展示引用该 Gum Model UUID 的当前 Workflow/Draft 与 Node 身份（Provider 额外列出将移除的每个 Model Slot），查询零写入；Node 表单为 agent Node 提供 Model Slot 选择器，悬空 UUID 可直接重选；
+- 确认删除后不改写任何 Draft、Revision 或历史 Run；agent Node 保留原 UUID，Preview 产生 `nodes[i].llm.modelUuid` 级别的 `dangling-model-uuid` Diagnostic；
+- 悬空 UUID 不 fallback 到 default：StartRun 在 preflight 以同一活设置集合校验，创建 Run/Revision 前失败且无部分状态；用户选择新 UUID 后 Draft 正常保存，下次 Run 形成新的 immutable Revision；
+- 历史 Run Snapshot 与其 Revision Preview 不针对当前设置重查悬空，`GetRunHistory` 仍返回当时固定的 Provider 名称、Provider Model ID 与有效参数；
+- Browser Mock 复刻同一 Preview/impact 行为；验证覆盖 Application 用例、SQLite 引用查询、前端 DOM 删除确认与 Browser e2e。
+
+详细范围见 [issue 11](.scratch/product-workflow/issues/11-dangling-model-uuid-diagnostics.md)。
 
 ### Product Run 失败与中断历史 — 已完成
 

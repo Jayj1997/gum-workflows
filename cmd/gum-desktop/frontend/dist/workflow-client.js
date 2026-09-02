@@ -7,11 +7,13 @@ function requireMethod(target, method, adapterName) {
 // Both adapters return the same small object instead of exposing transport or
 // desktop framework details to the product shell.
 export function createBrowserWorkflowClient(application) {
-  requireMethod(application, "openWorkspace", "browser application");
-  requireMethod(application, "createWorkflow", "browser application");
-  requireMethod(application, "listWorkflows", "browser application");
+	requireMethod(application, "openWorkspace", "browser application");
+	requireMethod(application, "createWorkflow", "browser application");
+	requireMethod(application, "listWorkflows", "browser application");
 	requireMethod(application, "getDraft", "browser application");
 	requireMethod(application, "updateDraft", "browser application");
+	requireMethod(application, "listModelDeletionImpact", "browser application");
+	requireMethod(application, "listProviderDeletionImpact", "browser application");
 	const listNodeCatalog = typeof application.listNodeCatalog === "function"
 		? () => application.listNodeCatalog()
 		: async () => [];
@@ -45,10 +47,15 @@ export function createBrowserWorkflowClient(application) {
 		createLLMProvider: (input) => application.createLLMProvider(input),
 		updateLLMProvider: (input) => application.updateLLMProvider(input),
 		deleteLLMProvider: (input) => application.deleteLLMProvider(input),
+		// Deletion-impact previews are mandatory: silently fabricating an
+		// empty impact would read as "no affected Workflows" in the confirm
+		// dialog, which is worse than failing before the destructive action.
+		listProviderDeletionImpact: (providerId) => application.listProviderDeletionImpact(providerId),
 		setDefaultLLMProvider: (providerId) => application.setDefaultLLMProvider(providerId),
 		createLLMModel: (input) => application.createLLMModel(input),
 		updateLLMModel: (input) => application.updateLLMModel(input),
 		deleteLLMModel: (providerId, modelId) => application.deleteLLMModel(providerId, modelId),
+		listModelDeletionImpact: (providerId, modelId) => application.listModelDeletionImpact(providerId, modelId),
 		setDefaultLLMModel: (providerId, modelId) => application.setDefaultLLMModel(providerId, modelId),
   };
 }
@@ -61,7 +68,7 @@ export function createDesktopWorkflowClient(desktopAdapter) {
 	requireMethod(desktopAdapter, "UpdateDraft", "desktop adapter");
 	requireMethod(desktopAdapter, "ListNodeCatalog", "desktop adapter");
 	requireMethod(desktopAdapter, "StartRun", "desktop adapter");
-	for (const method of ["GetLLMSettings", "CreateLLMProvider", "UpdateLLMProvider", "DeleteLLMProvider", "SetDefaultLLMProvider", "CreateLLMModel", "UpdateLLMModel", "DeleteLLMModel", "SetDefaultLLMModel", "ListRevisions", "ListRevisionRuns", "GetRunHistory"]) {
+	for (const method of ["GetLLMSettings", "CreateLLMProvider", "UpdateLLMProvider", "DeleteLLMProvider", "ListProviderDeletionImpact", "SetDefaultLLMProvider", "CreateLLMModel", "UpdateLLMModel", "DeleteLLMModel", "ListModelDeletionImpact", "SetDefaultLLMModel", "ListRevisions", "ListRevisionRuns", "GetRunHistory"]) {
 		requireMethod(desktopAdapter, method, "desktop adapter");
 	}
   return {
@@ -79,10 +86,12 @@ export function createDesktopWorkflowClient(desktopAdapter) {
 		createLLMProvider: (input) => desktopAdapter.CreateLLMProvider(input),
 		updateLLMProvider: (input) => desktopAdapter.UpdateLLMProvider(input),
 		deleteLLMProvider: (input) => desktopAdapter.DeleteLLMProvider(input),
+		listProviderDeletionImpact: (providerId) => desktopAdapter.ListProviderDeletionImpact(providerId),
 		setDefaultLLMProvider: (providerId) => desktopAdapter.SetDefaultLLMProvider(providerId),
 		createLLMModel: (input) => desktopAdapter.CreateLLMModel(input),
 		updateLLMModel: (input) => desktopAdapter.UpdateLLMModel(input),
 		deleteLLMModel: (providerId, modelId) => desktopAdapter.DeleteLLMModel(providerId, modelId),
+		listModelDeletionImpact: (providerId, modelId) => desktopAdapter.ListModelDeletionImpact(providerId, modelId),
 		setDefaultLLMModel: (providerId, modelId) => desktopAdapter.SetDefaultLLMModel(providerId, modelId),
   };
 }

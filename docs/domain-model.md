@@ -1,6 +1,6 @@
 # Gum-Workflows Domain Model
 
-本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 的 SQLite identity、Draft、创作/Preview、LLM 设置、macOS Keychain Secret Adapter、真实 OpenAI-compatible 非流式单轮 StartRun、Failed/Interrupted 生命周期与只读分层 Run history。术语以根目录 `CONTEXT.md` 为权威；WaitingHuman、Conversation feedback、Interaction Error 同 Run Retry、Resume/Rerun/Fork 与多轮循环等尚未实现能力不在本文范围。
+本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 的 SQLite identity、Draft、创作/Preview、LLM 设置（含删除影响预告与悬空 Model UUID 诊断）、macOS Keychain Secret Adapter、真实 OpenAI-compatible 非流式单轮 StartRun、Failed/Interrupted 生命周期与只读分层 Run history。术语以根目录 `CONTEXT.md` 为权威；WaitingHuman、Conversation feedback、Interaction Error 同 Run Retry、Resume/Rerun/Fork 与多轮循环等尚未实现能力不在本文范围。
 
 ## 0. Product Workflow identity
 
@@ -23,6 +23,8 @@ Gum Config Schema 是小型产品领域合同，支持 string、markdown、integ
 Provider 与每个 Provider 下的 Model 各自最多一个显式 default。Resolver 只考虑未删除项：优先显式 default，否则按 `(created_at ASC, UUID ASC)` 取第一个；删除显式 default 后立即按同一规则产生新的有效 default。没有 Provider 或有效 Provider 没有 Model 时返回结构化设置 Diagnostic。重命名 Provider、修改 Base URL 或 Provider Model ID 不改变 Gum UUID。
 
 Desktop 与 Browser Mock 经同一 WorkflowClient 和 Product Application 用例创建、编辑、删除并设置 default。Provider 更新时空 Key 保留原凭据，非空 Key 在同一稳定引用上轮换；删除必须携带用户确认并删除对应凭据。Keychain 不可用时操作明确失败，不回退为 SQLite 明文。Browser Mock 与 Go 测试使用注入的进程内 Memory Adapter，不访问真实用户 Keychain。当前设置不调用 `/models`，不维护 Capability、position、enable/disable 或自动 Provider failover。StartRun 对空 Model Preference 按双层 default 物化 Gum Model UUID；P10 已通过固定 Run Snapshot 的连接设置发起真实协议请求。
+
+删除 Model 或 Provider 前提供只读影响预告：`LLMUsageRepository.ListProductWorkflowDraftModelReferences` 在 Go 侧解码各当前 Draft 的 agent Node `llm.modelUuid` 引用（不依赖 SQLite JSON1），Application 的 `ListModelDeletionImpact` / `ListProviderDeletionImpact` 返回受影响 Workflow 身份（ID、显示名、Node ID、Node Definition）与 Provider 将移除的 Model Slot 清单（ID、显示名、Provider Model ID）；查询不写入任何 Draft、Revision 或 Run。确认删除后引用方 Node 保留原 UUID：live Preview 对 agent Node 产生 `nodes[i].llm.modelUuid` 级别的 `dangling-model-uuid`（已删除/未知 UUID）、`missing-model-uuid`（显式空偏好）或 `invalid-llm-preference`（llm 非 object）Diagnostic；StartRun preflight 使用同一活设置集合，存在任一 Diagnostic 时在创建 Run/Revision 前失败且无部分状态。悬空 UUID 不 fallback 到 default；用户重新选择 UUID 后 Draft 正常保存并在下次 Run 形成新的 immutable Revision。历史 Run 的 Revision Preview 与 Run Snapshot 保持权威——历史视图不针对当前设置重查悬空，仍返回当时固定的 Provider 名称、Provider Model ID 与有效参数。
 
 ## 0.2 P9 StartRun、Revision 与真实单轮执行
 

@@ -36,10 +36,12 @@ type WorkflowApplication interface {
 	CreateLLMProvider(ctx context.Context, input CreateLLMProviderInput) (LLMProviderView, error)
 	UpdateLLMProvider(ctx context.Context, input UpdateLLMProviderInput) (LLMProviderView, error)
 	DeleteLLMProvider(ctx context.Context, input DeleteLLMProviderInput) error
+	ListProviderDeletionImpact(ctx context.Context, providerID string) (AffectedWorkflowsView, error)
 	SetDefaultLLMProvider(ctx context.Context, providerID string) (LLMSettingsView, error)
 	CreateLLMModel(ctx context.Context, input CreateLLMModelInput) (LLMModelView, error)
 	UpdateLLMModel(ctx context.Context, input UpdateLLMModelInput) (LLMModelView, error)
 	DeleteLLMModel(ctx context.Context, providerID, modelID string) error
+	ListModelDeletionImpact(ctx context.Context, providerID, modelID string) (AffectedWorkflowsView, error)
 	SetDefaultLLMModel(ctx context.Context, providerID, modelID string) (LLMSettingsView, error)
 	ResolveDefaultLLMModel(ctx context.Context) (ResolvedLLMModelView, error)
 	StartRun(ctx context.Context, input StartRunInput) (RunView, error)
@@ -230,7 +232,7 @@ func (a *Application) GetDraft(ctx context.Context, workflowID string) (DraftVie
 	if err != nil {
 		return DraftView{}, err
 	}
-	preview := a.previewDraft(view.Content)
+	preview := a.previewDraft(ctx, view.Content)
 	view.Preview = &preview
 	return view, nil
 }
@@ -257,7 +259,7 @@ func (a *Application) UpdateDraft(ctx context.Context, input UpdateDraftInput) (
 	}
 	return DraftUpdateView{
 		Draft:           view,
-		Preview:         a.previewDraft(view.Content),
+		Preview:         a.previewDraft(ctx, view.Content),
 		Saved:           update.Saved,
 		Conflict:        update.Conflict,
 		RefreshRequired: update.Conflict,
@@ -272,7 +274,34 @@ func draftView(draft productworkflow.Draft) (DraftView, error) {
 	return DraftView{WorkflowID: draft.WorkflowID, Content: content, LockVersion: draft.LockVersion, UpdatedAt: draft.UpdatedAt}, nil
 }
 
-func (a *Application) previewDraft(content map[string]any) WorkflowPreview {
+func (a *Application) previewDraft(ctx context.Context, content map[string]any) WorkflowPreview {
+	return a.previewDraftWithModels(content, a.activeModelUUIDs(ctx))
+}
+
+// activeModelUUIDs returns the set of non-deleted Gum Model UUIDs the Preview
+// accepts as resolvable LLM preferences. A nil map means the settings seam is
+// unavailable, in which case dangling preference diagnostics are skipped
+// rather than fabricating false errors.
+func (a *Application) activeModelUUIDs(ctx context.Context) map[string]struct{} {
+	if a.llmSettings == nil {
+		return nil
+	}
+	settings, err := a.llmSettings.GetLLMSettings(ctx)
+	if err != nil {
+		return nil
+	}
+	models := make(map[string]struct{})
+	for _, provider := range settings.Providers {
+		for _, model := range settings.Models[provider.ID] {
+			models[model.ID] = struct{}{}
+		}
+	}
+	return models
+}
+
+// previewDraftWithModels derives the Preview and aggregates every diagnostic,
+// including dangling Gum Model UUID preferences on agent Nodes.
+func (a *Application) previewDraftWithModels(content map[string]any, modelUUIDs map[string]struct{}) WorkflowPreview {
 	preview := WorkflowPreview{Nodes: []PreviewNode{}, Edges: []PreviewEdge{}, Groups: []PreviewGroup{}, Diagnostics: []Diagnostic{}}
 	if content["semanticSchemaVersion"] != "productWorkflow/v1" {
 		preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
@@ -356,6 +385,40 @@ func (a *Application) previewDraft(content map[string]any) WorkflowPreview {
 			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
 				Code: "invalid-node-config-" + issue.Code, Severity: "error",
 				Path: fmt.Sprintf("nodes[%d].config.%s", index, issue.Field), Message: issue.Message,
+			})
+		}
+		if definition.Kind != nodecatalog.NodeAgent {
+			continue
+		}
+		// An agent Node's LLM preference must point at a live Model Slot.
+		// Deleted or unknown UUIDs never fall back; the field-level diagnostic
+		// keeps the Node form and Preview red until the user re-selects.
+		if modelUUIDs == nil {
+			continue
+		}
+		preference, valid := node["llm"].(map[string]any)
+		if !valid {
+			if node["llm"] != nil {
+				preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+					Code: "invalid-llm-preference", Severity: "error",
+					Path: fmt.Sprintf("nodes[%d].llm", index), Message: "llm preference must be an object",
+				})
+			}
+			continue
+		}
+		modelUUID, _ := preference["modelUuid"].(string)
+		if strings.TrimSpace(modelUUID) == "" {
+			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+				Code: "missing-model-uuid", Severity: "error",
+				Path: fmt.Sprintf("nodes[%d].llm.modelUuid", index), Message: "select a Model for this agent Node",
+			})
+			continue
+		}
+		if _, resolvable := modelUUIDs[modelUUID]; !resolvable {
+			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+				Code: "dangling-model-uuid", Severity: "error",
+				Path:    fmt.Sprintf("nodes[%d].llm.modelUuid", index),
+				Message: fmt.Sprintf("Model %q is deleted or no longer exists; select another Model before running", modelUUID),
 			})
 		}
 	}

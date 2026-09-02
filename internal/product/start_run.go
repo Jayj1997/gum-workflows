@@ -161,7 +161,7 @@ func (a *Application) StartRun(ctx context.Context, input StartRunInput) (RunVie
 	if draft.LockVersion != input.ExpectedLockVersion {
 		return RunView{}, fmt.Errorf("start Run: draft lock version conflict: expected %d, current %d", input.ExpectedLockVersion, draft.LockVersion)
 	}
-	preview := a.previewDraft(draft.Content)
+	preview := a.previewDraftWithModels(draft.Content, a.activeModelUUIDs(ctx))
 	if len(preview.Diagnostics) > 0 {
 		return RunView{}, fmt.Errorf("start Run: draft has %d diagnostic(s); fix the highlighted fields", len(preview.Diagnostics))
 	}
@@ -242,7 +242,10 @@ func (a *Application) StartRun(ctx context.Context, input StartRunInput) (RunVie
 	if err != nil {
 		return RunView{}, fmt.Errorf("start Run: %w", err)
 	}
-	materializedPreview := a.previewDraft(materializedDraft.Content)
+	// The materialized Draft has a resolvable UUID per agent Node by
+	// construction; the Preview is re-checked against the live settings the
+	// Run just resolved with.
+	materializedPreview := a.previewDraftWithModels(materializedDraft.Content, a.activeModelUUIDs(ctx))
 	materializedDraft.Preview = &materializedPreview
 	views := make([]NodeRunView, 0, len(nodeRuns))
 	for _, nodeRun := range nodeRuns {

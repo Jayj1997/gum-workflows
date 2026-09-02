@@ -29,6 +29,8 @@ export function createBrowserLLMSettings(options = {}) {
 	const now = options.now ?? (() => new Date().toISOString());
 	const secrets = options.secrets ?? createMemorySecretAdapter();
 	const providers = [];
+	const drafts = options.drafts ?? new Map();
+	const workflowNames = options.workflowNames ?? new Map();
 	const byCreatedAtAndId = (left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
 
 	function getSettings() {
@@ -64,8 +66,25 @@ export function createBrowserLLMSettings(options = {}) {
 		return providerView(providerID)?.models.find((model) => model.id === modelID);
 	}
 
+	// deletionImpact describes which workflows' drafts reference the given Model
+	// UUIDs before a deletion is confirmed. It never mutates drafts; entries
+	// read the same { content: { nodes } } shape updateDraft stores.
+	function deletionImpact(modelUUIDs) {
+		const affected = [];
+		for (const draft of drafts.values()) {
+			for (const node of draft?.content?.nodes ?? []) {
+				if (!node.llm?.modelUuid || !modelUUIDs.has(node.llm.modelUuid)) continue;
+				affected.push({ id: draft.workflowId, displayName: workflowNames.get(draft.workflowId) ?? draft.workflowId, nodeId: node.id ?? "", nodeDefinition: node.definition ?? "", modelUuid: node.llm.modelUuid });
+			}
+		}
+		return affected.sort((left, right) => left.id.localeCompare(right.id) || (left.nodeId ?? "").localeCompare(right.nodeId ?? "") || left.nodeDefinition.localeCompare(right.nodeDefinition) || left.modelUuid.localeCompare(right.modelUuid));
+	}
+
 	return {
 		getSettings,
+		// rememberWorkflow teaches the settings preview the display name of a
+		// workflow created after this settings instance was constructed.
+		rememberWorkflow(workflow) { workflowNames.set(workflow.id, workflow.displayName); },
 		// referenceFor returns the internal Secret reference of one Provider so
 		// the fixture chat Adapter can resolve credentials like the real seam.
 		referenceFor(providerID) {
@@ -112,6 +131,26 @@ export function createBrowserLLMSettings(options = {}) {
 			return structuredClone(modelView(provider.id, model.id));
 		},
 		deleteModel(providerID, modelID) { providers.find((provider) => provider.id === providerID).models.find((model) => model.id === modelID).deleted = true; },
+		// modelDeletionImpact previews the workflows referencing one Model Slot.
+		// Like the Go Application it only accepts not-yet-deleted slots.
+		modelDeletionImpact(providerID, modelID) {
+			const model = providers.find((provider) => provider.id === providerID)?.models.find((candidate) => candidate.id === modelID && !candidate.deleted);
+			if (!model) throw new Error(`llm model ${modelID}: not found`);
+			return { workflows: deletionImpact(new Set([modelID])), modelSlots: [], diagnostics: [] };
+		},
+		// providerDeletionImpact previews every Model Slot and referencing
+		// workflow for one Provider removal.
+		providerDeletionImpact(providerID) {
+			const provider = providers.find((candidate) => candidate.id === providerID && !candidate.deleted);
+			if (!provider) throw new Error(`llm provider ${providerID}: not found`);
+			const activeModels = provider.models.filter((model) => !model.deleted);
+			const modelIDs = new Set(activeModels.map((model) => model.id));
+			return {
+				workflows: deletionImpact(modelIDs),
+				modelSlots: activeModels.map((model) => ({ id: model.id, displayName: model.displayName, providerModelId: model.providerModelId })),
+				diagnostics: [],
+			};
+		},
 		setDefaultModel(providerID, modelID) {
 			const provider = providers.find((candidate) => candidate.id === providerID && !candidate.deleted);
 			for (const model of provider.models) model.explicitDefault = model.id === modelID && !model.deleted;

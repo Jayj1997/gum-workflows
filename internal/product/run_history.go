@@ -108,7 +108,10 @@ func (a *Application) revisionDraftView(ctx context.Context, run productworkflow
 		if err != nil {
 			return DraftView{}
 		}
-		preview := a.previewDraft(view.Content)
+		// Historical Revisions keep the Model UUID that ran; if the Slot was
+		// deleted since, the Run Snapshot remains authoritative for the
+		// resolved selection, so the historical Preview must not flag it.
+		preview := a.previewDraftWithModels(view.Content, nil)
 		view.Preview = &preview
 		return view
 	}

@@ -24,6 +24,7 @@ export function productStatusMessage(state) {
 export function createProductShell(view, client, options = {}) {
 	let currentDraft;
 	let nodeCatalog = [];
+	let llmModelChoices = [];
 	let selectedNodeId = "";
 	let activeWorkflowId = "";
 	let editSequence = 0;
@@ -35,7 +36,14 @@ export function createProductShell(view, client, options = {}) {
   }
 	async function refreshLLMSettings() {
 		if (!view.renderLLMSettings || !client.getLLMSettings) return;
-		view.renderLLMSettings(await client.getLLMSettings());
+		const settings = await client.getLLMSettings();
+		view.renderLLMSettings(settings);
+		// The Node editor's Model selector and the deletion confirmations read
+		// the same live Provider -> Models tree.
+		llmModelChoices = settings.providers.flatMap((provider) => provider.models.map((model) => ({
+			value: model.id,
+			displayName: `${provider.name} · ${model.displayName || model.providerModelId} (${model.providerModelId})`,
+		})));
 	}
 	async function refreshRevisions() {
 		if (!activeWorkflowId || !view.renderRevisions || !client.listRevisions) return;
@@ -55,7 +63,7 @@ export function createProductShell(view, client, options = {}) {
 	}
 	const createNodeId = options.createNodeId ?? (() => crypto.randomUUID());
 	function editorFocus(fieldPath) {
-		const match = /^nodes\[\d+\]\.(inputs|config)\.([^.\[]+)/.exec(fieldPath ?? "");
+		const match = /^nodes\[\d+\]\.(inputs|config|llm)\.([^.[]+)/.exec(fieldPath ?? "");
 		return match ? { section: match[1], field: match[2] } : undefined;
 	}
 	function renderSelectedNode(fieldPath) {
@@ -75,11 +83,15 @@ export function createProductShell(view, client, options = {}) {
 				displayName: `${candidate.displayName || candidate.id} · ${port}`,
 			}));
 		});
+		// Agent Nodes expose their LLM preference as a Model Slot selector so a
+		// dangling UUID can be re-selected directly from the Node form.
+		const modelChoices = entry.definition.kind === "agent" ? llmModelChoices : [];
 		view.renderNodeEditor({
 			node,
 			fields: entry.definition.config.fields,
 			inputs: entry.definition.inputs ?? {},
 			inputSources,
+			modelChoices,
 			controlNodes: otherNodes.map((candidate) => ({ id: candidate.id, displayName: candidate.displayName || candidate.id })),
 			focus: editorFocus(fieldPath),
 		});
@@ -179,10 +191,12 @@ export function createProductShell(view, client, options = {}) {
 	view.onCreateLLMProvider?.((input) => changeLLMSettings(() => client.createLLMProvider(input)));
 	view.onUpdateLLMProvider?.((input) => changeLLMSettings(() => client.updateLLMProvider(input)));
 	view.onDeleteLLMProvider?.((input) => changeLLMSettings(() => client.deleteLLMProvider(input)));
+	view.onListProviderDeletionImpact?.((providerId) => client.listProviderDeletionImpact(providerId));
 	view.onSetDefaultLLMProvider?.((providerId) => changeLLMSettings(() => client.setDefaultLLMProvider(providerId)));
 	view.onCreateLLMModel?.((input) => changeLLMSettings(() => client.createLLMModel(input)));
 	view.onUpdateLLMModel?.((input) => changeLLMSettings(() => client.updateLLMModel(input)));
 	view.onDeleteLLMModel?.((providerId, modelId) => changeLLMSettings(() => client.deleteLLMModel(providerId, modelId)));
+	view.onListModelDeletionImpact?.((providerId, modelId) => client.listModelDeletionImpact(providerId, modelId));
 	view.onSetDefaultLLMModel?.((providerId, modelId) => changeLLMSettings(() => client.setDefaultLLMModel(providerId, modelId)));
 	view.onSelectWorkflow(async (workflowId) => {
 		const selection = ++selectionSequence;
@@ -283,6 +297,16 @@ export function createProductShell(view, client, options = {}) {
 			if (!node.config || typeof node.config !== "object") node.config = {};
 			if (remove) delete node.config[field];
 			else node.config[field] = value;
+		});
+	});
+	view.onEditNodeModel?.(async ({ nodeId, modelUuid }) => {
+		await editNodes((nodes) => {
+			const node = nodes.find((candidate) => candidate.id === nodeId);
+			if (!node) return;
+			// Clearing the selector removes the preference so StartRun's
+			// default materialization owns it again; selecting a UUID pins it.
+			if (!modelUuid) delete node.llm;
+			else node.llm = { ...(node.llm ?? {}), modelUuid };
 		});
 	});
 	view.onBindNodeInput?.(async ({ nodeId, input, from }) => {

@@ -123,6 +123,17 @@ func (a *DesktopAdapter) DeleteLLMModel(providerID, modelID string) error {
 	return a.application.DeleteLLMModel(a.ctx, providerID, modelID)
 }
 
+// ListModelDeletionImpact previews the Workflows referencing one Model Slot.
+func (a *DesktopAdapter) ListModelDeletionImpact(providerID, modelID string) (product.AffectedWorkflowsView, error) {
+	return a.application.ListModelDeletionImpact(a.ctx, providerID, modelID)
+}
+
+// ListProviderDeletionImpact previews the Model Slots and Workflows affected
+// by removing one Provider.
+func (a *DesktopAdapter) ListProviderDeletionImpact(providerID string) (product.AffectedWorkflowsView, error) {
+	return a.application.ListProviderDeletionImpact(a.ctx, providerID)
+}
+
 // SetDefaultLLMModel forwards explicit Model default selection.
 func (a *DesktopAdapter) SetDefaultLLMModel(providerID, modelID string) (product.LLMSettingsView, error) {
 	return a.application.SetDefaultLLMModel(a.ctx, providerID, modelID)
