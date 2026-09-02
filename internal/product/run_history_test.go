@@ -86,15 +86,22 @@ func assistantArtifact(run product.RunView) product.ArtifactView {
 	return product.ArtifactView{}
 }
 
+func singleTurnInput(workflowID string, lockVersion uint64) product.StartRunInput {
+	return product.StartRunInput{
+		WorkflowID: workflowID, ExpectedLockVersion: lockVersion,
+		HumanInput: product.HumanRunInput{NodeID: "prompt", Text: "Hello from the product UI."},
+	}
+}
+
 func TestApplicationListsRevisionsRunsAndHistoryAfterRepeatedStartRun(t *testing.T) {
 	ctx := context.Background()
 	application, _, _ := newTracerApplication(t, ctx)
 	workflow, saved := saveTracerDraft(t, ctx, application)
-	first, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion})
+	first, err := application.StartRun(ctx, singleTurnInput(workflow.ID, saved.Draft.LockVersion))
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: first.Draft.LockVersion})
+	second, err := application.StartRun(ctx, singleTurnInput(workflow.ID, first.Draft.LockVersion))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +144,7 @@ func TestApplicationSemanticChangeCreatesNewRevision(t *testing.T) {
 	ctx := context.Background()
 	application, _, _ := newTracerApplication(t, ctx)
 	workflow, saved := saveTracerDraft(t, ctx, application)
-	first, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion})
+	first, err := application.StartRun(ctx, singleTurnInput(workflow.ID, saved.Draft.LockVersion))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +157,7 @@ func TestApplicationSemanticChangeCreatesNewRevision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("semantic autosave: %v", err)
 	}
-	second, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: updated.Draft.LockVersion})
+	second, err := application.StartRun(ctx, singleTurnInput(workflow.ID, updated.Draft.LockVersion))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +177,7 @@ func TestApplicationPresentationChangeDoesNotCreateRevision(t *testing.T) {
 	ctx := context.Background()
 	application, _, _ := newTracerApplication(t, ctx)
 	workflow, saved := saveTracerDraft(t, ctx, application)
-	first, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion})
+	first, err := application.StartRun(ctx, singleTurnInput(workflow.ID, saved.Draft.LockVersion))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +190,7 @@ func TestApplicationPresentationChangeDoesNotCreateRevision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("presentation autosave: %v", err)
 	}
-	second, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: updated.Draft.LockVersion})
+	second, err := application.StartRun(ctx, singleTurnInput(workflow.ID, updated.Draft.LockVersion))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,12 +212,12 @@ func TestApplicationFirstModelUuidMaterializationCreatesNewRevision(t *testing.T
 	workflow, saved := saveTracerDraft(t, ctx, application)
 
 	// First StartRun materializes the default Model UUID into the agent node.
-	first, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion})
+	first, err := application.StartRun(ctx, singleTurnInput(workflow.ID, saved.Draft.LockVersion))
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Re-running the same materialized content reuses the Revision.
-	second, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: first.Draft.LockVersion})
+	second, err := application.StartRun(ctx, singleTurnInput(workflow.ID, first.Draft.LockVersion))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +245,7 @@ func TestApplicationFirstModelUuidMaterializationCreatesNewRevision(t *testing.T
 	if err != nil {
 		t.Fatalf("model selection autosave: %v", err)
 	}
-	third, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: updated.Draft.LockVersion})
+	third, err := application.StartRun(ctx, singleTurnInput(workflow.ID, updated.Draft.LockVersion))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +265,7 @@ func TestApplicationRunHistorySurvivesRestart(t *testing.T) {
 	ctx := context.Background()
 	application, paths, store := newTracerApplication(t, ctx)
 	workflow, saved := saveTracerDraft(t, ctx, application)
-	first, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion})
+	first, err := application.StartRun(ctx, singleTurnInput(workflow.ID, saved.Draft.LockVersion))
 	if err != nil {
 		t.Fatal(err)
 	}

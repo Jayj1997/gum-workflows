@@ -240,6 +240,7 @@ func TestApplicationStartsRealConversationRunFromVisibleDraft(t *testing.T) {
 
 	run, err := application.StartRun(ctx, product.StartRunInput{
 		WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion,
+		HumanInput: product.HumanRunInput{NodeID: "prompt", Text: "Hello from the product UI."},
 	})
 	if err != nil {
 		t.Fatalf("start real Run: %v", err)
@@ -262,12 +263,12 @@ func TestApplicationStartsRealConversationRunFromVisibleDraft(t *testing.T) {
 	// The real call's usage, finish reason and Provider request ID are visible
 	// on the agent Node Run.
 	agentRun := run.NodeRuns[1]
-	if agentRun.Diagnostics["providerRequestId"] != "chatcmpl-fixture-1" || agentRun.Diagnostics["finishReason"] != "stop" {
+	if agentRun.Diagnostics == nil || agentRun.Diagnostics.ProviderRequestID != "chatcmpl-fixture-1" || agentRun.Diagnostics.FinishReason != "stop" {
 		t.Fatalf("agent Node Run diagnostics = %#v", agentRun.Diagnostics)
 	}
-	usage, ok := agentRun.Diagnostics["usage"].(*chat.Usage)
-	if !ok {
-		t.Fatalf("agent Node Run usage = %#v", agentRun.Diagnostics["usage"])
+	usage := agentRun.Diagnostics.Usage
+	if usage == nil {
+		t.Fatalf("agent Node Run usage = %#v", agentRun.Diagnostics)
 	}
 	if usage.InputTokens != 12 || usage.OutputTokens != 7 || usage.TotalTokens != 19 {
 		t.Fatalf("agent Node Run usage = %#v", usage)
@@ -351,7 +352,7 @@ func TestApplicationRealRunConsumesTheAuthoredConversationDataEdge(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion})
+	run, err := application.StartRun(ctx, singleTurnInput(workflow.ID, saved.Draft.LockVersion))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +392,7 @@ func TestApplicationStartRunRejectsStaleDraftWithoutMaterializingModel(t *testin
 		t.Fatal(err)
 	}
 
-	if _, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: draft.Draft.LockVersion}); err == nil {
+	if _, err := application.StartRun(ctx, singleTurnInput(workflow.ID, draft.Draft.LockVersion)); err == nil {
 		t.Fatal("start stale Draft = nil error, want conflict")
 	}
 	latest, err := application.GetDraft(ctx, workflow.ID)
@@ -425,7 +426,7 @@ func TestApplicationStartRunWithoutDefaultLeavesDraftAndRunsUntouched(t *testing
 	application := newTestApplicationWithRuns(t, store, paths)
 	workflow, saved := saveTracerDraft(t, ctx, application)
 
-	if _, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion}); err == nil {
+	if _, err := application.StartRun(ctx, singleTurnInput(workflow.ID, saved.Draft.LockVersion)); err == nil {
 		t.Fatal("start Run without default = nil error, want settings diagnostic")
 	}
 	latest, err := application.GetDraft(ctx, workflow.ID)
@@ -462,11 +463,11 @@ func TestApplicationRepeatedStartRunReusesRevisionAndCreatesNewRun(t *testing.T)
 		t.Fatal(err)
 	}
 	workflow, saved := saveTracerDraft(t, ctx, application)
-	first, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion})
+	first, err := application.StartRun(ctx, singleTurnInput(workflow.ID, saved.Draft.LockVersion))
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: first.Draft.LockVersion})
+	second, err := application.StartRun(ctx, singleTurnInput(workflow.ID, first.Draft.LockVersion))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -486,7 +487,7 @@ func TestApplicationRepeatedStartRunReusesRevisionAndCreatesNewRun(t *testing.T)
 	}
 }
 
-func TestApplicationArtifactFailureDoesNotMaterializeDraft(t *testing.T) {
+func TestApplicationArtifactFailureAfterBeginPersistsFailedRun(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	runsPath := filepath.Join(root, "runs-is-a-file")
@@ -511,15 +512,23 @@ func TestApplicationArtifactFailureDoesNotMaterializeDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	workflow, saved := saveTracerDraft(t, ctx, application)
-	if _, err := application.StartRun(ctx, product.StartRunInput{WorkflowID: workflow.ID, ExpectedLockVersion: saved.Draft.LockVersion}); err == nil {
+	if _, err := application.StartRun(ctx, singleTurnInput(workflow.ID, saved.Draft.LockVersion)); err == nil {
 		t.Fatal("start Run with invalid Artifact root = nil error")
 	}
 	latest, err := application.GetDraft(ctx, workflow.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if latest.LockVersion != saved.Draft.LockVersion || !reflect.DeepEqual(latest.Content, saved.Draft.Content) {
-		t.Fatalf("Artifact failure changed Draft = %#v, want %#v", latest, saved.Draft)
+	if latest.LockVersion != saved.Draft.LockVersion+1 {
+		t.Fatalf("Artifact failure materialized lock version = %d, want %d", latest.LockVersion, saved.Draft.LockVersion+1)
+	}
+	revisions, err := application.ListRevisions(ctx, workflow.ID)
+	if err != nil || len(revisions) != 1 {
+		t.Fatalf("Artifact failure revisions = %#v, error = %v", revisions, err)
+	}
+	runs, err := application.ListRevisionRuns(ctx, revisions[0].ID)
+	if err != nil || len(runs) != 1 || runs[0].Status != "failed" || runs[0].Error == nil || runs[0].Error.Code != "runtime" {
+		t.Fatalf("Artifact failure Runs = %#v, error = %v", runs, err)
 	}
 }
 

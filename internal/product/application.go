@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Jayj1997/gum-workflows/internal/chat"
@@ -125,14 +126,17 @@ type WorkflowView struct {
 
 // Application coordinates Product Workflow use cases for UI adapters.
 type Application struct {
-	repository  productworkflow.Repository
-	llmSettings productworkflow.LLMSettingsRepository
-	catalog     *nodecatalog.Registry
-	runPaths    runtimepath.Paths
-	runRepo     productworkflow.RunRepository
-	runHistory  productworkflow.RunHistoryRepository
-	secrets     secret.Adapter
-	chat        chat.Adapter
+	repository   productworkflow.Repository
+	llmSettings  productworkflow.LLMSettingsRepository
+	catalog      *nodecatalog.Registry
+	runPaths     runtimepath.Paths
+	runRepo      productworkflow.RunRepository
+	runHistory   productworkflow.RunHistoryRepository
+	runRecovery  productworkflow.RunRecoveryRepository
+	secrets      secret.Adapter
+	chat         chat.Adapter
+	initializeMu sync.Mutex
+	initialized  bool
 }
 
 // ApplicationOption configures optional product runtime dependencies.
@@ -160,7 +164,8 @@ func NewApplication(repository productworkflow.Repository, catalog *nodecatalog.
 	settings, _ := repository.(productworkflow.LLMSettingsRepository)
 	runs, _ := repository.(productworkflow.RunRepository)
 	runHistory, _ := repository.(productworkflow.RunHistoryRepository)
-	application := &Application{repository: repository, llmSettings: settings, runRepo: runs, runHistory: runHistory, catalog: catalog, chat: chat.NewOpenAIChatAdapter(nil)}
+	runRecovery, _ := repository.(productworkflow.RunRecoveryRepository)
+	application := &Application{repository: repository, llmSettings: settings, runRepo: runs, runHistory: runHistory, runRecovery: runRecovery, catalog: catalog, chat: chat.NewOpenAIChatAdapter(nil)}
 	for _, option := range options {
 		option(application)
 	}
@@ -175,8 +180,17 @@ func (a *Application) ListNodeCatalog(context.Context) ([]nodecatalog.Entry, err
 	return a.catalog.Catalog(), nil
 }
 
-// OpenWorkspace returns the product shell state.
-func (*Application) OpenWorkspace(context.Context) (WorkspaceView, error) {
+// OpenWorkspace reconciles in-flight Runs once for this Application process,
+// then returns the product shell state.
+func (a *Application) OpenWorkspace(ctx context.Context) (WorkspaceView, error) {
+	a.initializeMu.Lock()
+	defer a.initializeMu.Unlock()
+	if !a.initialized && a.runRecovery != nil {
+		if err := a.runRecovery.InterruptProductWorkflowRuns(ctx, time.Now().UTC()); err != nil {
+			return WorkspaceView{}, fmt.Errorf("open workspace: interrupt unfinished Runs: %w", err)
+		}
+		a.initialized = true
+	}
 	return WorkspaceView{Title: "Gum Workflows", Message: "Product workspace ready"}, nil
 }
 

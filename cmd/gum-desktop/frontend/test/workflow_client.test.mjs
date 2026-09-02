@@ -12,6 +12,7 @@ import { createWorkflowPreview } from "../dist/workflow-preview.js";
 import { createBrowserLLMSettings, createMemorySecretAdapter } from "../dist/browser-llm-settings.js";
 import { productRevisionKey } from "../dist/browser-run.js";
 import { createFixtureChatAdapter } from "../dist/browser-chat-fixture.js";
+import { createBrowserApplication } from "../dist/browser.js";
 
 const expectedView = {
   title: "Gum Workflows",
@@ -32,7 +33,7 @@ const expectedRun = {
 	id: "run-uuid", revisionId: "revision-uuid", status: "succeeded", draft: expectedDraft,
 	nodeRuns: [
 		{ id: "human-run", nodeId: "prompt", nodeDefinition: "human-chat", nodeExecutor: "v1", status: "succeeded" },
-		{ id: "agent-run", nodeId: "answer", nodeDefinition: "llm-chat", nodeExecutor: "v1", status: "succeeded" },
+		{ id: "agent-run", nodeId: "answer", nodeDefinition: "llm-chat", nodeExecutor: "v1", status: "succeeded", diagnostics: { providerRequestId: "chatcmpl-1", finishReason: "stop", usage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 } } },
 	],
 	artifacts: [{ id: "artifact-uuid", nodeId: "answer", port: "conversation", type: "Conversation", version: "2", uri: "2.json", messages: [{ role: "user", text: "Hello" }, { role: "assistant", text: "Fake response" }] }],
 };
@@ -44,7 +45,7 @@ const expectedRevisionRuns = [
 ];
 const expectedSettings = {
 	providers: [{
-		id: "provider-uuid", name: "Primary", protocol: "openai-chat-completions", baseUrl: "https://api.example/v1",
+		id: "provider-uuid", name: "Primary", protocol: "openai-chat-completions", dialect: "developer", baseUrl: "https://api.example/v1",
 		hasApiKey: true, explicitDefault: true, effectiveDefault: true, createdAt: "2026-08-31T09:00:00Z",
 		models: [{ id: "model-uuid", providerId: "provider-uuid", displayName: "Fast", providerModelId: "model-fast", generationDefaults: { temperature: 0.2, maxOutputTokens: 1024 }, explicitDefault: true, effectiveDefault: true, createdAt: "2026-08-31T09:00:00Z" }],
 	}],
@@ -177,16 +178,42 @@ test("Run flushes pending autosave and uses the latest Draft lock token", async 
 		async openWorkspace() { return expectedView; }, async createWorkflow() {}, async listWorkflows() { return []; },
 		async getDraft() { return structuredClone(draft); }, async updateDraft() {},
 		async startRun(input) {
-			calls.push(["start", input.expectedLockVersion]);
+			calls.push(["start", input.expectedLockVersion, input.humanInput]);
 			return { ...structuredClone(expectedRun), draft: structuredClone(draft) };
 		},
 	});
 	createProductShell(view, client);
 	await selectWorkflow(expectedWorkflow.id);
-	await startRun();
+	await startRun({ nodeId: "prompt", text: "Explain the application seam." });
 
-	assert.deepEqual(calls, ["flush", ["start", 2]]);
+	assert.deepEqual(calls, ["flush", ["start", 2, { nodeId: "prompt", text: "Explain the application seam." }]]);
 	assert.equal(renderedRuns.at(-1).artifacts[0].messages[1].text, "Fake response");
+});
+
+test("a failed StartRun refreshes persisted history and shows the actionable error", async () => {
+	let selectWorkflow, startRun;
+	let revisionCalls = 0;
+	const rendered = [];
+	const revisions = [];
+	const view = {
+		onOpenWorkspace() {}, onCreateWorkflow() {}, onSelectWorkflow(handler) { selectWorkflow = handler; },
+		onDraftDirty() {}, onEditDraft() {}, onStartRun(handler) { startRun = handler; },
+		render(state) { rendered.push(structuredClone(state)); }, renderDraft() {}, renderDraftLoading() {}, renderNodeEditor() {},
+		renderRevisions(items) { revisions.push(structuredClone(items)); }, renderRevisionRuns() {}, renderHistoryRun() {},
+	};
+	const client = createBrowserWorkflowClient({
+		async openWorkspace() { return expectedView; }, async createWorkflow() {}, async listWorkflows() { return []; },
+		async getDraft() { return structuredClone(expectedDraft); }, async updateDraft() {},
+		async startRun() { throw new Error("Run run-failed structural/authentication: key rejected; check the Provider API Key and start a new Run"); },
+		async listRevisions() { revisionCalls += 1; return [{ ...expectedRevisions[0], runCount: 1 }]; },
+	});
+	createProductShell(view, client);
+	await selectWorkflow(expectedWorkflow.id);
+	await startRun({ nodeId: "prompt", text: "Hello" });
+
+	assert.equal(revisionCalls, 2);
+	assert.equal(rendered.at(-1).status, "error");
+	assert.match(rendered.at(-1).message, /check the Provider API Key and start a new Run/);
 });
 
 test("History drill-down loads Revisions after a Run, then Runs and the Run detail", async () => {
@@ -234,8 +261,10 @@ test("History drill-down loads Revisions after a Run, then Runs and the Run deta
 test("Browser Mock settings use UUID tie-breaks and truthful mutation defaults", () => {
 	const ids = ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "cccccccc-cccc-4ccc-8ccc-cccccccccccc"];
 	const settings = createBrowserLLMSettings({ newID: () => ids.shift(), now: () => "2026-09-01T00:00:00Z" });
-	const laterProvider = settings.createProvider({ name: "Later UUID", protocol: "openai-chat-completions", baseUrl: "https://later.example/v1", apiKey: "later-secret" });
+	const laterProvider = settings.createProvider({ name: "Later UUID", protocol: "openai-chat-completions", dialect: "", baseUrl: "https://later.example/v1", apiKey: "later-secret" });
 	const earlierProvider = settings.createProvider({ name: "Earlier UUID", protocol: "openai-chat-completions", baseUrl: "https://earlier.example/v1", apiKey: "earlier-secret" });
+	assert.equal(laterProvider.dialect, "developer");
+	assert.throws(() => settings.updateProvider({ ...laterProvider, dialect: "legacy-system" }), /dialect must be developer or system/);
 	assert.equal(laterProvider.effectiveDefault, true);
 	assert.equal(earlierProvider.effectiveDefault, true);
 	assert.equal(settings.updateProvider({ ...laterProvider, name: "Later renamed" }).effectiveDefault, false);
@@ -267,6 +296,17 @@ test("Browser Mock injects Secret storage and never returns plaintext API Keys",
 	assert.throws(() => secrets.resolve(reference), /not found/);
 });
 
+test("the Browser Mock default chat fixture completes a local model call", () => {
+	const secrets = createMemorySecretAdapter();
+	const apiKeyRef = secrets.store("llm-provider/provider-uuid", "browser-secret");
+	const adapter = createFixtureChatAdapter({ secrets });
+	const result = adapter.generate(
+		{ dialect: "developer", baseUrl: "https://api.example/v1", providerModelId: "model-fast", apiKeyRef },
+		{ instructions: [], messages: [{ role: "user", parts: [{ kind: "text", text: "Hello" }] }], config: {} },
+	);
+	assert.equal(result.assistant.parts[0].text, "Browser fixture response.");
+});
+
 test("Browser Mock Revision identity ignores presentation and unordered storage", () => {
 	const left = {
 		semanticSchemaVersion: "productWorkflow/v1", displayName: "Left", view: { zoom: 1 },
@@ -283,6 +323,92 @@ test("Browser Mock Revision identity ignores presentation and unordered storage"
 		view: { zoom: 2 }, displayName: "Right", semanticSchemaVersion: "productWorkflow/v1",
 	};
 	assert.equal(productRevisionKey(left), productRevisionKey(right));
+});
+
+async function configureBrowserTracer(client) {
+	const workflow = await client.createWorkflow({ displayName: "Browser lifecycle" });
+	const provider = await client.createLLMProvider({ name: "Primary", protocol: "openai-chat-completions", baseUrl: "https://api.example/v1", apiKey: "browser-secret" });
+	await client.createLLMModel({ providerId: provider.id, displayName: "Fixture", providerModelId: "fixture-model", generationDefaults: {} });
+	const draft = await client.getDraft(workflow.id);
+	const updated = await client.updateDraft({
+		workflowId: workflow.id, expectedLockVersion: draft.lockVersion,
+		content: {
+			semanticSchemaVersion: "productWorkflow/v1",
+			nodes: [
+				{ id: "prompt", definition: "human-chat", executor: "v1", config: {} },
+				{ id: "answer", definition: "llm-chat", executor: "v1", config: {}, inputs: { conversation: { from: "prompt.conversation" } } },
+			],
+		},
+	});
+	return { workflow, lockVersion: updated.draft.lockVersion };
+}
+
+test("Browser WorkflowClient persists failed execution progress through its public history seam", async () => {
+	const application = createBrowserApplication({ chatAdapter: { generate() { throw new Error("fixture capacity"); } } });
+	const client = createBrowserWorkflowClient(application);
+	await client.openWorkspace();
+	const { workflow, lockVersion } = await configureBrowserTracer(client);
+	await assert.rejects(
+		client.startRun({ workflowId: workflow.id, expectedLockVersion: lockVersion, humanInput: { nodeId: "prompt", text: "Hello" } }),
+		/structural\/provider.*fixture capacity/,
+	);
+	const revisions = await client.listRevisions(workflow.id);
+	const runs = await client.listRevisionRuns(revisions[0].id);
+	assert.equal(runs[0].status, "failed");
+	const detail = await client.getRunHistory(runs[0].id);
+	assert.equal(detail.nodeRuns[0].status, "succeeded");
+	assert.equal(detail.nodeRuns[1].status, "failed");
+	assert.equal(detail.nodeRuns[1].diagnostics.error.code, "provider");
+	assert.equal(detail.artifacts.length, 1);
+});
+
+test("Browser WorkflowClient only performs recovery on its first workspace open", async () => {
+	let enteredResolve;
+	let releaseResolve;
+	const entered = new Promise((resolve) => { enteredResolve = resolve; });
+	const blocked = new Promise((resolve) => { releaseResolve = resolve; });
+	const application = createBrowserApplication({ chatAdapter: { generate() { enteredResolve(); return blocked; } } });
+	const client = createBrowserWorkflowClient(application);
+	await client.openWorkspace();
+	const { workflow, lockVersion } = await configureBrowserTracer(client);
+	const pending = client.startRun({ workflowId: workflow.id, expectedLockVersion: lockVersion, humanInput: { nodeId: "prompt", text: "Hello" } });
+	await entered;
+	let revisions = await client.listRevisions(workflow.id);
+	let runs = await client.listRevisionRuns(revisions[0].id);
+	assert.equal(runs[0].status, "running");
+
+	await client.openWorkspace();
+	revisions = await client.listRevisions(workflow.id);
+	runs = await client.listRevisionRuns(revisions[0].id);
+	assert.equal(runs[0].status, "running");
+	releaseResolve({ assistant: { role: "assistant", parts: [{ kind: "text", text: "Done" }] }, finishReason: "stop", usage: {}, providerRequestId: "chatcmpl-browser-blocked" });
+	const completed = await pending;
+	assert.equal(completed.status, "succeeded");
+});
+
+test("Browser WorkflowClient first open interrupts retained in-flight state and rejects a late result", async () => {
+	let enteredResolve;
+	let releaseResolve;
+	const entered = new Promise((resolve) => { enteredResolve = resolve; });
+	const blocked = new Promise((resolve) => { releaseResolve = resolve; });
+	const application = createBrowserApplication({ chatAdapter: { generate() { enteredResolve(); return blocked; } } });
+	const client = createBrowserWorkflowClient(application);
+	const { workflow, lockVersion } = await configureBrowserTracer(client);
+	const pending = client.startRun({ workflowId: workflow.id, expectedLockVersion: lockVersion, humanInput: { nodeId: "prompt", text: "Hello" } });
+	await entered;
+	await client.openWorkspace();
+	const revisions = await client.listRevisions(workflow.id);
+	const runs = await client.listRevisionRuns(revisions[0].id);
+	assert.equal(runs[0].status, "interrupted");
+	let detail = await client.getRunHistory(runs[0].id);
+	assert.equal(detail.nodeRuns[0].status, "succeeded");
+	assert.equal(detail.nodeRuns[1].status, "unknown-outcome");
+	assert.equal(detail.artifacts.length, 1);
+
+	releaseResolve({ assistant: { role: "assistant", parts: [{ kind: "text", text: "Late" }] }, finishReason: "stop", usage: {}, providerRequestId: "chatcmpl-browser-late" });
+	await assert.rejects(pending, /cannot finalize because its status is interrupted/);
+	detail = await client.getRunHistory(runs[0].id);
+	assert.equal(detail.status, "interrupted");
 });
 
 test("the Browser Mock registry validates every Gum Config Schema field type", () => {
@@ -868,21 +994,34 @@ test("the DOM Run action renders successful Node Runs and Conversation messages"
 	};
 	const runButton = { listeners: {}, disabled: false, addEventListener(event, handler) { this.listeners[event] = handler; } };
 	const runStatus = { textContent: "" };
+	const runInputLabel = { textContent: "" };
+	const runInput = { value: "", dataset: {} };
 	const artifactList = { ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } };
 	const nodeRunList = { ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } };
 	const view = createProductDOMView({
 		title: {}, message: {}, status: { dataset: {} }, button: { addEventListener() {} }, form: { addEventListener() {} }, nameInput: {},
 		workflowList: { replaceChildren() {} }, draftEditor: { addEventListener() {} }, draftStatus: {}, diagnosticList: { replaceChildren() {} },
-		runButton, runStatus, artifactList, nodeRunList,
+		runButton, runStatus, runInputLabel, runInput, artifactList, nodeRunList,
 	}, productStatusMessage);
-	let started = false;
-	view.onStartRun(() => { started = true; });
+	let submitted;
+	view.onStartRun((humanInput) => { submitted = humanInput; });
+	view.renderDraft({ draft: {
+		...expectedDraft,
+		content: { semanticSchemaVersion: "productWorkflow/v1", nodes: [
+			{ id: "unused", definition: "human-chat", displayName: "Unused human" },
+			{ id: "prompt", definition: "human-chat", displayName: "Question" },
+			{ id: "answer", definition: "llm-chat", inputs: { conversation: { from: "prompt.conversation" } } },
+		] },
+	} });
+	runInput.value = "  Explain the application seam.\n";
 	await runButton.listeners.click();
 	view.renderRun(expectedRun);
 
-	assert.equal(started, true);
+	assert.deepEqual(submitted, { nodeId: "prompt", text: "  Explain the application seam.\n" });
+	assert.equal(runInputLabel.textContent, "Question input");
 	assert.equal(runStatus.textContent, "Run succeeded · revision revision-uuid");
-	assert.deepEqual(nodeRunList.items.map((item) => item.textContent), ["prompt · human-chat@v1 · succeeded", "answer · llm-chat@v1 · succeeded"]);
+	assert.deepEqual(nodeRunList.items.map((item) => item.textContent), ["prompt · human-chat@v1 · node run human-run · succeeded", "answer · llm-chat@v1 · node run agent-run · succeeded"]);
+	assert.equal(nodeRunList.items[1].children[0].textContent, "request chatcmpl-1 · finish stop · tokens 12 in / 7 out / 19 total");
 	assert.equal(artifactList.items[0].children[1].children[1].textContent, "assistant: Fake response");
 });
 
@@ -922,8 +1061,22 @@ test("the DOM history panel renders Revisions, Revision Runs and a historical Ru
 	await revisionRunList.items[0].children[0].listeners.click();
 	assert.equal(selectedRun, "run-uuid");
 	assert.equal(historyRunStatus.textContent, "Run succeeded · revision revision-uuid");
-	assert.deepEqual(historyNodeRunList.items.map((item) => item.textContent), ["prompt · human-chat@v1 · succeeded", "answer · llm-chat@v1 · succeeded"]);
+	assert.deepEqual(historyNodeRunList.items.map((item) => item.textContent), ["prompt · human-chat@v1 · node run human-run · succeeded", "answer · llm-chat@v1 · node run agent-run · succeeded"]);
+	assert.equal(historyNodeRunList.items[1].children[0].textContent, "request chatcmpl-1 · finish stop · tokens 12 in / 7 out / 19 total");
 	assert.equal(historyArtifactList.items[0].children[1].children[1].textContent, "assistant: Fake response");
+
+	const failed = structuredClone(expectedRun);
+	failed.status = "failed";
+	failed.error = { kind: "structural", code: "authentication", message: "openai-compatible request failed: authentication (status 401)", userAction: "check the Provider API Key and start a new Run" };
+	failed.nodeRuns[1].status = "failed";
+	failed.nodeRuns[1].startedAt = "2026-09-02T10:00:00Z";
+	failed.nodeRuns[1].finishedAt = "2026-09-02T10:00:01Z";
+	failed.nodeRuns[1].diagnostics = { error: failed.error };
+	view.renderHistoryRun(failed);
+	assert.match(historyRunStatus.textContent, /authentication.*check the Provider API Key/);
+	assert.match(historyNodeRunList.items[1].textContent, /agent-run/);
+	assert.equal(historyNodeRunList.items[1].children[0].textContent, "structural / authentication · openai-compatible request failed: authentication (status 401) · check the Provider API Key and start a new Run");
+	assert.equal(historyNodeRunList.items[1].children[1].textContent, "2026-09-02T10:00:00Z → 2026-09-02T10:00:01Z");
 });
 
 test("the Node editor renders distinct Input Binding and Control Dependency controls", async () => {
@@ -1000,9 +1153,12 @@ test("the DOM settings view renders editable Provider and Model controls", async
 	const card = providerList.items[0];
 	const providerControls = card.children[0].children;
 	providerControls[0].value = "Renamed";
-	await providerControls[4].listeners.click();
-	await providerControls[5].listeners.click();
-	await providerControls[6].listeners.click();
+	const dialect = providerControls.find((control) => control.value === "developer");
+	assert.ok(dialect, "Provider settings should render its instructions dialect");
+	dialect.value = "system";
+	await providerControls.find((control) => control.textContent === "Save Provider").listeners.click();
+	await providerControls.find((control) => control.textContent === "Effective default").listeners.click();
+	await providerControls.find((control) => control.textContent === "Delete Provider").listeners.click();
 	const modelControls = card.children[1].children[0].children;
 	modelControls[1].value = "model-fast-v2";
 	modelControls[2].value = "0.5";
@@ -1017,8 +1173,9 @@ test("the DOM settings view renders editable Provider and Model controls", async
 
 	assert.deepEqual(calls.map((call) => call[0]), ["provider", "provider-default", "provider-delete", "model", "model-create"]);
 	assert.equal(calls[0][1].id, "provider-uuid");
-	assert.equal(providerControls[3].type, "password");
-	assert.equal(providerControls[3].value, "");
+	assert.equal(calls[0][1].dialect, "system");
+	const keyControl = providerControls.find((control) => control.type === "password");
+	assert.equal(keyControl.value, "");
 	assert.deepEqual(calls[2][1], { providerId: "provider-uuid", confirmed: true });
 	assert.equal(calls[3][1].providerModelId, "model-fast-v2");
 	assert.deepEqual(calls[3][1].generationDefaults, { temperature: 0.5, maxOutputTokens: 2048 });
@@ -1239,7 +1396,7 @@ test("the Browser Mock startRun drives one real fixture model call and persists 
 	let draft = structuredClone(expectedDraft);
 	const secrets = createMemorySecretAdapter();
 	const settings = createBrowserLLMSettings({ newID: () => "provider-uuid", now: () => "2026-09-01T00:00:00Z", secrets });
-	settings.createProvider({ name: "Primary", protocol: "openai-chat-completions", baseUrl: "https://api.example/v1", apiKey: "sk-browser-run-secret" });
+	settings.createProvider({ name: "Primary", protocol: "openai-chat-completions", dialect: "system", baseUrl: "https://api.example/v1", apiKey: "sk-browser-run-secret" });
 	settings.createModel({ providerId: "provider-uuid", displayName: "Fast", providerModelId: "model-fast", generationDefaults: {} });
 	draft = {
 		...draft,
@@ -1281,29 +1438,29 @@ test("the Browser Mock startRun drives one real fixture model call and persists 
 			}
 			const agent = materialized.nodes.find((node) => node.definition === "llm-chat");
 			const result = chatWithSecrets.generate(
-				{ protocol: provider.protocol, baseUrl: provider.baseUrl, providerModelId: model.providerModelId, apiKeyRef: settings.referenceFor(provider.id) },
+				{ protocol: provider.protocol, dialect: provider.dialect, baseUrl: provider.baseUrl, providerModelId: model.providerModelId, apiKeyRef: settings.referenceFor(provider.id) },
 				{
 					model: model.providerModelId,
 					instructions: [{ kind: "text", text: agent.config.instructions }],
-					messages: [{ role: "user", parts: [{ kind: "text", text: "Hello from the product UI." }] }],
+					messages: [{ role: "user", parts: [{ kind: "text", text: input.humanInput.text }] }],
 					config: {},
 				},
 			);
 			return {
 				...structuredClone(runResult),
 				draft: { ...structuredClone(draft), content: materialized },
-				snapshot: { executors: [], llmSelections: [{ nodeId: "answer", providerId: provider.id, providerName: provider.name, protocol: provider.protocol, baseUrl: provider.baseUrl, modelUuid: model.id, providerModelId: model.providerModelId }] },
+				snapshot: { executors: [], llmSelections: [{ nodeId: "answer", providerId: provider.id, providerName: provider.name, protocol: provider.protocol, dialect: provider.dialect, baseUrl: provider.baseUrl, modelUuid: model.id, providerModelId: model.providerModelId }] },
 				nodeRuns: [
 					{ id: "human-run", nodeId: "prompt", nodeDefinition: "human-chat", nodeExecutor: "v1", status: "succeeded" },
 					{ id: "agent-run", nodeId: "answer", nodeDefinition: "llm-chat", nodeExecutor: "v1", status: "succeeded", diagnostics: { providerRequestId: result.providerRequestId, finishReason: result.finishReason, usage: result.usage } },
 				],
-				artifacts: [{ id: "artifact-uuid", nodeId: "answer", port: "conversation", type: "Conversation", version: "2", uri: "2.json", messages: [{ role: "user", text: "Hello from the product UI." }, { role: "assistant", text: result.assistant.parts[0].text }] }],
+				artifacts: [{ id: "artifact-uuid", nodeId: "answer", port: "conversation", type: "Conversation", version: "2", uri: "2.json", messages: [{ role: "user", text: input.humanInput.text }, { role: "assistant", text: result.assistant.parts[0].text }] }],
 			};
 		},
 	});
 	createProductShell(view, client);
 	await selectWorkflow(expectedWorkflow.id);
-	await startRun();
+	await startRun({ nodeId: "prompt", text: "  Browser submitted text.\n" });
 	const run = renderedRun;
 
 	// The fixture saw exactly one authenticated canonical call.
@@ -1311,14 +1468,16 @@ test("the Browser Mock startRun drives one real fixture model call and persists 
 		authorization: "Bearer sk-browser-run-secret",
 		baseUrl: "https://api.example/v1",
 		model: "model-fast",
+		instructionsRole: "system",
 		instructions: "Answer tersely.",
-		messages: [{ role: "user", text: "Hello from the product UI." }],
+		messages: [{ role: "user", text: "  Browser submitted text.\n" }],
 		config: {},
 	}]);
 	assert.equal(run.nodeRuns[1].diagnostics.providerRequestId, "chatcmpl-fixture-1");
 	assert.equal(run.nodeRuns[1].diagnostics.finishReason, "stop");
 	assert.deepEqual(run.nodeRuns[1].diagnostics.usage, { inputTokens: 12, outputTokens: 7, totalTokens: 19 });
 	assert.equal(run.artifacts[0].messages[1].text, "Real fixture response.");
+	assert.equal(run.snapshot.llmSelections[0].dialect, "system");
 	assert.equal(JSON.stringify(run).includes("sk-browser-run-secret"), false);
 });
 

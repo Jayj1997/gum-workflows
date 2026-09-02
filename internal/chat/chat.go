@@ -101,10 +101,11 @@ type GenerateResult struct {
 // the Application for one Run. APIKey is the resolved secret value; it must
 // never be persisted, logged or returned in views.
 type Connection struct {
-	Protocol        string
-	BaseURL         string
-	ProviderModelID string
-	APIKey          string
+	Protocol         string
+	InstructionsRole InstructionsRole
+	BaseURL          string
+	ProviderModelID  string
+	APIKey           string
 }
 
 // InstructionsRole selects how a protocol adapter maps Instructions.
@@ -120,6 +121,8 @@ const (
 
 // Adapter is the protocol seam: canonical request in, canonical result out.
 // P10 implements non-streaming only; a streaming seam is added separately.
+// Implementations must return structured errors whose messages and unwrap
+// chains contain no resolved credential or sensitive request header.
 type Adapter interface {
 	Generate(ctx context.Context, conn Connection, req GenerateRequest) (GenerateResult, error)
 }

@@ -14,8 +14,8 @@ import (
 func (s *Store) CreateLLMProvider(ctx context.Context, provider productworkflow.LLMProvider) (productworkflow.LLMProvider, error) {
 	provider.CreatedAt = time.Now().UTC()
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO product_llm_provider (id, name, protocol, base_url, api_key_ref, created_at)
-VALUES (?, ?, ?, ?, ?, ?)`, provider.ID, provider.Name, provider.Protocol, provider.BaseURL, provider.APIKeyRef, provider.CreatedAt.Format(time.RFC3339Nano))
+INSERT INTO product_llm_provider (id, name, protocol, instructions_dialect, base_url, api_key_ref, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)`, provider.ID, provider.Name, provider.Protocol, provider.Dialect, provider.BaseURL, provider.APIKeyRef, provider.CreatedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return productworkflow.LLMProvider{}, fmt.Errorf("create LLM Provider: %w", err)
 	}
@@ -25,8 +25,8 @@ VALUES (?, ?, ?, ?, ?, ?)`, provider.ID, provider.Name, provider.Protocol, provi
 // UpdateLLMProvider changes mutable Provider metadata without changing identity or creation order.
 func (s *Store) UpdateLLMProvider(ctx context.Context, provider productworkflow.LLMProvider) (productworkflow.LLMProvider, error) {
 	result, err := s.db.ExecContext(ctx, `
-UPDATE product_llm_provider SET name = ?, protocol = ?, base_url = ?, api_key_ref = ?
-WHERE id = ? AND deleted_at IS NULL`, provider.Name, provider.Protocol, provider.BaseURL, provider.APIKeyRef, provider.ID)
+UPDATE product_llm_provider SET name = ?, protocol = ?, instructions_dialect = ?, base_url = ?, api_key_ref = ?
+WHERE id = ? AND deleted_at IS NULL`, provider.Name, provider.Protocol, provider.Dialect, provider.BaseURL, provider.APIKeyRef, provider.ID)
 	if err != nil {
 		return productworkflow.LLMProvider{}, fmt.Errorf("update LLM Provider %s: %w", provider.ID, err)
 	}
@@ -151,7 +151,7 @@ WHERE id = ? AND provider_id = ? AND deleted_at IS NULL
 func (s *Store) GetLLMSettings(ctx context.Context) (productworkflow.LLMSettings, error) {
 	settings := productworkflow.LLMSettings{Providers: []productworkflow.LLMProvider{}, Models: map[string][]productworkflow.LLMModel{}}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, name, protocol, base_url, api_key_ref, is_explicit_default, created_at,
+SELECT id, name, protocol, instructions_dialect, base_url, api_key_ref, is_explicit_default, created_at,
        CASE WHEN id = COALESCE(
          (SELECT id FROM product_llm_provider WHERE deleted_at IS NULL AND is_explicit_default = 1 LIMIT 1),
          (SELECT id FROM product_llm_provider WHERE deleted_at IS NULL ORDER BY created_at ASC, id ASC LIMIT 1)
@@ -232,7 +232,7 @@ SELECT provider_id FROM product_llm_model WHERE id = ? AND deleted_at IS NULL`, 
 
 func (s *Store) getLLMProvider(ctx context.Context, providerID string) (productworkflow.LLMProvider, error) {
 	provider, err := scanLLMProvider(s.db.QueryRowContext(ctx, `
-SELECT id, name, protocol, base_url, api_key_ref, is_explicit_default, created_at,
+SELECT id, name, protocol, instructions_dialect, base_url, api_key_ref, is_explicit_default, created_at,
        CASE WHEN id = COALESCE(
          (SELECT id FROM product_llm_provider WHERE deleted_at IS NULL AND is_explicit_default = 1 LIMIT 1),
          (SELECT id FROM product_llm_provider WHERE deleted_at IS NULL ORDER BY created_at ASC, id ASC LIMIT 1)
@@ -288,7 +288,7 @@ func scanLLMProvider(row rowScanner) (productworkflow.LLMProvider, error) {
 	var provider productworkflow.LLMProvider
 	var explicit, effective int
 	var createdAt string
-	if err := row.Scan(&provider.ID, &provider.Name, &provider.Protocol, &provider.BaseURL, &provider.APIKeyRef, &explicit, &createdAt, &effective); err != nil {
+	if err := row.Scan(&provider.ID, &provider.Name, &provider.Protocol, &provider.Dialect, &provider.BaseURL, &provider.APIKeyRef, &explicit, &createdAt, &effective); err != nil {
 		return provider, err
 	}
 	provider.ExplicitDefault = explicit == 1

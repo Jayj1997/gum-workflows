@@ -66,9 +66,6 @@ func (e *OpenAIError) Unwrap() error { return e.Err }
 // run against a local fixture server without real network access.
 type OpenAIChatAdapter struct {
 	client *http.Client
-	// InstructionsRole maps canonical Instructions to developer (default) or
-	// system messages per Provider dialect.
-	InstructionsRole InstructionsRole
 }
 
 // NewOpenAIChatAdapter returns an adapter using the given HTTP client. A nil
@@ -77,7 +74,7 @@ func NewOpenAIChatAdapter(client *http.Client) *OpenAIChatAdapter {
 	if client == nil {
 		client = &http.Client{Timeout: 120 * time.Second}
 	}
-	return &OpenAIChatAdapter{client: client, InstructionsRole: RoleDeveloper}
+	return &OpenAIChatAdapter{client: client}
 }
 
 // chatCompletionRequest is the OpenAI Chat Completions wire request. It is
@@ -129,7 +126,7 @@ func (a *OpenAIChatAdapter) Generate(ctx context.Context, conn Connection, req G
 	if err != nil {
 		return GenerateResult{}, err
 	}
-	wire, err := buildChatCompletionRequest(a.InstructionsRole, req)
+	wire, err := buildChatCompletionRequest(conn.InstructionsRole, req)
 	if err != nil {
 		return GenerateResult{}, err
 	}
@@ -159,7 +156,7 @@ func (a *OpenAIChatAdapter) Generate(ctx context.Context, conn Connection, req G
 		return GenerateResult{}, &OpenAIError{Kind: ErrNetwork, StatusCode: httpResp.StatusCode, Err: err}
 	}
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-		return GenerateResult{}, newOpenAIStatusError(httpResp.StatusCode, responseBody)
+		return GenerateResult{}, newOpenAIStatusError(httpResp.StatusCode, responseBody, conn.APIKey)
 	}
 	var decoded chatCompletionResponse
 	if err := json.Unmarshal(responseBody, &decoded); err != nil {
@@ -168,7 +165,7 @@ func (a *OpenAIChatAdapter) Generate(ctx context.Context, conn Connection, req G
 	return openAIResult(decoded)
 }
 
-func newOpenAIStatusError(status int, body []byte) *OpenAIError {
+func newOpenAIStatusError(status int, body []byte, apiKey string) *OpenAIError {
 	kind := ErrProvider
 	switch {
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
@@ -186,6 +183,12 @@ func newOpenAIStatusError(status int, body []byte) *OpenAIError {
 	}
 	if err := json.Unmarshal(body, &wireError); err == nil && wireError.Error.Message != "" {
 		message = wireError.Error.Message
+		if apiKey != "" {
+			message = strings.ReplaceAll(message, apiKey, "[redacted]")
+		}
+		if len(message) > 4096 {
+			message = message[:4096]
+		}
 	}
 	return &OpenAIError{Kind: kind, StatusCode: status, ProviderMessage: message}
 }

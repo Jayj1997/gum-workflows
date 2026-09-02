@@ -189,43 +189,178 @@ VALUES (?, ?, ?, ?, ?)`, revision.ID, request.WorkflowID, revision.SemanticHash,
 	if err != nil {
 		return productworkflow.StartRunResult{}, fmt.Errorf("encode product workflow Run Snapshot: %w", err)
 	}
+	errorJSON, err := json.Marshal(run.Error)
+	if err != nil {
+		return productworkflow.StartRunResult{}, fmt.Errorf("encode product workflow Run error: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO product_workflow_run (id, workflow_id, revision_id, status, snapshot_json, started_at, finished_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)`, run.ID, request.WorkflowID, run.RevisionID, run.Status, string(snapshotJSON), run.StartedAt.Format(time.RFC3339Nano), run.FinishedAt.Format(time.RFC3339Nano)); err != nil {
+	INSERT INTO product_workflow_run (id, workflow_id, revision_id, status, snapshot_json, error_json, started_at, finished_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, run.ID, request.WorkflowID, run.RevisionID, run.Status, string(snapshotJSON), string(errorJSON), run.StartedAt.Format(time.RFC3339Nano), run.FinishedAt.Format(time.RFC3339Nano)); err != nil {
 		return productworkflow.StartRunResult{}, fmt.Errorf("create product workflow Run: %w", err)
 	}
-	for _, nodeRun := range request.NodeRuns {
-		inputsJSON, err := json.Marshal(nodeRun.Inputs)
-		if err != nil {
-			return productworkflow.StartRunResult{}, fmt.Errorf("encode product Node Run %s inputs: %w", nodeRun.ID, err)
-		}
-		outputsJSON, err := json.Marshal(nodeRun.Outputs)
-		if err != nil {
-			return productworkflow.StartRunResult{}, fmt.Errorf("encode product Node Run %s outputs: %w", nodeRun.ID, err)
-		}
-		diagnosticsJSON, err := json.Marshal(nodeRun.Diagnostics)
-		if err != nil {
-			return productworkflow.StartRunResult{}, fmt.Errorf("encode product Node Run %s diagnostics: %w", nodeRun.ID, err)
-		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO product_workflow_node_run
-  (id, run_id, node_id, node_definition, node_executor, status, inputs_json, outputs_json, diagnostics_json, started_at, finished_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nodeRun.ID, run.ID, nodeRun.NodeID, nodeRun.NodeDefinition, nodeRun.NodeExecutor, nodeRun.Status, string(inputsJSON), string(outputsJSON), string(diagnosticsJSON), nodeRun.StartedAt.Format(time.RFC3339Nano), nodeRun.FinishedAt.Format(time.RFC3339Nano)); err != nil {
-			return productworkflow.StartRunResult{}, fmt.Errorf("create product Node Run %s: %w", nodeRun.ID, err)
-		}
-	}
-	for _, item := range request.Artifacts {
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO product_workflow_artifact
-  (id, run_id, node_run_id, node_id, port, artifact_type, version, uri, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, item.ID, run.ID, item.NodeRunID, item.NodeID, item.Port, item.Type, item.Version, item.URI, item.CreatedAt.Format(time.RFC3339Nano)); err != nil {
-			return productworkflow.StartRunResult{}, fmt.Errorf("create product Artifact %s: %w", item.ID, err)
-		}
+	if err := insertProductRunDetails(ctx, tx, run.ID, request.NodeRuns, request.Artifacts); err != nil {
+		return productworkflow.StartRunResult{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return productworkflow.StartRunResult{}, fmt.Errorf("commit product workflow Run %s: %w", run.ID, err)
 	}
 	return productworkflow.StartRunResult{Draft: draft, Revision: revision, Run: run}, nil
+}
+
+// BeginProductWorkflowRun atomically materializes the visible Draft and
+// publishes the running Run before external execution begins.
+func (s *Store) BeginProductWorkflowRun(ctx context.Context, request productworkflow.StartRunRequest) (productworkflow.StartRunResult, error) {
+	request.NodeRuns = nil
+	request.Artifacts = nil
+	return s.StartProductWorkflowRun(ctx, request)
+}
+
+// RecordProductWorkflowRunProgress persists completed and in-flight Node Runs
+// plus Artifact metadata while the parent Run remains running.
+func (s *Store) RecordProductWorkflowRunProgress(ctx context.Context, runID string, nodeRuns []productworkflow.NodeRun, artifacts []productworkflow.RunArtifact) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin record product workflow Run %s progress: %w", runID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var status string
+	if err := tx.QueryRowContext(ctx, `SELECT status FROM product_workflow_run WHERE id = ?`, runID).Scan(&status); err != nil {
+		return fmt.Errorf("read product workflow Run %s progress status: %w", runID, err)
+	}
+	if status != "running" {
+		return fmt.Errorf("record product workflow Run %s progress: status is %s", runID, status)
+	}
+	if err := insertProductRunDetails(ctx, tx, runID, nodeRuns, artifacts); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit product workflow Run %s progress: %w", runID, err)
+	}
+	return nil
+}
+
+// FinishProductWorkflowRun atomically stores terminal Run state, Node Runs and
+// Artifact metadata for a previously published running Run.
+func (s *Store) FinishProductWorkflowRun(ctx context.Context, request productworkflow.FinishRunRequest) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin finish product workflow Run %s: %w", request.Run.ID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	errorJSON, err := json.Marshal(request.Run.Error)
+	if err != nil {
+		return fmt.Errorf("encode product workflow Run error: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `
+UPDATE product_workflow_run
+SET status = ?, error_json = ?, finished_at = ?
+WHERE id = ? AND status = 'running'`, request.Run.Status, string(errorJSON), request.Run.FinishedAt.Format(time.RFC3339Nano), request.Run.ID)
+	if err != nil {
+		return fmt.Errorf("finish product workflow Run %s: %w", request.Run.ID, err)
+	}
+	if err := requireOneRow(result, "running product workflow Run", request.Run.ID); err != nil {
+		return err
+	}
+	if err := insertProductRunDetails(ctx, tx, request.Run.ID, request.NodeRuns, request.Artifacts); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit finished product workflow Run %s: %w", request.Run.ID, err)
+	}
+	return nil
+}
+
+// InterruptProductWorkflowRuns marks every persisted in-flight Run and Node
+// Run as non-replayable Interrupted/UnknownOutcome state on application open.
+func (s *Store) InterruptProductWorkflowRuns(ctx context.Context, interruptedAt time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin interrupt product workflow Runs: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	details := &productworkflow.ExecutionError{
+		Kind: "unknown-outcome", Code: "application-interrupted",
+		Message:    "the application exited before the Provider outcome was recorded",
+		UserAction: "this Run cannot Resume; inspect successful Artifacts and start a new Run only if it is safe",
+	}
+	errorJSON, err := json.Marshal(details)
+	if err != nil {
+		return fmt.Errorf("encode interrupted product workflow Run error: %w", err)
+	}
+	diagnosticsJSON, err := json.Marshal(productworkflow.NodeRunDiagnostics{Error: details})
+	if err != nil {
+		return fmt.Errorf("encode interrupted product Node Run diagnostics: %w", err)
+	}
+	finishedAt := interruptedAt.UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `
+UPDATE product_workflow_node_run
+SET status = 'unknown-outcome', diagnostics_json = ?, finished_at = ?
+WHERE status = 'running'
+  AND run_id IN (SELECT id FROM product_workflow_run WHERE status = 'running')`, string(diagnosticsJSON), finishedAt); err != nil {
+		return fmt.Errorf("interrupt product Node Runs: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE product_workflow_run
+SET status = 'interrupted', error_json = ?, finished_at = ?
+WHERE status = 'running'`, string(errorJSON), finishedAt); err != nil {
+		return fmt.Errorf("interrupt product workflow Runs: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit interrupted product workflow Runs: %w", err)
+	}
+	return nil
+}
+
+func insertProductRunDetails(ctx context.Context, tx *sql.Tx, runID string, nodeRuns []productworkflow.NodeRun, artifacts []productworkflow.RunArtifact) error {
+	for _, nodeRun := range nodeRuns {
+		inputsJSON, err := json.Marshal(nodeRun.Inputs)
+		if err != nil {
+			return fmt.Errorf("encode product Node Run %s inputs: %w", nodeRun.ID, err)
+		}
+		outputsJSON, err := json.Marshal(nodeRun.Outputs)
+		if err != nil {
+			return fmt.Errorf("encode product Node Run %s outputs: %w", nodeRun.ID, err)
+		}
+		diagnosticsJSON, err := json.Marshal(nodeRun.Diagnostics)
+		if err != nil {
+			return fmt.Errorf("encode product Node Run %s diagnostics: %w", nodeRun.ID, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO product_workflow_node_run
+  (id, run_id, node_id, node_definition, node_executor, status, inputs_json, outputs_json, diagnostics_json, started_at, finished_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  status = excluded.status,
+  inputs_json = excluded.inputs_json,
+  outputs_json = excluded.outputs_json,
+  diagnostics_json = excluded.diagnostics_json,
+  started_at = excluded.started_at,
+  finished_at = excluded.finished_at`, nodeRun.ID, runID, nodeRun.NodeID, nodeRun.NodeDefinition, nodeRun.NodeExecutor, nodeRun.Status, string(inputsJSON), string(outputsJSON), string(diagnosticsJSON), nodeRun.StartedAt.Format(time.RFC3339Nano), nodeRun.FinishedAt.Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("create product Node Run %s: %w", nodeRun.ID, err)
+		}
+	}
+	for _, item := range artifacts {
+		result, err := tx.ExecContext(ctx, `
+INSERT INTO product_workflow_artifact
+  (id, run_id, node_run_id, node_id, port, artifact_type, version, uri, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET id = excluded.id
+WHERE product_workflow_artifact.run_id = excluded.run_id
+  AND product_workflow_artifact.node_run_id = excluded.node_run_id
+  AND product_workflow_artifact.node_id = excluded.node_id
+  AND product_workflow_artifact.port = excluded.port
+  AND product_workflow_artifact.artifact_type = excluded.artifact_type
+  AND product_workflow_artifact.version = excluded.version
+  AND product_workflow_artifact.uri = excluded.uri
+  AND product_workflow_artifact.created_at = excluded.created_at`, item.ID, runID, item.NodeRunID, item.NodeID, item.Port, item.Type, item.Version, item.URI, item.CreatedAt.Format(time.RFC3339Nano))
+		if err != nil {
+			return fmt.Errorf("create product Artifact %s: %w", item.ID, err)
+		}
+		if err := requireOneRow(result, "identical product Artifact", item.ID); err != nil {
+			return fmt.Errorf("create product Artifact %s: %w", item.ID, err)
+		}
+	}
+	return nil
 }
 
 type rowScanner interface {

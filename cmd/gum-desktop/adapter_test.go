@@ -17,6 +17,7 @@ type applicationStub struct {
 	createInput         product.CreateWorkflowInput
 	err                 error
 	openCalled          bool
+	openCalls           int
 	createCalled        bool
 	listCalled          bool
 	draft               product.DraftView
@@ -33,6 +34,7 @@ type applicationStub struct {
 
 func (s *applicationStub) OpenWorkspace(context.Context) (product.WorkspaceView, error) {
 	s.openCalled = true
+	s.openCalls++
 	return s.view, s.err
 }
 
@@ -129,6 +131,23 @@ func TestDesktopAdapterUsesWorkflowApplication(t *testing.T) {
 	}
 }
 
+func TestDesktopAdapterInitializesRunRecoveryOnStartup(t *testing.T) {
+	t.Parallel()
+	application := &applicationStub{view: product.WorkspaceView{Title: "Gum Workflows", Message: "recovered"}}
+	adapter := newDesktopAdapter(application)
+	adapter.startup(context.Background())
+	if application.openCalls != 1 {
+		t.Fatalf("startup recovery calls = %d, want one", application.openCalls)
+	}
+	view, err := adapter.OpenWorkspace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if application.openCalls != 1 || view != application.view {
+		t.Fatalf("startup recovery calls/view = %d/%#v", application.openCalls, view)
+	}
+}
+
 func TestDesktopAdapterCreatesAndListsThroughWorkflowApplication(t *testing.T) {
 	t.Parallel()
 
@@ -220,7 +239,7 @@ func TestDesktopAdapterStartsRunThroughWorkflowApplication(t *testing.T) {
 	want := product.RunView{ID: "run-id", RevisionID: "revision-id", Status: "succeeded"}
 	application := &applicationStub{run: want}
 	adapter := newDesktopAdapter(application)
-	input := product.StartRunInput{WorkflowID: "workflow-id", ExpectedLockVersion: 7}
+	input := product.StartRunInput{WorkflowID: "workflow-id", ExpectedLockVersion: 7, HumanInput: product.HumanRunInput{NodeID: "prompt", Text: "Hello"}}
 	got, err := adapter.StartRun(input)
 	if err != nil {
 		t.Fatalf("start Run: %v", err)

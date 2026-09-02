@@ -2,7 +2,7 @@
 // behavior for the shared frontend contract without touching real networks.
 export function createFixtureChatAdapter(options = {}) {
 	// Responses are queued in order; the final one repeats when exhausted.
-	const responses = options.responses ?? [];
+	const responses = options.responses ?? [{ assistantText: "Browser fixture response.", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, providerRequestId: "chatcmpl-browser-default" }];
 	const secrets = options.secrets;
 	const requests = options.requests ?? [];
 	return {
@@ -11,6 +11,7 @@ export function createFixtureChatAdapter(options = {}) {
 				authorization: `Bearer ${secrets.resolve(connection.apiKeyRef)}`,
 				baseUrl: connection.baseUrl,
 				model: connection.providerModelId,
+				instructionsRole: connection.dialect ?? "developer",
 				instructions: request.instructions?.map((part) => part.text).join("\n") ?? "",
 				messages: request.messages.map((message) => ({ role: message.role, text: message.parts.map((part) => part.text).join("\n") })),
 				config: request.config,

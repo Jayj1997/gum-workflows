@@ -18,6 +18,12 @@ export function createMemorySecretAdapter() {
 	};
 }
 
+function normalizeProviderDialect(value) {
+	const dialect = value?.trim() || "developer";
+	if (dialect !== "developer" && dialect !== "system") throw new Error("dialect must be developer or system");
+	return dialect;
+}
+
 export function createBrowserLLMSettings(options = {}) {
 	const newID = options.newID ?? (() => crypto.randomUUID());
 	const now = options.now ?? (() => new Date().toISOString());
@@ -65,20 +71,22 @@ export function createBrowserLLMSettings(options = {}) {
 		referenceFor(providerID) {
 			return providers.find((candidate) => candidate.id === providerID && !candidate.deleted)?.apiKeyRef;
 		},
-		createProvider(input) {
-			const id = newID();
-			const apiKeyRef = secrets.store(`llm-provider/${id}`, input.apiKey);
-			const provider = { id, name: input.name, protocol: input.protocol, baseUrl: input.baseUrl, apiKeyRef, explicitDefault: false, effectiveDefault: false, createdAt: now(), models: [] };
+			createProvider(input) {
+				const dialect = normalizeProviderDialect(input.dialect);
+				const id = newID();
+				const apiKeyRef = secrets.store(`llm-provider/${id}`, input.apiKey);
+				const provider = { id, name: input.name, protocol: input.protocol, dialect, baseUrl: input.baseUrl, apiKeyRef, explicitDefault: false, effectiveDefault: false, createdAt: now(), models: [] };
 			providers.push(provider);
 			return structuredClone(providerView(provider.id));
 		},
-		updateProvider(input) {
-			const provider = providers.find((candidate) => candidate.id === input.id && !candidate.deleted);
+			updateProvider(input) {
+				const provider = providers.find((candidate) => candidate.id === input.id && !candidate.deleted);
+				const dialect = normalizeProviderDialect(input.dialect);
 			if (input.apiKey) {
 				const reference = secrets.store(`llm-provider/${provider.id}`, input.apiKey);
 				if (reference !== provider.apiKeyRef) throw new Error("Secret Adapter changed the Provider reference");
 			}
-			Object.assign(provider, structuredClone({ name: input.name, protocol: input.protocol, baseUrl: input.baseUrl }));
+				Object.assign(provider, structuredClone({ name: input.name, protocol: input.protocol, dialect, baseUrl: input.baseUrl }));
 			return structuredClone(providerView(provider.id));
 		},
 		deleteProvider(input) {

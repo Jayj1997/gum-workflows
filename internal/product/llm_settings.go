@@ -17,6 +17,7 @@ type LLMProviderView struct {
 	ID               string         `json:"id"`
 	Name             string         `json:"name"`
 	Protocol         string         `json:"protocol"`
+	Dialect          string         `json:"dialect"`
 	BaseURL          string         `json:"baseUrl"`
 	HasAPIKey        bool           `json:"hasApiKey"`
 	ExplicitDefault  bool           `json:"explicitDefault"`
@@ -54,6 +55,7 @@ type ResolvedLLMModelView struct {
 type CreateLLMProviderInput struct {
 	Name     string `json:"name"`
 	Protocol string `json:"protocol"`
+	Dialect  string `json:"dialect"`
 	BaseURL  string `json:"baseUrl"`
 	APIKey   string `json:"apiKey"`
 }
@@ -63,6 +65,7 @@ type UpdateLLMProviderInput struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Protocol string `json:"protocol"`
+	Dialect  string `json:"dialect"`
 	BaseURL  string `json:"baseUrl"`
 	APIKey   string `json:"apiKey"`
 }
@@ -126,7 +129,7 @@ func (a *Application) CreateLLMProvider(ctx context.Context, input CreateLLMProv
 	if err := a.requireSecrets(); err != nil {
 		return LLMProviderView{}, err
 	}
-	provider, err := providerFromInput("", input.Name, input.Protocol, input.BaseURL, "pending://secret")
+	provider, err := providerFromInput("", input.Name, input.Protocol, input.Dialect, input.BaseURL, "pending://secret")
 	if err != nil {
 		return LLMProviderView{}, fmt.Errorf("create LLM Provider: %w", err)
 	}
@@ -158,7 +161,7 @@ func (a *Application) UpdateLLMProvider(ctx context.Context, input UpdateLLMProv
 	if err != nil {
 		return LLMProviderView{}, fmt.Errorf("update LLM Provider: %w", err)
 	}
-	provider, err := providerFromInput(input.ID, input.Name, input.Protocol, input.BaseURL, existing.APIKeyRef)
+	provider, err := providerFromInput(input.ID, input.Name, input.Protocol, input.Dialect, input.BaseURL, existing.APIKeyRef)
 	if err != nil {
 		return LLMProviderView{}, fmt.Errorf("update LLM Provider: %w", err)
 	}
@@ -338,13 +341,20 @@ func (a *Application) ResolveDefaultLLMModel(ctx context.Context) (ResolvedLLMMo
 	return ResolvedLLMModelView{Provider: llmProviderView(resolved.Provider, nil), Model: llmModelView(resolved.Model), Diagnostics: []Diagnostic{}}, nil
 }
 
-func providerFromInput(id, name, protocol, baseURL, apiKeyRef string) (productworkflow.LLMProvider, error) {
-	provider := productworkflow.LLMProvider{ID: strings.TrimSpace(id), Name: strings.TrimSpace(name), Protocol: strings.TrimSpace(protocol), BaseURL: strings.TrimSpace(baseURL), APIKeyRef: strings.TrimSpace(apiKeyRef)}
+func providerFromInput(id, name, protocol, dialect, baseURL, apiKeyRef string) (productworkflow.LLMProvider, error) {
+	dialect = strings.TrimSpace(dialect)
+	if dialect == "" {
+		dialect = productworkflow.ProviderDialectDeveloper
+	}
+	provider := productworkflow.LLMProvider{ID: strings.TrimSpace(id), Name: strings.TrimSpace(name), Protocol: strings.TrimSpace(protocol), Dialect: dialect, BaseURL: strings.TrimSpace(baseURL), APIKeyRef: strings.TrimSpace(apiKeyRef)}
 	if provider.Name == "" {
 		return provider, fmt.Errorf("name must not be empty")
 	}
 	if provider.Protocol == "" {
 		return provider, fmt.Errorf("protocol must not be empty")
+	}
+	if provider.Dialect != productworkflow.ProviderDialectDeveloper && provider.Dialect != productworkflow.ProviderDialectSystem {
+		return provider, fmt.Errorf("dialect must be developer or system")
 	}
 	parsed, err := url.ParseRequestURI(provider.BaseURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -398,7 +408,7 @@ func llmSettingsView(settings productworkflow.LLMSettings) LLMSettingsView {
 }
 
 func llmProviderView(provider productworkflow.LLMProvider, models []productworkflow.LLMModel) LLMProviderView {
-	view := LLMProviderView{ID: provider.ID, Name: provider.Name, Protocol: provider.Protocol, BaseURL: provider.BaseURL, HasAPIKey: provider.APIKeyRef != "", ExplicitDefault: provider.ExplicitDefault, EffectiveDefault: provider.EffectiveDefault, CreatedAt: provider.CreatedAt, Models: make([]LLMModelView, 0, len(models))}
+	view := LLMProviderView{ID: provider.ID, Name: provider.Name, Protocol: provider.Protocol, Dialect: provider.Dialect, BaseURL: provider.BaseURL, HasAPIKey: provider.APIKeyRef != "", ExplicitDefault: provider.ExplicitDefault, EffectiveDefault: provider.EffectiveDefault, CreatedAt: provider.CreatedAt, Models: make([]LLMModelView, 0, len(models))}
 	for _, model := range models {
 		view.Models = append(view.Models, llmModelView(model))
 	}

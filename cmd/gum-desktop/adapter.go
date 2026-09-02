@@ -12,6 +12,9 @@ import (
 type DesktopAdapter struct {
 	application product.WorkflowApplication
 	ctx         context.Context
+	startupView product.WorkspaceView
+	startupErr  error
+	startupDone bool
 }
 
 func newDesktopAdapter(application product.WorkflowApplication) *DesktopAdapter {
@@ -23,10 +26,15 @@ func newDesktopAdapter(application product.WorkflowApplication) *DesktopAdapter 
 
 func (a *DesktopAdapter) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.startupView, a.startupErr = a.application.OpenWorkspace(ctx)
+	a.startupDone = true
 }
 
 // OpenWorkspace forwards the product-shell action through WorkflowApplication.
 func (a *DesktopAdapter) OpenWorkspace() (product.WorkspaceView, error) {
+	if a.startupDone {
+		return a.startupView, a.startupErr
+	}
 	return a.application.OpenWorkspace(a.ctx)
 }
 

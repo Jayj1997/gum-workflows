@@ -26,9 +26,19 @@ type Conversation = chat.Conversation
 type NodeRunDiagnostics struct {
 	// ProviderRequestID, FinishReason and Usage record the completed real
 	// model call for this Node Run.
-	ProviderRequestID string `json:"providerRequestId,omitempty"`
-	FinishReason      string `json:"finishReason,omitempty"`
-	Usage             *Usage `json:"usage,omitempty"`
+	ProviderRequestID string          `json:"providerRequestId,omitempty"`
+	FinishReason      string          `json:"finishReason,omitempty"`
+	Usage             *Usage          `json:"usage,omitempty"`
+	Error             *ExecutionError `json:"error,omitempty"`
+}
+
+// ExecutionError is the sanitized, persisted explanation for one failed or
+// unknown Product execution outcome.
+type ExecutionError struct {
+	Kind       string `json:"kind"`
+	Code       string `json:"code"`
+	Message    string `json:"message"`
+	UserAction string `json:"userAction"`
 }
 
 // Usage re-exports the canonical token accounting for persistence.
@@ -42,6 +52,7 @@ type ResolvedLLMSelection struct {
 	ProviderID          string             `json:"providerId"`
 	ProviderName        string             `json:"providerName"`
 	Protocol            string             `json:"protocol"`
+	Dialect             string             `json:"dialect"`
 	BaseURL             string             `json:"baseUrl"`
 	APIKeyRef           string             `json:"apiKeyRef"`
 	ModelUUID           string             `json:"modelUuid"`
@@ -79,6 +90,7 @@ type Run struct {
 	WorkflowID string
 	RevisionID string
 	Status     string
+	Error      *ExecutionError
 	Snapshot   RunSnapshot
 	StartedAt  time.Time
 	FinishedAt time.Time
@@ -130,9 +142,26 @@ type StartRunResult struct {
 	Run      Run
 }
 
-// RunRepository atomically materializes a Draft and publishes one Product Run.
+// FinishRunRequest atomically publishes the terminal state and all completed
+// Node Runs/Artifacts for an already persisted running Product Run.
+type FinishRunRequest struct {
+	Run       Run
+	NodeRuns  []NodeRun
+	Artifacts []RunArtifact
+}
+
+// RunRepository materializes a visible Draft into one running Product Run,
+// then atomically publishes its terminal execution details.
 type RunRepository interface {
-	StartProductWorkflowRun(ctx context.Context, request StartRunRequest) (StartRunResult, error)
+	BeginProductWorkflowRun(ctx context.Context, request StartRunRequest) (StartRunResult, error)
+	RecordProductWorkflowRunProgress(ctx context.Context, runID string, nodeRuns []NodeRun, artifacts []RunArtifact) error
+	FinishProductWorkflowRun(ctx context.Context, request FinishRunRequest) error
+}
+
+// RunRecoveryRepository reconciles in-flight Product Runs when a new local
+// Application process opens the workspace.
+type RunRecoveryRepository interface {
+	InterruptProductWorkflowRuns(ctx context.Context, interruptedAt time.Time) error
 }
 
 // RevisionContent returns canonical execution semantics and its SHA-256 identity.

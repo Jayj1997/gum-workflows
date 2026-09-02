@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 
@@ -20,9 +19,34 @@ import (
 
 // StartRunInput starts the Draft version currently visible to the UI.
 type StartRunInput struct {
-	WorkflowID          string `json:"workflowId"`
-	ExpectedLockVersion uint64 `json:"expectedLockVersion"`
+	WorkflowID          string        `json:"workflowId"`
+	ExpectedLockVersion uint64        `json:"expectedLockVersion"`
+	HumanInput          HumanRunInput `json:"humanInput"`
 }
+
+// HumanRunInput is the one submitted user turn consumed by the authored
+// human-chat source Node in the P10 single-turn execution.
+type HumanRunInput struct {
+	NodeID string `json:"nodeId"`
+	Text   string `json:"text"`
+}
+
+// RunExecutionError reports a failed or interrupted execution that has already
+// been persisted and can be inspected by RunID.
+type RunExecutionError struct {
+	RunID   string
+	Details *ExecutionErrorView
+	Err     error
+}
+
+func (e *RunExecutionError) Error() string {
+	if e.Details == nil {
+		return fmt.Sprintf("run %s failed: %v", e.RunID, e.Err)
+	}
+	return fmt.Sprintf("run %s %s/%s: %s; %s", e.RunID, e.Details.Kind, e.Details.Code, e.Details.Message, e.Details.UserAction)
+}
+
+func (e *RunExecutionError) Unwrap() error { return e.Err }
 
 // ChatMessageView is one message rendered from a Conversation Artifact.
 type ChatMessageView struct {
@@ -43,13 +67,30 @@ type ArtifactView struct {
 
 // NodeRunView is one user-visible Node Run result.
 type NodeRunView struct {
-	ID             string         `json:"id"`
-	NodeID         string         `json:"nodeId"`
-	NodeDefinition string         `json:"nodeDefinition"`
-	NodeExecutor   string         `json:"nodeExecutor"`
-	Status         string         `json:"status"`
-	Diagnostics    map[string]any `json:"diagnostics,omitempty"`
+	ID             string                          `json:"id"`
+	NodeID         string                          `json:"nodeId"`
+	NodeDefinition string                          `json:"nodeDefinition"`
+	NodeExecutor   string                          `json:"nodeExecutor"`
+	Status         string                          `json:"status"`
+	Inputs         map[string]artifact.ArtifactRef `json:"inputs"`
+	Outputs        map[string]artifact.ArtifactRef `json:"outputs"`
+	Diagnostics    *NodeRunDiagnosticsView         `json:"diagnostics,omitempty"`
+	StartedAt      time.Time                       `json:"startedAt"`
+	FinishedAt     time.Time                       `json:"finishedAt"`
 }
+
+// NodeRunDiagnosticsView is the sanitized, typed telemetry exposed through
+// Browser and Desktop WorkflowClient contracts.
+type NodeRunDiagnosticsView struct {
+	ProviderRequestID string              `json:"providerRequestId,omitempty"`
+	FinishReason      string              `json:"finishReason,omitempty"`
+	Usage             *chat.Usage         `json:"usage,omitempty"`
+	Error             *ExecutionErrorView `json:"error,omitempty"`
+}
+
+// ExecutionErrorView is the safe error contract shared by current and
+// historical Product Run views.
+type ExecutionErrorView = productworkflow.ExecutionError
 
 // ExecutorSnapshotView is one fixed Node Executor in a Product Run.
 type ExecutorSnapshotView struct {
@@ -64,6 +105,7 @@ type LLMSelectionSnapshotView struct {
 	ProviderID      string   `json:"providerId"`
 	ProviderName    string   `json:"providerName"`
 	Protocol        string   `json:"protocol"`
+	Dialect         string   `json:"dialect"`
 	BaseURL         string   `json:"baseUrl"`
 	ModelUUID       string   `json:"modelUuid"`
 	ProviderModelID string   `json:"providerModelId"`
@@ -80,24 +122,34 @@ type RunSnapshotView struct {
 
 // RunView is the completed Product Run result returned to UI adapters.
 type RunView struct {
-	ID         string          `json:"id"`
-	RevisionID string          `json:"revisionId"`
-	Status     string          `json:"status"`
-	Draft      DraftView       `json:"draft"`
-	Snapshot   RunSnapshotView `json:"snapshot"`
-	NodeRuns   []NodeRunView   `json:"nodeRuns"`
-	Artifacts  []ArtifactView  `json:"artifacts"`
+	ID         string              `json:"id"`
+	RevisionID string              `json:"revisionId"`
+	Status     string              `json:"status"`
+	Error      *ExecutionErrorView `json:"error,omitempty"`
+	StartedAt  time.Time           `json:"startedAt"`
+	FinishedAt time.Time           `json:"finishedAt"`
+	Draft      DraftView           `json:"draft"`
+	Snapshot   RunSnapshotView     `json:"snapshot"`
+	NodeRuns   []NodeRunView       `json:"nodeRuns"`
+	Artifacts  []ArtifactView      `json:"artifacts"`
 }
 
 // StartRun validates and materializes the visible Draft, executes the single
 // real `human-chat(source) -> llm-chat` turn through the chat Protocol Adapter,
-// and atomically publishes its persistent history.
+// and persists its running progress before atomically finalizing its terminal
+// history.
 func (a *Application) StartRun(ctx context.Context, input StartRunInput) (RunView, error) {
 	if strings.TrimSpace(input.WorkflowID) == "" {
 		return RunView{}, fmt.Errorf("start Run: workflow ID must not be empty")
 	}
 	if input.ExpectedLockVersion == 0 {
 		return RunView{}, fmt.Errorf("start Run: expected lock version must be positive")
+	}
+	if strings.TrimSpace(input.HumanInput.NodeID) == "" {
+		return RunView{}, fmt.Errorf("start Run: human input Node ID must not be empty")
+	}
+	if strings.TrimSpace(input.HumanInput.Text) == "" {
+		return RunView{}, fmt.Errorf("start Run: human input text must not be empty")
 	}
 	if a.runRepo == nil || a.runPaths.RunsDir() == "" {
 		return RunView{}, fmt.Errorf("start Run: product Run persistence is not configured")
@@ -135,26 +187,58 @@ func (a *Application) StartRun(ctx context.Context, input StartRunInput) (RunVie
 	revision := productworkflow.Revision{ID: uuid.NewString(), WorkflowID: input.WorkflowID, SemanticHash: semanticHash, Content: revisionContent, CreatedAt: now}
 	snapshot := snapshotForDraft(revision.ID, materialized, selections)
 	run := productworkflow.Run{
-		ID: runID, WorkflowID: input.WorkflowID, RevisionID: revision.ID, Status: "succeeded",
+		ID: runID, WorkflowID: input.WorkflowID, RevisionID: revision.ID, Status: "running",
 		Snapshot: snapshot, StartedAt: now, FinishedAt: now,
 	}
-	nodeRuns, runArtifacts, artifactViews, err := a.executeSingleTurn(ctx, runID, materialized, selections, now)
-	if err != nil {
-		_ = os.RemoveAll(a.runPaths.RunDir(runID))
-		return RunView{}, fmt.Errorf("start Run: %w", err)
-	}
-	result, err := a.runRepo.StartProductWorkflowRun(ctx, productworkflow.StartRunRequest{
-		WorkflowID: input.WorkflowID, ExpectedLockVersion: input.ExpectedLockVersion, DraftContent: draftJSON,
-		Revision: revision, Run: run, NodeRuns: nodeRuns, Artifacts: runArtifacts,
-	})
-	if err != nil {
-		cleanupErr := os.RemoveAll(a.runPaths.RunDir(runID))
-		if cleanupErr != nil {
-			return RunView{}, fmt.Errorf("start Run: %w; clean unpublished Run: %v", err, cleanupErr)
+	var beginResult productworkflow.StartRunResult
+	begun := false
+	beginRun := func() error {
+		result, beginErr := a.runRepo.BeginProductWorkflowRun(ctx, productworkflow.StartRunRequest{
+			WorkflowID: input.WorkflowID, ExpectedLockVersion: input.ExpectedLockVersion, DraftContent: draftJSON,
+			Revision: revision, Run: run,
+		})
+		if beginErr != nil {
+			return beginErr
 		}
-		return RunView{}, fmt.Errorf("start Run: %w", err)
+		beginResult = result
+		revision = result.Revision
+		run = result.Run
+		begun = true
+		return nil
 	}
-	materializedDraft, err := draftView(result.Draft)
+	recordProgress := func(nodeRuns []productworkflow.NodeRun, artifacts []productworkflow.RunArtifact) error {
+		return a.runRepo.RecordProductWorkflowRunProgress(ctx, runID, nodeRuns, artifacts)
+	}
+	nodeRuns, runArtifacts, artifactViews, err := a.executeSingleTurn(ctx, runID, materialized, selections, input.HumanInput, beginRun, recordProgress, now)
+	if err != nil {
+		if !begun {
+			_ = os.RemoveAll(a.runPaths.RunDir(runID))
+			return RunView{}, fmt.Errorf("start Run: %w", err)
+		}
+		run.Status = "failed"
+		run.FinishedAt = time.Now().UTC()
+		run.Error = productExecutionError(err)
+		if len(nodeRuns) > 0 && nodeRuns[len(nodeRuns)-1].Diagnostics.Error != nil {
+			run.Error = nodeRuns[len(nodeRuns)-1].Diagnostics.Error
+		}
+		if run.Error.Kind == "unknown-outcome" {
+			run.Status = "interrupted"
+		}
+		finishCtx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancelFinish()
+		if persistErr := a.runRepo.FinishProductWorkflowRun(finishCtx, productworkflow.FinishRunRequest{Run: run, NodeRuns: nodeRuns, Artifacts: runArtifacts}); persistErr != nil {
+			return RunView{}, fmt.Errorf("start Run: %w; persist failed Run: %w", err, persistErr)
+		}
+		return RunView{}, &RunExecutionError{RunID: run.ID, Details: run.Error, Err: err}
+	}
+	run.Status = "succeeded"
+	run.FinishedAt = time.Now().UTC()
+	finishCtx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancelFinish()
+	if err := a.runRepo.FinishProductWorkflowRun(finishCtx, productworkflow.FinishRunRequest{Run: run, NodeRuns: nodeRuns, Artifacts: runArtifacts}); err != nil {
+		return RunView{}, fmt.Errorf("start Run: finish persisted Run: %w", err)
+	}
+	materializedDraft, err := draftView(beginResult.Draft)
 	if err != nil {
 		return RunView{}, fmt.Errorf("start Run: %w", err)
 	}
@@ -164,7 +248,7 @@ func (a *Application) StartRun(ctx context.Context, input StartRunInput) (RunVie
 	for _, nodeRun := range nodeRuns {
 		views = append(views, nodeRunView(nodeRun))
 	}
-	return RunView{ID: result.Run.ID, RevisionID: result.Revision.ID, Status: result.Run.Status, Draft: materializedDraft, Snapshot: runSnapshotView(result.Run.Snapshot), NodeRuns: views, Artifacts: artifactViews}, nil
+	return RunView{ID: run.ID, RevisionID: revision.ID, Status: run.Status, Error: run.Error, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, Draft: materializedDraft, Snapshot: runSnapshotView(run.Snapshot), NodeRuns: views, Artifacts: artifactViews}, nil
 }
 
 func cloneContent(content map[string]any) (map[string]any, error) {
@@ -223,7 +307,7 @@ func (a *Application) materializeLLMSelections(ctx context.Context, content map[
 		}
 		selections = append(selections, productworkflow.ResolvedLLMSelection{
 			NodeID: nodeID, ProviderID: resolved.Provider.ID, ProviderName: resolved.Provider.Name,
-			Protocol: resolved.Provider.Protocol, BaseURL: resolved.Provider.BaseURL, APIKeyRef: resolved.Provider.APIKeyRef,
+			Protocol: resolved.Provider.Protocol, Dialect: resolved.Provider.Dialect, BaseURL: resolved.Provider.BaseURL, APIKeyRef: resolved.Provider.APIKeyRef,
 			ModelUUID:       resolved.Model.ID,
 			ProviderModelID: resolved.Model.ProviderModelID, EffectiveGeneration: effective,
 		})
@@ -235,7 +319,7 @@ func (a *Application) materializeLLMSelections(ctx context.Context, content map[
 // Workflow: the human turn publishes the user Conversation Artifact, the agent
 // turn makes one real OpenAI-compatible call and appends exactly one assistant
 // message as the new Conversation version.
-func (a *Application) executeSingleTurn(ctx context.Context, runID string, content map[string]any, selections []productworkflow.ResolvedLLMSelection, now time.Time) ([]productworkflow.NodeRun, []productworkflow.RunArtifact, []ArtifactView, error) {
+func (a *Application) executeSingleTurn(ctx context.Context, runID string, content map[string]any, selections []productworkflow.ResolvedLLMSelection, humanInput HumanRunInput, beginRun func() error, recordProgress func([]productworkflow.NodeRun, []productworkflow.RunArtifact) error, now time.Time) ([]productworkflow.NodeRun, []productworkflow.RunArtifact, []ArtifactView, error) {
 	nodes, _ := content["nodes"].([]any)
 	nodesByID := make(map[string]map[string]any, len(nodes))
 	var agent map[string]any
@@ -264,6 +348,9 @@ func (a *Application) executeSingleTurn(ctx context.Context, runID string, conte
 	if !valid || sourcePort != "conversation" || stringValue(human, "definition") != "human-chat" {
 		return nil, nil, nil, fmt.Errorf("single-turn executor requires llm-chat.inputs.conversation from human-chat.conversation")
 	}
+	if humanInput.NodeID != sourceID {
+		return nil, nil, nil, fmt.Errorf("single-turn executor requires human input for authored source Node %q", sourceID)
+	}
 	if a.chat == nil {
 		return nil, nil, nil, fmt.Errorf("chat protocol adapter is not configured")
 	}
@@ -279,17 +366,19 @@ func (a *Application) executeSingleTurn(ctx context.Context, runID string, conte
 	if selection.ModelUUID == "" {
 		return nil, nil, nil, fmt.Errorf("llm-chat Node %q has no resolved model selection", stringValue(agent, "id"))
 	}
+	agentID := stringValue(agent, "id")
 	apiKey, err := a.secrets.Resolve(ctx, selection.APIKeyRef)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("resolve Provider API Key: %w", redactSecret(err))
+		return nil, nil, nil, fmt.Errorf("llm-chat Node %q resolve Provider API Key: %w", agentID, err)
+	}
+	if err := beginRun(); err != nil {
+		return nil, nil, nil, fmt.Errorf("persist running Run: %w", err)
 	}
 	store, err := artifact.NewFilesystemStore(a.runPaths.ArtifactsDir(runID))
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	// The single-turn closure sends one fixed user turn; per-Run human text
-	// input arrives with the Human Chat Entry upgrade.
-	const userText = "Hello from the product UI."
+	userText := humanInput.Text
 	sourceConversation := chat.Conversation{Messages: []chat.ChatMessage{chat.UserTextMessage(userText)}}
 	sourceArtifactID := uuid.NewString()
 	sourceRef, err := store.Put(artifact.Artifact{ID: sourceArtifactID, Kind: artifact.KindConversation, Version: "1", Data: sourceConversation})
@@ -297,10 +386,17 @@ func (a *Application) executeSingleTurn(ctx context.Context, runID string, conte
 		return nil, nil, nil, fmt.Errorf("write user Conversation Artifact: %w", err)
 	}
 
-	agentID := stringValue(agent, "id")
+	humanRunID := uuid.NewString()
+	agentRunID := uuid.NewString()
+	humanRun := productworkflow.NodeRun{ID: humanRunID, RunID: runID, NodeID: sourceID, NodeDefinition: stringValue(human, "definition"), NodeExecutor: stringValue(human, "executor"), Status: "succeeded", Inputs: map[string]artifact.ArtifactRef{}, Outputs: map[string]artifact.ArtifactRef{"conversation": sourceRef}, StartedAt: now, FinishedAt: now}
+	sourceItem := productworkflow.RunArtifact{ID: sourceArtifactID, RunID: runID, NodeRunID: humanRunID, NodeID: sourceID, Port: "conversation", Type: "Conversation", Version: "1", URI: sourceRef.URI, CreatedAt: now}
 	agentStarted := time.Now().UTC()
+	runningAgent := productworkflow.NodeRun{ID: agentRunID, RunID: runID, NodeID: agentID, NodeDefinition: stringValue(agent, "definition"), NodeExecutor: stringValue(agent, "executor"), Status: "running", Inputs: map[string]artifact.ArtifactRef{"conversation": sourceRef}, Outputs: map[string]artifact.ArtifactRef{}, StartedAt: agentStarted, FinishedAt: agentStarted}
+	if err := recordProgress([]productworkflow.NodeRun{humanRun, runningAgent}, []productworkflow.RunArtifact{sourceItem}); err != nil {
+		return []productworkflow.NodeRun{humanRun}, []productworkflow.RunArtifact{sourceItem}, []ArtifactView{artifactView(sourceItem, sourceConversation)}, fmt.Errorf("persist Run progress: %w", err)
+	}
 	result, err := a.chat.Generate(ctx, chat.Connection{
-		Protocol: selection.Protocol, BaseURL: selection.BaseURL,
+		Protocol: selection.Protocol, InstructionsRole: chat.InstructionsRole(selection.Dialect), BaseURL: selection.BaseURL,
 		ProviderModelID: selection.ProviderModelID, APIKey: apiKey,
 	}, chat.GenerateRequest{
 		Model:        selection.ProviderModelID,
@@ -314,30 +410,67 @@ func (a *Application) executeSingleTurn(ctx context.Context, runID string, conte
 	agentFinished := time.Now().UTC()
 	if err != nil {
 		// The provider call failed: this is a Structural Error, the Run is not
-		// created and nothing user-visible is persisted.
-		return nil, nil, nil, fmt.Errorf("llm-chat Node %q model call: %w", agentID, redactSecret(err))
+		// successful, but the attempted Run and completed human source remain
+		// traceable together with the failed agent Node Run.
+		details := productExecutionError(err)
+		status := "failed"
+		if details.Kind == "unknown-outcome" {
+			status = "unknown-outcome"
+		}
+		agentRun := productworkflow.NodeRun{ID: agentRunID, RunID: runID, NodeID: agentID, NodeDefinition: stringValue(agent, "definition"), NodeExecutor: stringValue(agent, "executor"), Status: status, Inputs: map[string]artifact.ArtifactRef{"conversation": sourceRef}, Outputs: map[string]artifact.ArtifactRef{}, Diagnostics: productworkflow.NodeRunDiagnostics{Error: details}, StartedAt: agentStarted, FinishedAt: agentFinished}
+		return []productworkflow.NodeRun{humanRun, agentRun}, []productworkflow.RunArtifact{sourceItem}, []ArtifactView{artifactView(sourceItem, sourceConversation)}, fmt.Errorf("llm-chat Node %q model call: %w", agentID, err)
 	}
 	finalConversation := chat.Conversation{Messages: append(append([]chat.ChatMessage{}, sourceConversation.Messages...), result.Assistant)}
 	finalArtifactID := uuid.NewString()
 	finalRef, err := store.Put(artifact.Artifact{ID: finalArtifactID, Kind: artifact.KindConversation, Version: "2", Data: finalConversation})
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("write assistant Conversation Artifact: %w", err)
+		wrapped := fmt.Errorf("write assistant Conversation Artifact: %w", err)
+		details := productExecutionError(wrapped)
+		failedAgent := productworkflow.NodeRun{
+			ID: agentRunID, RunID: runID, NodeID: agentID,
+			NodeDefinition: stringValue(agent, "definition"), NodeExecutor: stringValue(agent, "executor"),
+			Status: "failed", Inputs: map[string]artifact.ArtifactRef{"conversation": sourceRef}, Outputs: map[string]artifact.ArtifactRef{},
+			Diagnostics: productworkflow.NodeRunDiagnostics{Error: details}, StartedAt: agentStarted, FinishedAt: agentFinished,
+		}
+		return []productworkflow.NodeRun{humanRun, failedAgent}, []productworkflow.RunArtifact{sourceItem}, []ArtifactView{artifactView(sourceItem, sourceConversation)}, wrapped
 	}
-	humanRunID := uuid.NewString()
-	agentRunID := uuid.NewString()
 	usage := chat.Usage(result.Usage)
 	nodeRuns := []productworkflow.NodeRun{
-		{ID: humanRunID, RunID: runID, NodeID: sourceID, NodeDefinition: stringValue(human, "definition"), NodeExecutor: stringValue(human, "executor"), Status: "succeeded", Inputs: map[string]artifact.ArtifactRef{}, Outputs: map[string]artifact.ArtifactRef{"conversation": sourceRef}, StartedAt: now, FinishedAt: now},
+		humanRun,
 		{ID: agentRunID, RunID: runID, NodeID: agentID, NodeDefinition: stringValue(agent, "definition"), NodeExecutor: stringValue(agent, "executor"), Status: "succeeded", Inputs: map[string]artifact.ArtifactRef{"conversation": sourceRef}, Outputs: map[string]artifact.ArtifactRef{"conversation": finalRef}, Diagnostics: productworkflow.NodeRunDiagnostics{ProviderRequestID: result.ProviderRequestID, FinishReason: result.FinishReason, Usage: &usage}, StartedAt: agentStarted, FinishedAt: agentFinished},
 	}
 	items := []productworkflow.RunArtifact{
-		{ID: sourceArtifactID, RunID: runID, NodeRunID: humanRunID, NodeID: sourceID, Port: "conversation", Type: "Conversation", Version: "1", URI: sourceRef.URI, CreatedAt: now},
+		sourceItem,
 		{ID: finalArtifactID, RunID: runID, NodeRunID: agentRunID, NodeID: agentID, Port: "conversation", Type: "Conversation", Version: "2", URI: finalRef.URI, CreatedAt: agentFinished},
 	}
 	views := []ArtifactView{
 		artifactView(items[0], sourceConversation), artifactView(items[1], finalConversation),
 	}
 	return nodeRuns, items, views, nil
+}
+
+func productExecutionError(err error) *productworkflow.ExecutionError {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return &productworkflow.ExecutionError{Kind: "unknown-outcome", Code: "request-interrupted", Message: err.Error(), UserAction: "inspect Provider activity, then start a new Run only if it is safe"}
+	}
+	var openAIError *chat.OpenAIError
+	if errors.As(err, &openAIError) {
+		return &productworkflow.ExecutionError{Kind: "structural", Code: string(openAIError.Kind), Message: openAIError.Error(), UserAction: providerErrorAction(openAIError.Kind)}
+	}
+	return &productworkflow.ExecutionError{Kind: "structural", Code: "runtime", Message: err.Error(), UserAction: "review the Node configuration and start a new Run"}
+}
+
+func providerErrorAction(kind chat.OpenAIErrorKind) string {
+	switch kind {
+	case chat.ErrAuth:
+		return "check the Provider API Key and start a new Run"
+	case chat.ErrRateLimit:
+		return "wait for the Provider limit to reset, then start a new Run"
+	case chat.ErrNetwork:
+		return "check the Provider Base URL and network, then start a new Run"
+	default:
+		return "review the Provider response or choose another Model, then start a new Run"
+	}
 }
 
 // agentInstructions returns the Node config instructions text as canonical
@@ -350,29 +483,6 @@ func agentInstructions(agent map[string]any) []chat.ContentPart {
 	}
 	return []chat.ContentPart{chat.TextPart(instructions)}
 }
-
-// redactSecret removes resolved secret values from an error. Typed protocol
-// errors keep their identity (so errors.As keeps working); other errors are
-// flattened only when the pattern actually matched something to redact.
-func redactSecret(err error) error {
-	if err == nil {
-		return nil
-	}
-	var openAIError *chat.OpenAIError
-	if errors.As(err, &openAIError) {
-		if message := secretPattern.ReplaceAllString(openAIError.ProviderMessage, "[redacted]"); message != openAIError.ProviderMessage {
-			return &chat.OpenAIError{Kind: openAIError.Kind, StatusCode: openAIError.StatusCode, ProviderMessage: message, Err: openAIError.Err}
-		}
-		return err
-	}
-	if message := secretPattern.ReplaceAllString(err.Error(), "[redacted]"); message != err.Error() {
-		return fmt.Errorf("%s", message)
-	}
-	return err
-}
-
-// secretPattern matches common bearer-token shapes in error text.
-var secretPattern = regexp.MustCompile(`sk-[A-Za-z0-9_\-]{4,}`)
 
 func snapshotForDraft(revisionID string, content map[string]any, selections []productworkflow.ResolvedLLMSelection) productworkflow.RunSnapshot {
 	snapshot := productworkflow.RunSnapshot{RevisionID: revisionID, Executors: []productworkflow.ResolvedExecutor{}, LLMSelection: selections}
@@ -396,7 +506,7 @@ func runSnapshotView(snapshot productworkflow.RunSnapshot) RunSnapshotView {
 	for _, selection := range snapshot.LLMSelection {
 		view.LLMSelections = append(view.LLMSelections, LLMSelectionSnapshotView{
 			NodeID: selection.NodeID, ProviderID: selection.ProviderID, ProviderName: selection.ProviderName,
-			Protocol: selection.Protocol, BaseURL: selection.BaseURL, ModelUUID: selection.ModelUUID, ProviderModelID: selection.ProviderModelID,
+			Protocol: selection.Protocol, Dialect: selection.Dialect, BaseURL: selection.BaseURL, ModelUUID: selection.ModelUUID, ProviderModelID: selection.ProviderModelID,
 			Temperature: selection.EffectiveGeneration.Temperature, MaxOutputTokens: selection.EffectiveGeneration.MaxOutputTokens,
 		})
 	}
@@ -413,22 +523,17 @@ func stringValue(values map[string]any, key string) string {
 func nodeRunView(nodeRun productworkflow.NodeRun) NodeRunView {
 	view := NodeRunView{
 		ID: nodeRun.ID, NodeID: nodeRun.NodeID, NodeDefinition: nodeRun.NodeDefinition,
-		NodeExecutor: nodeRun.NodeExecutor, Status: nodeRun.Status,
+		NodeExecutor: nodeRun.NodeExecutor, Status: nodeRun.Status, Inputs: nodeRun.Inputs, Outputs: nodeRun.Outputs, StartedAt: nodeRun.StartedAt, FinishedAt: nodeRun.FinishedAt,
 	}
-	if nodeRun.Diagnostics.ProviderRequestID == "" && nodeRun.Diagnostics.FinishReason == "" && nodeRun.Diagnostics.Usage == nil {
+	if nodeRun.Diagnostics.ProviderRequestID == "" && nodeRun.Diagnostics.FinishReason == "" && nodeRun.Diagnostics.Usage == nil && nodeRun.Diagnostics.Error == nil {
 		return view
 	}
-	diagnostics := map[string]any{}
-	if nodeRun.Diagnostics.ProviderRequestID != "" {
-		diagnostics["providerRequestId"] = nodeRun.Diagnostics.ProviderRequestID
+	view.Diagnostics = &NodeRunDiagnosticsView{
+		ProviderRequestID: nodeRun.Diagnostics.ProviderRequestID,
+		FinishReason:      nodeRun.Diagnostics.FinishReason,
+		Usage:             nodeRun.Diagnostics.Usage,
+		Error:             nodeRun.Diagnostics.Error,
 	}
-	if nodeRun.Diagnostics.FinishReason != "" {
-		diagnostics["finishReason"] = nodeRun.Diagnostics.FinishReason
-	}
-	if nodeRun.Diagnostics.Usage != nil {
-		diagnostics["usage"] = nodeRun.Diagnostics.Usage
-	}
-	view.Diagnostics = diagnostics
 	return view
 }
 

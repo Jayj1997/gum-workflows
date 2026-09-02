@@ -123,8 +123,7 @@ func TestOpenAIChatAdapterSystemDialectAndBaseURLBoundaries(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			adapter := chat.NewOpenAIChatAdapter(server.Client())
-			adapter.InstructionsRole = testCase.role
-			if _, err := adapter.Generate(context.Background(), chat.Connection{BaseURL: testCase.baseURL}, singleTurnRequest()); err != nil {
+			if _, err := adapter.Generate(context.Background(), chat.Connection{BaseURL: testCase.baseURL, InstructionsRole: testCase.role}, singleTurnRequest()); err != nil {
 				t.Fatalf("generate: %v", err)
 			}
 			got := (*requests)[len(*requests)-1]

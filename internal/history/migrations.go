@@ -40,6 +40,13 @@ const ProductWorkflowRunSchemaVersion = 8
 // on product Node Runs.
 const ProductNodeRunDiagnosticsSchemaVersion = 9
 
+// ProductLLMProviderDialectSchemaVersion persists the per-Provider
+// developer/system instructions mapping used by real Runs.
+const ProductLLMProviderDialectSchemaVersion = 10
+
+// ProductRunErrorSchemaVersion persists sanitized terminal Run errors.
+const ProductRunErrorSchemaVersion = 11
+
 // 新增迁移只允许 append（不改写历史迁移），保证已迁移的库向前兼容。
 var migrations = []migration{
 	{
@@ -261,6 +268,18 @@ ON product_workflow_run (revision_id, started_at ASC, id ASC)`,
 		version: ProductNodeRunDiagnosticsSchemaVersion,
 		stmts: []string{
 			`ALTER TABLE product_workflow_node_run ADD COLUMN diagnostics_json TEXT NOT NULL DEFAULT '{}'`,
+		},
+	},
+	{
+		version: ProductLLMProviderDialectSchemaVersion,
+		stmts: []string{
+			`ALTER TABLE product_llm_provider ADD COLUMN instructions_dialect TEXT NOT NULL DEFAULT 'developer' CHECK (instructions_dialect IN ('developer', 'system'))`,
+		},
+	},
+	{
+		version: ProductRunErrorSchemaVersion,
+		stmts: []string{
+			`ALTER TABLE product_workflow_run ADD COLUMN error_json TEXT NOT NULL DEFAULT '{}'`,
 		},
 	},
 }

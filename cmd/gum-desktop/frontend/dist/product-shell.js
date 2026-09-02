@@ -211,7 +211,7 @@ export function createProductShell(view, client, options = {}) {
 		if (currentDraft?.workflowId === workflowId) editSequence = Math.max(editSequence, revision);
 	});
 	view.onEditDraft(queueDraftEdit);
-	view.onStartRun?.(async () => {
+	view.onStartRun?.(async (humanInput) => {
 		if (!currentDraft || refreshRequired) return;
 		try {
 			const flushed = await view.flushDraftEdit?.();
@@ -221,12 +221,14 @@ export function createProductShell(view, client, options = {}) {
 			const result = await client.startRun({
 				workflowId: currentDraft.workflowId,
 				expectedLockVersion: currentDraft.lockVersion,
+				humanInput,
 			});
 			currentDraft = result.draft;
 			view.renderDraft?.({ draft: currentDraft, preview: currentDraft.preview });
 			view.renderRun?.(result);
 			await refreshRevisions();
 		} catch (error) {
+			await refreshRevisions();
 			view.render({ status: "error", title: "Gum Workflows", message: errorMessage(error) });
 		}
 	});

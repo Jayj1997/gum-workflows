@@ -50,6 +50,35 @@ function generationDefaults(temperature, maxOutputTokens) {
 	return defaults;
 }
 
+function nodeRunDiagnosticsText(diagnostics) {
+	if (!diagnostics) return "";
+	if (diagnostics.error) {
+		return `${diagnostics.error.kind} / ${diagnostics.error.code} · ${diagnostics.error.message} · ${diagnostics.error.userAction}`;
+	}
+	const parts = [];
+	if (diagnostics.providerRequestId) parts.push(`request ${diagnostics.providerRequestId}`);
+	if (diagnostics.finishReason) parts.push(`finish ${diagnostics.finishReason}`);
+	if (diagnostics.usage) parts.push(`tokens ${diagnostics.usage.inputTokens ?? 0} in / ${diagnostics.usage.outputTokens ?? 0} out / ${diagnostics.usage.totalTokens ?? 0} total`);
+	return parts.join(" · ");
+}
+
+function nodeRunTimeText(nodeRun) {
+	return nodeRun.startedAt && nodeRun.finishedAt ? `${nodeRun.startedAt} → ${nodeRun.finishedAt}` : "";
+}
+
+function runStatusText(run) {
+	const base = `Run ${run.status} · revision ${run.revisionId}`;
+	return run.error ? `${base} · ${run.error.message} · ${run.error.userAction}` : base;
+}
+
+function singleTurnHumanSource(content) {
+	const nodes = content?.nodes ?? [];
+	const agent = nodes.find((node) => node.definition === "llm-chat");
+	const reference = agent?.inputs?.conversation?.from;
+	const sourceID = typeof reference === "string" ? reference.split(".")[0] : "";
+	return nodes.find((node) => node.id === sourceID && node.definition === "human-chat");
+}
+
 function previewLayers(preview) {
 	const componentByNode = new Map((preview?.nodes ?? []).map((node) => [node.id, node.id]));
 	for (const [index, group] of (preview?.groups ?? []).entries()) {
@@ -85,9 +114,9 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 		nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm,
 		nodeInputForm, nodeControlForm,
 		previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset,
-			providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKey, llmProviderList, llmDiagnosticList,
-			runButton, runStatus, nodeRunList, artifactList,
-			historyRefreshButton, revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList,
+		providerForm, providerName, providerProtocol, providerDialect, providerBaseURL, providerAPIKey, llmProviderList, llmDiagnosticList,
+		runButton, runInputLabel, runInput, runStatus, nodeRunList, artifactList,
+		historyRefreshButton, revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList,
 	} = elements;
 	const confirmDelete = options.confirmDelete ?? ((message) => globalThis.confirm?.(message) ?? false);
 	let selectWorkflow = () => {};
@@ -107,8 +136,8 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 	let createLLMModel = () => {};
 	let updateLLMModel = () => {};
 	let deleteLLMModel = () => {};
-		let setDefaultLLMModel = () => {};
-		let startRun = () => {};
+	let setDefaultLLMModel = () => {};
+	let startRun = () => {};
 	let refreshRevisions = () => {};
 	let selectRevision = () => {};
 	let selectRun = () => {};
@@ -196,7 +225,7 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 			createLLMProvider = handler;
 			providerForm?.addEventListener("submit", async (event) => {
 				event.preventDefault();
-				await createLLMProvider({ name: providerName.value.trim(), protocol: providerProtocol.value, baseUrl: providerBaseURL.value.trim(), apiKey: providerAPIKey.value });
+				await createLLMProvider({ name: providerName.value.trim(), protocol: providerProtocol.value, dialect: providerDialect.value, baseUrl: providerBaseURL.value.trim(), apiKey: providerAPIKey.value });
 				providerForm.reset();
 			});
 		},
@@ -206,16 +235,16 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 		onCreateLLMModel(handler) { createLLMModel = handler; },
 		onUpdateLLMModel(handler) { updateLLMModel = handler; },
 		onDeleteLLMModel(handler) { deleteLLMModel = handler; },
-			onSetDefaultLLMModel(handler) { setDefaultLLMModel = handler; },
-			onStartRun(handler) {
-				startRun = handler;
-				runButton?.addEventListener("click", () => startRun());
-			},
-			onRefreshRevisions(handler) {
-				refreshRevisions = handler;
-				historyRefreshButton?.addEventListener("click", () => refreshRevisions());
-			},
-			onSelectRevision(handler) { selectRevision = handler; },
+		onSetDefaultLLMModel(handler) { setDefaultLLMModel = handler; },
+		onStartRun(handler) {
+			startRun = handler;
+			runButton?.addEventListener("click", () => startRun({ nodeId: runInput?.dataset.nodeId ?? "", text: runInput?.value ?? "" }));
+		},
+		onRefreshRevisions(handler) {
+			refreshRevisions = handler;
+			historyRefreshButton?.addEventListener("click", () => refreshRevisions());
+		},
+		onSelectRevision(handler) { selectRevision = handler; },
 			onSelectRun(handler) { selectRun = handler; },
 		render(state) {
 			title.textContent = state.title;
@@ -258,6 +287,15 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 				protocolOption.textContent = "OpenAI-compatible Chat Completions";
 				protocol.append(protocolOption);
 				protocol.value = provider.protocol;
+				const dialect = document.createElement("select");
+				for (const [value, label] of [["developer", "Developer instructions"], ["system", "System instructions"]]) {
+					const option = document.createElement("option");
+					option.value = value;
+					option.textContent = label;
+					dialect.append(option);
+				}
+				dialect.value = provider.dialect ?? "developer";
+				dialect.setAttribute?.("aria-label", "Instructions dialect");
 				const baseURL = textInput(provider.baseUrl, "Base URL");
 				const apiKey = textInput("", provider.hasApiKey ? "Replace API Key" : "API Key");
 				apiKey.type = "password";
@@ -265,7 +303,7 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 				apiKey.placeholder = provider.hasApiKey ? "Leave blank to keep current Key" : "API Key";
 				const save = document.createElement("button");
 				save.type = "button"; save.textContent = "Save Provider";
-				save.addEventListener("click", () => updateLLMProvider({ id: provider.id, name: name.value, protocol: protocol.value, baseUrl: baseURL.value, apiKey: apiKey.value }));
+				save.addEventListener("click", () => updateLLMProvider({ id: provider.id, name: name.value, protocol: protocol.value, dialect: dialect.value, baseUrl: baseURL.value, apiKey: apiKey.value }));
 				const makeDefault = document.createElement("button");
 				makeDefault.type = "button"; makeDefault.textContent = provider.effectiveDefault ? "Effective default" : "Make default";
 				makeDefault.disabled = provider.explicitDefault;
@@ -277,7 +315,7 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 						deleteLLMProvider({ providerId: provider.id, confirmed: true });
 					}
 				});
-				heading.append(name, protocol, baseURL, apiKey, save, makeDefault, remove);
+				heading.append(name, protocol, dialect, baseURL, apiKey, save, makeDefault, remove);
 
 				const models = document.createElement("div");
 				models.className = "llm-model-list";
@@ -343,12 +381,24 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 			}));
 			},
 			renderRun(run) {
-				if (runStatus) runStatus.textContent = `Run ${run.status} · revision ${run.revisionId}`;
+				if (runStatus) runStatus.textContent = runStatusText(run);
 				if (nodeRunList) {
 					const document = nodeRunList.ownerDocument;
 					nodeRunList.replaceChildren(...run.nodeRuns.map((nodeRun) => {
 						const item = document.createElement("li");
-						item.textContent = `${nodeRun.nodeId} · ${nodeRun.nodeDefinition}@${nodeRun.nodeExecutor} · ${nodeRun.status}`;
+						item.textContent = `${nodeRun.nodeId} · ${nodeRun.nodeDefinition}@${nodeRun.nodeExecutor} · node run ${nodeRun.id} · ${nodeRun.status}`;
+						const diagnostics = nodeRunDiagnosticsText(nodeRun.diagnostics);
+						if (diagnostics) {
+							const detail = document.createElement("small");
+							detail.textContent = diagnostics;
+							item.append(detail);
+						}
+						const timing = nodeRunTimeText(nodeRun);
+						if (timing) {
+							const detail = document.createElement("small");
+							detail.textContent = timing;
+							item.append(detail);
+						}
 						return item;
 					}));
 				}
@@ -396,12 +446,24 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 				}));
 			},
 			renderHistoryRun(run) {
-				if (historyRunStatus) historyRunStatus.textContent = `Run ${run.status} · revision ${run.revisionId}`;
+				if (historyRunStatus) historyRunStatus.textContent = runStatusText(run);
 				if (historyNodeRunList) {
 					const document = historyNodeRunList.ownerDocument;
 					historyNodeRunList.replaceChildren(...run.nodeRuns.map((nodeRun) => {
 						const item = document.createElement("li");
-						item.textContent = `${nodeRun.nodeId} · ${nodeRun.nodeDefinition}@${nodeRun.nodeExecutor} · ${nodeRun.status}`;
+						item.textContent = `${nodeRun.nodeId} · ${nodeRun.nodeDefinition}@${nodeRun.nodeExecutor} · node run ${nodeRun.id} · ${nodeRun.status}`;
+						const diagnostics = nodeRunDiagnosticsText(nodeRun.diagnostics);
+						if (diagnostics) {
+							const detail = document.createElement("small");
+							detail.textContent = diagnostics;
+							item.append(detail);
+						}
+						const timing = nodeRunTimeText(nodeRun);
+						if (timing) {
+							const detail = document.createElement("small");
+							detail.textContent = timing;
+							item.append(detail);
+						}
 						return item;
 					}));
 				}
@@ -435,6 +497,12 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 		},
 		renderDraft(result) {
 			const { draft, preview } = result;
+			const humanSource = singleTurnHumanSource(draft.content);
+			if (runInput) {
+				runInput.dataset.nodeId = humanSource?.id ?? "";
+				runInput.disabled = !humanSource;
+			}
+			if (runInputLabel) runInputLabel.textContent = humanSource ? `${humanSource.displayName || humanSource.id} input` : "Human input";
 			if (result.saved === undefined && result.conflict === undefined) {
 				clearTimeout(autosaveTimer);
 				activeWorkflowId = draft.workflowId;

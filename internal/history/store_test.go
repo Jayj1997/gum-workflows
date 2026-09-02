@@ -314,6 +314,45 @@ func TestProductLLMSettingsMigrationAndUUIDTieBreak(t *testing.T) {
 	}
 }
 
+func TestProductLLMProviderDialectMigrationDefaultsExistingProvidersToDeveloper(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "product.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, migration := range migrations[:ProductNodeRunDiagnosticsSchemaVersion] {
+		if err := applyMigration(context.Background(), tx, migration); err != nil {
+			t.Fatal(err)
+		}
+	}
+	providerID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	if _, err := tx.Exec(`INSERT INTO product_llm_provider (id, name, protocol, base_url, api_key_ref, created_at) VALUES (?, 'Existing', 'openai-chat-completions', 'https://api.example/v1', 'keychain://existing', '2026-09-01T00:00:00Z')`, providerID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(context.Background(), dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	settings, err := store.GetLLMSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(settings.Providers) != 1 || settings.Providers[0].Dialect != productworkflow.ProviderDialectDeveloper {
+		t.Fatalf("upgraded Providers = %#v", settings.Providers)
+	}
+}
+
 func TestConcurrentOpenIsIdempotent(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "gum-workflows.db")
 	start := make(chan struct{})

@@ -20,11 +20,12 @@ type RevisionView struct {
 
 // RunSummaryView is one Run row in the per-Revision history list.
 type RunSummaryView struct {
-	ID         string    `json:"id"`
-	RevisionID string    `json:"revisionId"`
-	Status     string    `json:"status"`
-	StartedAt  time.Time `json:"startedAt"`
-	FinishedAt time.Time `json:"finishedAt"`
+	ID         string              `json:"id"`
+	RevisionID string              `json:"revisionId"`
+	Status     string              `json:"status"`
+	Error      *ExecutionErrorView `json:"error,omitempty"`
+	StartedAt  time.Time           `json:"startedAt"`
+	FinishedAt time.Time           `json:"finishedAt"`
 }
 
 // ListRevisions returns every immutable Revision for one Product Workflow with its
@@ -61,7 +62,7 @@ func (a *Application) ListRevisionRuns(ctx context.Context, revisionID string) (
 	}
 	views := make([]RunSummaryView, 0, len(runs))
 	for _, run := range runs {
-		views = append(views, RunSummaryView{ID: run.ID, RevisionID: run.RevisionID, Status: run.Status, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt})
+		views = append(views, RunSummaryView{ID: run.ID, RevisionID: run.RevisionID, Status: run.Status, Error: run.Error, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt})
 	}
 	return views, nil
 }
@@ -84,7 +85,7 @@ func (a *Application) GetRunHistory(ctx context.Context, runID string) (RunView,
 		nodeRunViews = append(nodeRunViews, nodeRunView(nodeRun))
 	}
 	artifactViews := a.reconstructArtifactViews(run.ID, artifacts)
-	return RunView{ID: run.ID, RevisionID: run.RevisionID, Status: run.Status, Draft: draft, Snapshot: runSnapshotView(run.Snapshot), NodeRuns: nodeRunViews, Artifacts: artifactViews}, nil
+	return RunView{ID: run.ID, RevisionID: run.RevisionID, Status: run.Status, Error: run.Error, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, Draft: draft, Snapshot: runSnapshotView(run.Snapshot), NodeRuns: nodeRunViews, Artifacts: artifactViews}, nil
 }
 
 // revisionDraftView decodes the Revision content for a Run into a DraftView with a

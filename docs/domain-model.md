@@ -1,6 +1,6 @@
 # Gum-Workflows Domain Model
 
-本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 01–10 的 SQLite identity、Draft、创作/Preview、LLM 设置、macOS Keychain Secret Adapter、真实 OpenAI-compatible 非流式单轮 StartRun 与只读分层 Run history。术语以根目录 `CONTEXT.md` 为权威；人工输入、Interrupted、Resume/Rerun/Fork、多轮循环等尚未实现能力不在本文范围。
+本文档描述已完成的 platform-core 01–14、code-quality-automation，以及 14 后 Product Workflow 的 SQLite identity、Draft、创作/Preview、LLM 设置、macOS Keychain Secret Adapter、真实 OpenAI-compatible 非流式单轮 StartRun、Failed/Interrupted 生命周期与只读分层 Run history。术语以根目录 `CONTEXT.md` 为权威；WaitingHuman、Conversation feedback、Interaction Error 同 Run Retry、Resume/Rerun/Fork 与多轮循环等尚未实现能力不在本文范围。
 
 ## 0. Product Workflow identity
 
@@ -14,7 +14,7 @@ Product Workflow 与 workflow/v1 的 `workflow` / `node_instance` 定义表共�
 
 14 后产品使用独立 `product/nodecatalog.Registry` 显式注册 Definition 与 Executor，不修改历史 `nodeDefinition/v1`。首批 Catalog 为 `human-chat` 和 `llm-chat`；用户添加时生成独立 Node Instance UUID，并分别保存 Definition identity、Executor version、显示名称与 config。显示名称可变，不能代替 Node identity。
 
-Gum Config Schema 是小型产品领域合同，支持 string、markdown、integer、number、boolean 与 enum。字段可声明 required、default、min/max、enum values 与 sensitive；Presentation Hint 的 label、help、editor 只影响表单展示。Go Draft Validator 与 Desktop 通用表单消费同一 Schema，非法 config 以 `nodes[i].config.<field>` 路径返回 Diagnostic。`llm-chat` 当前声明 instructions、temperature 与 max output tokens；这些只是创作合同，真实模型调用仍未实现。
+Gum Config Schema 是小型产品领域合同，支持 string、markdown、integer、number、boolean 与 enum。字段可声明 required、default、min/max、enum values 与 sensitive；Presentation Hint 的 label、help、editor 只影响表单展示。Go Draft Validator 与 Desktop 通用表单消费同一 Schema，非法 config 以 `nodes[i].config.<field>` 路径返回 Diagnostic。`llm-chat` 当前声明 instructions、temperature 与 max output tokens，并由真实 OpenAI-compatible 非流式 Adapter 消费这些配置。
 
 ## 0.1 Product LLM settings
 
@@ -22,17 +22,17 @@ Gum Config Schema 是小型产品领域合同，支持 string、markdown、integ
 
 Provider 与每个 Provider 下的 Model 各自最多一个显式 default。Resolver 只考虑未删除项：优先显式 default，否则按 `(created_at ASC, UUID ASC)` 取第一个；删除显式 default 后立即按同一规则产生新的有效 default。没有 Provider 或有效 Provider 没有 Model 时返回结构化设置 Diagnostic。重命名 Provider、修改 Base URL 或 Provider Model ID 不改变 Gum UUID。
 
-Desktop 与 Browser Mock 经同一 WorkflowClient 和 Product Application 用例创建、编辑、删除并设置 default。Provider 更新时空 Key 保留原凭据，非空 Key 在同一稳定引用上轮换；删除必须携带用户确认并删除对应凭据。Keychain 不可用时操作明确失败，不回退为 SQLite 明文。Browser Mock 与 Go 测试使用注入的进程内 Memory Adapter，不访问真实用户 Keychain。当前设置不调用 `/models`，不维护 Capability、position、enable/disable 或自动 Provider failover。StartRun 对空 Model Preference 按双层 default 物化 Gum Model UUID；真实协议请求属于后续票。
+Desktop 与 Browser Mock 经同一 WorkflowClient 和 Product Application 用例创建、编辑、删除并设置 default。Provider 更新时空 Key 保留原凭据，非空 Key 在同一稳定引用上轮换；删除必须携带用户确认并删除对应凭据。Keychain 不可用时操作明确失败，不回退为 SQLite 明文。Browser Mock 与 Go 测试使用注入的进程内 Memory Adapter，不访问真实用户 Keychain。当前设置不调用 `/models`，不维护 Capability、position、enable/disable 或自动 Provider failover。StartRun 对空 Model Preference 按双层 default 物化 Gum Model UUID；P10 已通过固定 Run Snapshot 的连接设置发起真实协议请求。
 
 ## 0.2 P9 StartRun、Revision 与真实单轮执行
 
-UI 点击 Run 时先 flush 待保存编辑，再把当前 Draft 的 expected `lock_version` 交给 Product Application。Application 先校验 token、Preview Diagnostics 与 LLM 设置；空 Model Preference 解析为稳定 Gum Model UUID并写回 Draft。旧 token、非法 Draft、缺少 default 或 Artifact 写入失败都不会创建可见 Run，也不会留下 Model UUID 半物化。
+UI 点击 Run 时先 flush 待保存编辑，再把当前 Draft 的 expected `lock_version` 交给 Product Application。Application preflight 先校验 token、Preview Diagnostics、LLM 设置、Secret 解析与 authored Human input；这些失败不创建 Run。preflight 通过后，BeginRun 原子物化空 Model Preference 的 Gum Model UUID、创建或复用 Revision、固定 Run Snapshot 并创建 Running Run；随后的 Artifact 或 Provider 错误属于已开始执行，会以 Failed/Interrupted 历史完整留存。
 
 物化后的执行语义先规范化：Node 顺序、Control Dependency 集合与 map 顺序不影响 SHA-256，Workflow/Node 展示文本、Presentation/View 状态不进入哈希。SQLite 以 `(workflow_id, semantic_hash)` 复用 immutable Revision；每次成功 StartRun 仍创建独立 Run UUID。Run Snapshot 固定 Revision 与各 Agent Node 的 Provider/Model 解析结果（含 Secret 引用名，不含明文）。
 
-P10 单轮执行只跑当前 tracer 拓扑：`human-chat(source)` 产生一条 user message，`llm-chat` 经 `internal/chat` 的 OpenAI-compatible 非流式 Protocol Adapter 发起真实 Chat Completions 请求，完整成功响应后追加恰好一条 assistant text message 并产生正式 Conversation Artifact。请求把 Node config instructions 映射为 developer（可配置 system）消息、按原顺序发送 user 消息并携带有效生成参数；usage、finish reason 与 Provider request ID 持久化进 Node Run diagnostics。认证、限流、网络、协议损坏与 Provider 拒绝请求归类为 Structural Error：Run 不创建、无部分状态残留，错误文本不携带 API Key。两次 Node Run、ArtifactRef 与元数据在同一 SQLite 事务发布，Conversation 本体保存在 Local Data Root 的 `runs/<run-id>/artifacts/`。Desktop 与 Browser Mock 通过同一 WorkflowClient 展示本次 Run、Node Run 与消息；Browser Mock 使用注入的 fixture chat Adapter 模拟协议响应。
+P10 单轮执行只跑当前 tracer 拓扑：通用 UI 根据 authored `human-chat(source)` 呈现本轮 text 输入，并把该 user message 作为正式 Conversation Artifact 产出；`llm-chat` 经 `internal/chat` 的 OpenAI-compatible 非流式 Protocol Adapter 发起真实 Chat Completions 请求，完整成功响应后追加恰好一条 assistant text message。Provider 设置持久化 developer/system instructions dialect，StartRun 将其固定进 Resolved LLM Selection/Run Snapshot，每次调用通过 Connection 传入 Adapter；请求同时携带 Provider Model ID 与有效生成参数。usage、finish reason 与 Provider request ID 持久化进 typed Node Run diagnostics，并在当前 Run 和 History UI 可见。真实执行使用 BeginRun → progress → FinalizeRun：Provider 调用前已持久化 Running Run、成功 Human Node Run/source Artifact 和 running Agent Node Run。认证、限流、网络、协议损坏与 Provider 拒绝请求产生 Failed Run/Structural Error；取消产生 Interrupted Run/UnknownOutcome Node Run，并以非取消上下文完成本地记账。错误文本在持有实际 API Key 的 Adapter 边界精确脱敏。Conversation 本体保存在 Local Data Root 的 `runs/<run-id>/artifacts/`；Desktop 与 Browser Mock 共用 WorkflowClient/DOM View。
 
-只读分层 Run history 通过独立 `RunHistoryRepository` 读 seam 从 `product_workflow_revision / run / node_run / artifact` 表查询，不写也不改 Workflow Run 状态。UI 按 Workflow → Revision 列表 → 每个 Revision 的 Runs → 每次 Run 的 Node Run 与 Artifact 摘要逐层浏览：相同规范化语义哈希重复运行复用同一 immutable Revision，但每次 StartRun 仍创建独立 Run、Node Run 与 Artifact；执行语义或首次物化 Model UUID 变化产生新 Revision，而展示文案、Presentation Hint 与 UI view preference 不进入哈希。Run 详情复用 Run View 形态，Conversation 消息从同一 Run 的 filesystem Artifact Store 还原。历史为只读浏览，数据落在 SQLite 与 Local Data Root，因此应用重启后已完成 Run、Node Run、Resolved LLM Selection 与 Conversation Artifact 仍可查询；Interrupted 标记、Resume 与 Rerun/Fork 仍属后续票。
+只读分层 Run history 通过独立 `RunHistoryRepository` 读 seam 从 `product_workflow_revision / run / node_run / artifact` 表查询。UI 按 Workflow → Revision 列表 → 每个 Revision 的 Runs → 每次 Run 的 Node Run 与 Artifact 摘要逐层浏览：相同规范化语义哈希重复运行复用同一 immutable Revision，每次 StartRun 仍创建独立 Run。Run View 返回 Node Run UUID/时间/inputs/outputs、Resolved LLM Selection、typed error/diagnostics 与 Conversation Artifact。每个新 Application 进程首次 OpenWorkspace 会通过 Recovery Repository 原子把遗留 Running Run 标记 Interrupted、running Agent Node Run 标记 UnknownOutcome；已成功 Human Node Run/source Artifact 保持不变，Finalize CAS 防止旧 Provider 结果覆盖中断状态。当前 macOS 产品只支持单进程、单窗口拥有该数据库；并发打开同一 Local Data Root 尚无 owner lease，属于不支持的部署方式。当前只读 UI 明确该 Run 不可 Resume，不建立 Event Log、replay 或自动重放；Resume 与 Rerun/Fork 仍属后续设计。Browser Mock 在同一内存会话复现 Running/Failed/Interrupted 状态转换，但刷新页面后不承诺磁盘恢复。
 
 首批产品 Catalog 同时声明 `human-chat.conversation: Conversation` output，以及 `llm-chat.conversation: Conversation` input/output。Input Binding 使用 `inputs.<input>.from: <node-id>.<output>` 形成 Data Edge；Control Dependency 使用独立 `dependsOn` 控件形成 Control Edge。只读 Preview 由 Draft 派生，不暴露渲染或布局库结构；自动网格坐标、缩放、节点折叠和最近选择保留在 UI，不写入 Draft 语义内容。
 

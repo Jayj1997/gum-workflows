@@ -4,19 +4,8 @@ import { createProductShell, productStatusMessage } from "./product-shell.js";
 import { createBuiltinNodeRegistry } from "./node-registry.js";
 import { createWorkflowPreview } from "./workflow-preview.js";
 import { createBrowserLLMSettings, createMemorySecretAdapter } from "./browser-llm-settings.js";
-import { productRevisionKey } from "./browser-run.js";
+import { failBrowserRun, interruptBrowserRuns, productRevisionKey } from "./browser-run.js";
 import { createFixtureChatAdapter } from "./browser-chat-fixture.js";
-
-const workflows = [];
-const drafts = new Map();
-const nodeRegistry = createBuiltinNodeRegistry();
-// One Secret Adapter instance is shared between settings and the fixture chat
-// Adapter, mirroring the Product Application's injected seam.
-const secrets = createMemorySecretAdapter();
-const llmSettings = createBrowserLLMSettings({ secrets });
-const revisions = new Map();
-const runs = new Map();
-const chatAdapter = createFixtureChatAdapter({ secrets });
 
 function normalize(value) {
 	if (Array.isArray(value)) return value.map(normalize);
@@ -30,8 +19,25 @@ function sameContent(left, right) {
 	return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
 }
 
-const client = createBrowserWorkflowClient({
+// createBrowserApplication exposes the same use-case seam as Desktop while
+// keeping the Browser implementation deliberately in-memory and injectable.
+export function createBrowserApplication(options = {}) {
+	const workflows = [];
+	const drafts = new Map();
+	const nodeRegistry = createBuiltinNodeRegistry();
+	const secrets = options.secrets ?? createMemorySecretAdapter();
+	const llmSettings = createBrowserLLMSettings({ secrets });
+	const revisions = new Map();
+	const runs = new Map();
+	const chatAdapter = options.chatAdapter ?? createFixtureChatAdapter({ secrets });
+	let initialized = false;
+
+	return {
   async openWorkspace() {
+		if (!initialized) {
+			interruptBrowserRuns(runs);
+			initialized = true;
+		}
     return {
       title: "Gum Workflows",
       message: "Product application round-trip complete",
@@ -102,7 +108,7 @@ const client = createBrowserWorkflowClient({
 			node.llm = { modelUuid: model.id };
 			selections.push({
 				nodeId: node.id, providerId: provider.id, providerName: provider.name, protocol: provider.protocol,
-				baseUrl: provider.baseUrl, modelUuid: model.id, providerModelId: model.providerModelId,
+				baseUrl: provider.baseUrl, dialect: provider.dialect, modelUuid: model.id, providerModelId: model.providerModelId,
 				temperature: node.config?.temperature ?? model.generationDefaults?.temperature,
 				maxOutputTokens: node.config?.max_output_tokens ?? model.generationDefaults?.maxOutputTokens,
 				apiKeyRef: llmSettings.referenceFor(provider.id),
@@ -123,44 +129,76 @@ const client = createBrowserWorkflowClient({
 		const sourceId = agent.inputs?.conversation?.from?.split(".")[0];
 		const human = materialized.nodes.find((node) => node.id === sourceId && node.definition === "human-chat");
 		if (!human || agent.inputs.conversation.from !== `${human.id}.conversation`) throw new Error("Single-turn executor requires the authored human-chat Conversation Data Edge");
+		if (input.humanInput?.nodeId !== human.id || !input.humanInput.text?.trim()) throw new Error(`Single-turn executor requires submitted text for ${human.id}`);
 		const selection = selections.find((candidate) => candidate.nodeId === agent.id);
-		// One real single-turn model call through the fixture Adapter; the
-		// assistant reply is appended only after the complete response.
-		const result = chatAdapter.generate(
-			{ protocol: selection.protocol, baseUrl: selection.baseUrl, providerModelId: selection.providerModelId, apiKeyRef: selection.apiKeyRef },
-			{
-				model: selection.providerModelId,
-				instructions: agent.config?.instructions ? [{ kind: "text", text: agent.config.instructions }] : [],
-				messages: [{ role: "user", parts: [{ kind: "text", text: "Hello from the product UI." }] }],
-				config: {
-					temperature: selection.temperature ?? undefined,
-					maxOutputTokens: selection.maxOutputTokens ?? undefined,
-				},
-			},
-		);
-		const sourceMessages = [{ role: "user", text: "Hello from the product UI." }];
-		const messages = [...sourceMessages, { role: "assistant", text: result.assistant.parts.map((part) => part.text).join("\n") }];
+		const startedAt = new Date().toISOString();
+		const humanRunId = crypto.randomUUID();
+		const agentRunId = crypto.randomUUID();
+		const sourceArtifactId = crypto.randomUUID();
+		const sourceRef = { id: sourceArtifactId, kind: "Conversation", version: "1", uri: "1.json" };
+		const sourceMessages = [{ role: "user", text: input.humanInput.text }];
 		const draft = structuredClone(current);
 		draft.preview = createWorkflowPreview(draft.content, nodeRegistry);
-		const run = {
-			id: runId, revisionId, status: "succeeded", draft,
-			snapshot: {
+		const snapshot = {
 				executors: materialized.nodes.map((node) => ({ nodeId: node.id, definitionId: node.definition, version: node.executor })),
 				llmSelections: selections.map(({ apiKeyRef: _apiKeyRef, ...selectionView }) => selectionView),
 				...(materialized.project ? { project: structuredClone(materialized.project) } : {}),
-			},
-			nodeRuns: [human, agent].map((node, index) => ({ id: crypto.randomUUID(), nodeId: node.id, nodeDefinition: node.definition, nodeExecutor: node.executor, status: "succeeded", ...(index === 1 ? { diagnostics: { providerRequestId: result.providerRequestId, finishReason: result.finishReason, usage: result.usage } } : {}) })),
-			artifacts: [{ id: crypto.randomUUID(), nodeId: agent.id, port: "conversation", type: "Conversation", version: "2", uri: "2.json", messages }],
 		};
-		runs.set(run.id, {
-			workflowId: input.workflowId, revisionId: run.revisionId, id: run.id, status: run.status,
-			startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(),
+		const running = {
+			workflowId: input.workflowId, revisionId, id: runId, status: "running", startedAt, finishedAt: startedAt,
 			// The Revision content and Run Snapshot that actually ran; getRunHistory
 			// replays them even after the live Draft moves on.
-			revisionContent: structuredClone(materialized), snapshot: structuredClone(run.snapshot),
-			nodeRuns: structuredClone(run.nodeRuns), artifacts: structuredClone(run.artifacts),
+			revisionContent: structuredClone(materialized), snapshot: structuredClone(snapshot),
+			nodeRuns: [
+				{ id: humanRunId, nodeId: human.id, nodeDefinition: human.definition, nodeExecutor: human.executor, status: "succeeded", inputs: {}, outputs: { conversation: sourceRef }, startedAt, finishedAt: startedAt },
+				{ id: agentRunId, nodeId: agent.id, nodeDefinition: agent.definition, nodeExecutor: agent.executor, status: "running", inputs: { conversation: sourceRef }, outputs: {}, startedAt, finishedAt: startedAt },
+			],
+			artifacts: [{ id: sourceArtifactId, nodeId: human.id, port: "conversation", type: "Conversation", version: "1", uri: "1.json", messages: sourceMessages }],
+		};
+		runs.set(runId, running);
+
+		let result;
+		try {
+			// Await also supports asynchronous fixture adapters, making the
+			// in-flight Running state observable through the Browser seam.
+			result = await chatAdapter.generate(
+				{ protocol: selection.protocol, dialect: selection.dialect, baseUrl: selection.baseUrl, providerModelId: selection.providerModelId, apiKeyRef: selection.apiKeyRef },
+				{
+					model: selection.providerModelId,
+					instructions: agent.config?.instructions ? [{ kind: "text", text: agent.config.instructions }] : [],
+					messages: [{ role: "user", parts: [{ kind: "text", text: input.humanInput.text }] }],
+					config: {
+						temperature: selection.temperature ?? undefined,
+						maxOutputTokens: selection.maxOutputTokens ?? undefined,
+					},
+				},
+			);
+		} catch (error) {
+			const apiKey = secrets.resolve(selection.apiKeyRef);
+			const message = String(error?.message ?? error).split(apiKey).join("[REDACTED]");
+			const details = { kind: "structural", code: "provider", message, userAction: "review the Provider settings and start a new Run" };
+			failBrowserRun(running, details);
+			throw new Error(`run ${runId} ${details.kind}/${details.code}: ${details.message}; ${details.userAction}`, { cause: error });
+		}
+
+		const finishedAt = new Date().toISOString();
+		if (running.status !== "running") {
+			throw new Error(`run ${runId} cannot finalize because its status is ${running.status}`);
+		}
+		const messages = [...sourceMessages, { role: "assistant", text: result.assistant.parts.map((part) => part.text).join("\n") }];
+		const finalArtifactId = crypto.randomUUID();
+		const finalRef = { id: finalArtifactId, kind: "Conversation", version: "2", uri: "2.json" };
+		running.status = "succeeded";
+		running.finishedAt = finishedAt;
+		running.nodeRuns[1] = {
+			...running.nodeRuns[1], status: "succeeded", outputs: { conversation: finalRef }, finishedAt,
+			diagnostics: { providerRequestId: result.providerRequestId, finishReason: result.finishReason, usage: result.usage },
+		};
+		running.artifacts.push({ id: finalArtifactId, nodeId: agent.id, port: "conversation", type: "Conversation", version: "2", uri: "2.json", messages });
+		return structuredClone({
+			id: runId, revisionId, status: running.status, startedAt, finishedAt, draft, snapshot,
+			nodeRuns: running.nodeRuns, artifacts: running.artifacts,
 		});
-		return structuredClone(run);
 	},
 	async listRevisions(workflowId) {
 		const counts = new Map();
@@ -191,7 +229,12 @@ const client = createBrowserWorkflowClient({
 			updatedAt: run.startedAt,
 		};
 		draft.preview = createWorkflowPreview(draft.content, nodeRegistry);
-		return { id: run.id, revisionId: run.revisionId, status: run.status, draft, snapshot: structuredClone(run.snapshot), nodeRuns: structuredClone(run.nodeRuns), artifacts: structuredClone(run.artifacts) };
+		return {
+			id: run.id, revisionId: run.revisionId, status: run.status,
+			...(run.error ? { error: structuredClone(run.error) } : {}),
+			startedAt: run.startedAt, finishedAt: run.finishedAt,
+			draft, snapshot: structuredClone(run.snapshot), nodeRuns: structuredClone(run.nodeRuns), artifacts: structuredClone(run.artifacts),
+		};
 	},
 	async getLLMSettings() { return llmSettings.getSettings(); },
 	async createLLMProvider(input) { return llmSettings.createProvider(input); },
@@ -202,7 +245,12 @@ const client = createBrowserWorkflowClient({
 	async updateLLMModel(input) { return llmSettings.updateModel(input); },
 	async deleteLLMModel(providerId, modelId) { llmSettings.deleteModel(providerId, modelId); },
 	async setDefaultLLMModel(providerId, modelId) { return llmSettings.setDefaultModel(providerId, modelId); },
-});
+	};
+}
+
+const client = createBrowserWorkflowClient(createBrowserApplication());
+
+if (typeof document !== "undefined") {
 const title = document.querySelector("#title");
 const message = document.querySelector("#message");
 const status = document.querySelector("#status");
@@ -231,11 +279,14 @@ const previewZoomReset = document.querySelector("#preview-zoom-reset");
 const providerForm = document.querySelector("#create-provider");
 const providerName = document.querySelector("#provider-name");
 const providerProtocol = document.querySelector("#provider-protocol");
+const providerDialect = document.querySelector("#provider-dialect");
 const providerBaseURL = document.querySelector("#provider-base-url");
 const providerAPIKey = document.querySelector("#provider-api-key");
 const llmProviderList = document.querySelector("#llm-provider-list");
 const llmDiagnosticList = document.querySelector("#llm-settings-diagnostics");
 const runButton = document.querySelector("#start-run");
+const runInputLabel = document.querySelector("#run-input-label");
+const runInput = document.querySelector("#run-input");
 const runStatus = document.querySelector("#run-status");
 const nodeRunList = document.querySelector("#node-run-list");
 const artifactList = document.querySelector("#artifact-list");
@@ -248,8 +299,9 @@ const historyArtifactList = document.querySelector("#history-artifact-list");
 
 createProductShell(
   createProductDOMView(
-		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKey, llmProviderList, llmDiagnosticList, runButton, runStatus, nodeRunList, artifactList, historyRefreshButton, revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList },
+		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerDialect, providerBaseURL, providerAPIKey, llmProviderList, llmDiagnosticList, runButton, runInputLabel, runInput, runStatus, nodeRunList, artifactList, historyRefreshButton, revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList },
     productStatusMessage,
   ),
   client,
 );
+}

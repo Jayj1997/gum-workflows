@@ -47,7 +47,7 @@ SELECT id, semantic_hash, content_json, created_at
 // in stable started-at order.
 func (s *Store) ListProductWorkflowRevisionRuns(ctx context.Context, revisionID string) ([]productworkflow.Run, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, workflow_id, revision_id, status, snapshot_json, started_at, finished_at
+	SELECT id, workflow_id, revision_id, status, snapshot_json, error_json, started_at, finished_at
   FROM product_workflow_run
  WHERE revision_id = ?
  ORDER BY started_at ASC, id ASC`, revisionID)
@@ -73,12 +73,17 @@ SELECT id, workflow_id, revision_id, status, snapshot_json, started_at, finished
 // snapshot JSON and stored timestamps.
 func scanProductWorkflowRun(row rowScanner) (productworkflow.Run, error) {
 	var run productworkflow.Run
-	var snapshotJSON, started, finished string
-	if err := row.Scan(&run.ID, &run.WorkflowID, &run.RevisionID, &run.Status, &snapshotJSON, &started, &finished); err != nil {
+	var snapshotJSON, errorJSON, started, finished string
+	if err := row.Scan(&run.ID, &run.WorkflowID, &run.RevisionID, &run.Status, &snapshotJSON, &errorJSON, &started, &finished); err != nil {
 		return productworkflow.Run{}, err
 	}
 	if err := json.Unmarshal([]byte(snapshotJSON), &run.Snapshot); err != nil {
 		return productworkflow.Run{}, fmt.Errorf("decode product workflow run %s snapshot: %w", run.ID, err)
+	}
+	if errorJSON != "null" && errorJSON != "{}" {
+		if err := json.Unmarshal([]byte(errorJSON), &run.Error); err != nil {
+			return productworkflow.Run{}, fmt.Errorf("decode product workflow run %s error: %w", run.ID, err)
+		}
 	}
 	var err error
 	if run.StartedAt, err = parseStoredTime(started); err != nil {
@@ -94,7 +99,7 @@ func scanProductWorkflowRun(row rowScanner) (productworkflow.Run, error) {
 // A missing Run is represented by (zero, nil, nil, ErrRunNotFound).
 func (s *Store) GetProductRun(ctx context.Context, runID string) (productworkflow.Run, []productworkflow.NodeRun, []productworkflow.RunArtifact, error) {
 	run, err := scanProductWorkflowRun(s.db.QueryRowContext(ctx, `
-SELECT id, workflow_id, revision_id, status, snapshot_json, started_at, finished_at
+	SELECT id, workflow_id, revision_id, status, snapshot_json, error_json, started_at, finished_at
   FROM product_workflow_run
  WHERE id = ?`, runID))
 	if err == sql.ErrNoRows {

@@ -32,11 +32,14 @@ const previewZoomReset = document.querySelector("#preview-zoom-reset");
 const providerForm = document.querySelector("#create-provider");
 const providerName = document.querySelector("#provider-name");
 const providerProtocol = document.querySelector("#provider-protocol");
+const providerDialect = document.querySelector("#provider-dialect");
 const providerBaseURL = document.querySelector("#provider-base-url");
 const providerAPIKey = document.querySelector("#provider-api-key");
 const llmProviderList = document.querySelector("#llm-provider-list");
 const llmDiagnosticList = document.querySelector("#llm-settings-diagnostics");
 const runButton = document.querySelector("#start-run");
+const runInputLabel = document.querySelector("#run-input-label");
+const runInput = document.querySelector("#run-input");
 const runStatus = document.querySelector("#run-status");
 const nodeRunList = document.querySelector("#node-run-list");
 const artifactList = document.querySelector("#artifact-list");
@@ -49,7 +52,7 @@ const historyArtifactList = document.querySelector("#history-artifact-list");
 
 createProductShell(
   createProductDOMView(
-		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerBaseURL, providerAPIKey, llmProviderList, llmDiagnosticList, runButton, runStatus, nodeRunList, artifactList, historyRefreshButton, revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList },
+			{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerDialect, providerBaseURL, providerAPIKey, llmProviderList, llmDiagnosticList, runButton, runInputLabel, runInput, runStatus, nodeRunList, artifactList, historyRefreshButton, revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList },
     productStatusMessage,
   ),
   client,

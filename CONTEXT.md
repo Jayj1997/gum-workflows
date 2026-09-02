@@ -33,7 +33,7 @@ Node Instance 的组合声明，附项目声明。一个 Workflow 可运行任�
 被加工的本地代码仓库声明：名称 + 仓库地址。仓库的规范化绝对路径直接成为 In-place Project Workspace，不为 Run 或 Node 复制项目。
 
 **LLM Provider（模型提供方）**:
-workflow/v1 中的一个大模型服务接入点（url + 协议类型 + apikey 引用 + 名称），下挂一组 Model。Provider 声明在用户级 llm.yaml 中，跨 Workflow 复用，是纯运行时配置：不落项目库，run 启动时把解析结果（provider/model 名）记入运行记录。14 后 SQLite 产品继续使用 Provider / Model 领域关系，但不读取或兼容 llm.yaml。
+workflow/v1 中的一个大模型服务接入点（url + 协议类型 + apikey 引用 + 名称），下挂一组 Model。Provider 声明在用户级 llm.yaml 中，跨 Workflow 复用，是纯运行时配置：不落项目库，run 启动时把解析结果（provider/model 名）记入运行记录。14 后 SQLite 产品继续使用 Provider / Model 领域关系，但不读取或兼容 llm.yaml；OpenAI-compatible Provider 还记录 developer/system instructions dialect，旧设置默认 developer。
 
 **LLM Model（模型）**:
 Provider 下一个用户配置的模型槽，拥有全局稳定的 Gum Model UUID，并携带可编辑的 Provider Model ID 和生成默认值。UUID 标识配置槽而非不可变底层模型；修改 Provider Model ID 会影响未来 Run，历史 Run Snapshot 保留旧值。默认解析链：默认 Provider（显式 default，否则取未删除项按 created_at、UUID 升序的第一个）-> 默认 Model（同理）。Gum 不维护或匹配模型能力。
@@ -56,7 +56,7 @@ _Avoid_: 让 Canonical 模型感知特定 Provider、在协议层自动重试或
 Agent Node Instance 记录的 Gum Model UUID。未选择时，StartRun preflight 按默认 Provider/Model 解析并先写回 Draft；只要 UUID 对应的 Model 仍存在，默认值变化都不改变选择。UUID 被删除时不回退，必须由用户重新选择。
 
 **Resolved LLM Selection（已解析模型选择）**:
-StartRun 根据已写入 Draft/Revision 的 Gum Model UUID，为 Agent Node 固定协议、Provider、Provider Model ID、能力和有效生成参数。它进入 Run Snapshot，不包含 API Key 明文；历史 Run 即使原 Model 后来删除仍可显示当时的解析结果。
+StartRun 根据已写入 Draft/Revision 的 Gum Model UUID，为 Agent Node 固定协议、Provider、Provider Model ID、instructions dialect、能力和有效生成参数。它进入 Run Snapshot，不包含 API Key 明文；历史 Run 即使原 Model 后来删除仍可显示当时的解析结果。
 _Avoid_: 把 Provider 的可变连接内容固化进 Workflow Revision、运行中自动切换 Provider。
 
 **Workflow Draft（工作流草稿）**:
@@ -80,7 +80,7 @@ _Avoid_: 把它当作收到反馈便自动执行的普通 Node、让 `llm-chat` 
 仍可用同一 Run ID 继续的 Run；暂停只阻止派发新的 Node Run，不承诺冻结已经开始的外部调用。
 
 **Interrupted Run（已中断运行）**:
-因进程退出或崩溃而未正常完成、但仍可用同一 Run ID 恢复的 Run。中断时结果不确定的 Node Run 不得自动重放。
+因进程退出或崩溃而未正常完成的 Run。已确认的长期语义是未来可用同一 Run ID 恢复；当前 Product v1 只持久化、查询并明确显示不可 Resume。中断时结果不确定的 Node Run 不得自动重放。
 
 **Unknown Outcome（结果未知）**:
 Node Run 已发起外部副作用但平台无法确认是否完成的结果状态，不是 Workflow Run 的独立终态。是否再次执行必须由用户明确决定。

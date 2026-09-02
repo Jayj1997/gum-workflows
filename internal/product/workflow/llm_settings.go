@@ -11,12 +11,21 @@ type GenerationDefaults struct {
 	MaxOutputTokens *int     `json:"maxOutputTokens,omitempty"`
 }
 
+// Provider instruction dialects select the OpenAI-compatible role used for
+// Node instructions. Developer is the compatibility default for existing
+// Providers.
+const (
+	ProviderDialectDeveloper = "developer"
+	ProviderDialectSystem    = "system"
+)
+
 // LLMProvider is one user-managed model service connection. APIKeyRef names a
 // Secret held outside SQLite; it never contains the Secret value itself.
 type LLMProvider struct {
 	ID               string
 	Name             string
 	Protocol         string
+	Dialect          string
 	BaseURL          string
 	APIKeyRef        string
 	ExplicitDefault  bool

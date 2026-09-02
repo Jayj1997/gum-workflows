@@ -33,6 +33,7 @@
 			<form id="create-provider" class="provider-form">
 				<input id="provider-name" required placeholder="Provider name" aria-label="Provider name" />
 				<select id="provider-protocol" aria-label="Provider protocol"><option value="openai-chat-completions">OpenAI-compatible Chat Completions</option></select>
+				<select id="provider-dialect" aria-label="Instructions dialect"><option value="developer">Developer instructions</option><option value="system">System instructions</option></select>
 				<input id="provider-base-url" type="url" required placeholder="https://api.example/v1" aria-label="Base URL" />
 				<input id="provider-api-key" type="password" required autocomplete="new-password" placeholder="API Key" aria-label="API Key" />
 				<button type="submit">Add Provider</button>
@@ -79,7 +80,9 @@
 		</section>
 		<section class="run-results" aria-labelledby="run-results-title">
 			<div><h2 id="run-results-title">Product Run</h2><button id="start-run" type="button">Run visible Draft</button></div>
-			<p id="run-status">Select a valid Workflow Draft to run the fake Product Tracer.</p>
+			<label id="run-input-label" for="run-input">Human input</label>
+			<textarea id="run-input" rows="3" placeholder="Enter this Run's user message"></textarea>
+			<p id="run-status">Select a valid Workflow Draft and submit the source message.</p>
 			<h3>Node Runs</h3><ol id="node-run-list"></ol>
 			<h3>Conversation Artifacts</h3><ol id="artifact-list"></ol>
 		</section>
