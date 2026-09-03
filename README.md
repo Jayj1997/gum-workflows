@@ -8,7 +8,7 @@ Workflow 通过 Node 的 Input / Output Contract 组合工作过程，Node 之�
 
 项目遵循“现实工作流优先”：Agent 直接修改用户项目，Automation 在同一份工作状态上执行检查；Gum 负责组合、调度、结果留存和诊断，不默认复制项目、创建内部代码 Revision 或接管代码恢复。
 
-当前 YAML、CLI 与 Mock Agent 主要服务 Runtime 开发、验证和演示。macOS 产品壳已经可以通过通用 Application seam 在 SQLite 中创作 Product Workflow、管理用户级 LLM Provider / Model Slot，把 API Key 保存到 macOS Keychain，并从 authored `human-chat(source)` 提交本轮 text，通过真实 OpenAI-compatible 非流式 Chat Completions 完成单轮 `human-chat -> llm-chat` 闭环与持久化 Conversation Artifact。真实执行会先持久化 Running Run，Structural Failure、取消和进程中断都能在 History 中查看；删除 Provider/Model 会预告受影响 Workflow 并留下可修复的悬空 UUID 诊断。WaitingHuman、多轮回边、Interaction Error 同 Run Retry 与 Resume 仍按后续票交付。
+当前 YAML、CLI 与 Mock Agent 主要服务 Runtime 开发、验证和演示。macOS 产品壳已经可以通过通用 Application seam 在 SQLite 中创作 Product Workflow、管理用户级 LLM Provider / Model Slot，把 API Key 保存到 macOS Keychain，并从 authored `human-chat(source)` 提交本轮 text，通过真实 OpenAI-compatible 非流式 Chat Completions 完成单轮 `human-chat -> llm-chat` 闭环与持久化 Conversation Artifact。真实执行会先持久化 Running Run，Structural Failure、取消和进程中断都能在 History 中查看；删除 Provider/Model 会预告受影响 Workflow 并留下可修复的悬空 UUID 诊断。已发布的每个 product schema 版本都有旧库 fixture 与顺序升级测试，升级保留全部数据且失败可恢复。WaitingHuman、多轮回边、Interaction Error 同 Run Retry 与 Resume 仍按后续票交付。
 
 ## 项目规划
 
@@ -25,6 +25,19 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 任何新模块都需要先形成设计文档和开发票，再修改实现。模块完成后的 README 与进度文档同步方法见 [`README 更新规范`](<plans/README 更新规范：模块完成后的进度同步.md>)。
 
 ## 项目当前进展
+
+### Product schema 升级 fixtures — 已完成
+
+该切片让安装了早期 Product Tracer 或首闭环版本的用户安全升级到当前 schema：每个已发布 product schema version 都有代表性旧库 fixture 与顺序升级合同测试，升级保留全部产品数据，失败升级保持旧库可恢复。
+
+主要交付：
+
+- `internal/history` 为每个已发布版本（5–11）构造代表性旧库 fixture，按版本写入该版本真实可持有的 Workflow、Draft、Provider/Model（含软删除与显式 default）、Revision、Run Snapshot（按版本历史形状）与 Artifact 元数据；
+- 顺序升级测试断言 Draft lock version、Revision semantic hash、Model Slot UUID、删除状态、显式/有效 default 与历史 Run Snapshot 在升级后保持不变，软删除行不复活，`latestUserVersion` 防护测试强制新增版本时扩展版本表；
+- 升级后重开是零迁移重放：Revision、Run、Node Run、Artifact 与 Draft 行数不复制；失败升级（后续 DDL 失败）保持 `user_version` 旧值、已执行 DDL 回滚、原行原样可读，旧库可恢复；
+- 同一数据库中 workflow/v1 定义与 Run history 在升级后仍通过 `ListRuns` / `GetRun` / `GetNodeRun` 原有查询，`ImportDefinitions` 幂等 upsert，与 Product 查询互不污染。
+
+详细范围见 [issue 14](.scratch/product-workflow/issues/14-product-schema-upgrade-fixtures.md)。
 
 ### 删除 Model 后的悬空 UUID 诊断 — 已完成
 
