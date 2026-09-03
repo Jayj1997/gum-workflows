@@ -1,6 +1,7 @@
 package redaction_test
 
 import (
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
@@ -66,6 +67,40 @@ func TestRedactorRedactsSensitiveHeadersWithoutSecretRegistration(t *testing.T) 
 	got := redactor.Redact("Authorization: Bearer abc\nContent-Type: application/json")
 	if !strings.Contains(got, "Content-Type: application/json") {
 		t.Fatalf("content-type header was redacted: %s", got)
+	}
+}
+
+// TestRedactorKeepsJSONStructureWhenRedactingHeaderMentions guards the JSON
+// log-line path: a sensitive header mentioned inside a quoted value must not
+// swallow the closing quote or the fields after it.
+func TestRedactorKeepsJSONStructureWhenRedactingHeaderMentions(t *testing.T) {
+	t.Parallel()
+	redactor := redaction.NewRedactor()
+	redactor.Register("sk-canary-json")
+
+	line := `{"time":"2026-09-03T10:00:00Z","level":"INFO","msg":"node run finished","runId":"run-1","detail":"Authorization: Bearer sk-canary-json","latencyMs":12}`
+	redacted := redactor.Redact(line)
+	if strings.Contains(redacted, "sk-canary-json") {
+		t.Fatalf("registered secret survived inside JSON: %s", redacted)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(redacted), &decoded); err != nil {
+		t.Fatalf("redacted JSON line is corrupt: %v\n%s", err, redacted)
+	}
+	if decoded["runId"] != "run-1" || decoded["latencyMs"] != float64(12) {
+		t.Fatalf("fields after the redacted mention were lost: %#v", decoded)
+	}
+
+	// An unregistered value echoed by a provider must also vanish without
+	// breaking the line.
+	echoed := `{"error":"Authorization: Bearer sk-stranger-value","ok":true}`
+	echoedRedacted := redactor.Redact(echoed)
+	var decodedEcho map[string]any
+	if err := json.Unmarshal([]byte(echoedRedacted), &decodedEcho); err != nil {
+		t.Fatalf("redacted echoed JSON is corrupt: %v\n%s", err, echoedRedacted)
+	}
+	if strings.Contains(echoedRedacted, "sk-stranger-value") {
+		t.Fatalf("unregistered header value survived: %s", echoedRedacted)
 	}
 }
 

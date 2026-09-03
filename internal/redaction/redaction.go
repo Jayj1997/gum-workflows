@@ -63,9 +63,11 @@ func (r *Redactor) Redact(text string) string {
 	return redactHeaders(text)
 }
 
-// redactHeaders removes header names and values of sensitive request headers
-// whether they appear as "Authorization: Bearer x", "Authorization: x" or as
-// URL-encoded wire text. Case-insensitive per RFC 9110.
+// redactHeaders removes the values of sensitive request headers whether they
+// appear as "Authorization: Bearer x", "Authorization: x" or as text echoed
+// from wire dumps. The value stops at a double quote or newline so redacting
+// a header mention inside a JSON log line cannot swallow the quote and the
+// fields that follow it. Case-insensitive per RFC 9110.
 func redactHeaders(text string) string {
-	return sensitiveHeaderPattern.ReplaceAllString(text, "${1}"+Placeholder)
+	return sensitiveHeaderPattern.ReplaceAllString(text, "${1}${2}"+Placeholder)
 }
