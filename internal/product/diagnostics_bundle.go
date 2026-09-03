@@ -86,7 +86,7 @@ func (a *Application) GenerateDiagnosticsBundle(ctx context.Context, runID strin
 	if a.runHistory == nil {
 		return DiagnosticsBundleView{}, fmt.Errorf("generate diagnostics bundle: product run history repository is not configured")
 	}
-	run, nodeRuns, artifacts, err := a.runHistory.GetProductRun(ctx, runID)
+	run, nodeRuns, _, err := a.runHistory.GetProductRun(ctx, runID)
 	if err != nil {
 		return DiagnosticsBundleView{}, fmt.Errorf("generate diagnostics bundle: %w", err)
 	}
@@ -158,7 +158,6 @@ func (a *Application) GenerateDiagnosticsBundle(ctx context.Context, runID strin
 		SchemaVersion: bundleSchemaVersion, AppVersion: appVersion,
 		GeneratedAt: manifest.GeneratedAt, Contents: items,
 	}
-	_ = artifacts // artifact references appear in the Node Run summaries only
 	return view, nil
 }
 
