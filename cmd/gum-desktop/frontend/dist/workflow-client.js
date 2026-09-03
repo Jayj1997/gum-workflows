@@ -32,6 +32,9 @@ export function createBrowserWorkflowClient(application) {
 	const getRunHistory = typeof application.getRunHistory === "function"
 		? (runId) => application.getRunHistory(runId)
 		: async () => { throw new Error("browser application must provide getRunHistory()"); };
+	const generateDiagnosticsBundle = typeof application.generateDiagnosticsBundle === "function"
+		? (runId) => application.generateDiagnosticsBundle(runId)
+		: async () => { throw new Error("browser application must provide generateDiagnosticsBundle()"); };
   return {
     openWorkspace: () => application.openWorkspace(),
     createWorkflow: (input) => application.createWorkflow(input),
@@ -42,6 +45,7 @@ export function createBrowserWorkflowClient(application) {
 		listRevisions,
 		listRevisionRuns,
 		getRunHistory,
+		generateDiagnosticsBundle,
 		listNodeCatalog,
 		getLLMSettings,
 		createLLMProvider: (input) => application.createLLMProvider(input),
@@ -68,7 +72,7 @@ export function createDesktopWorkflowClient(desktopAdapter) {
 	requireMethod(desktopAdapter, "UpdateDraft", "desktop adapter");
 	requireMethod(desktopAdapter, "ListNodeCatalog", "desktop adapter");
 	requireMethod(desktopAdapter, "StartRun", "desktop adapter");
-	for (const method of ["GetLLMSettings", "CreateLLMProvider", "UpdateLLMProvider", "DeleteLLMProvider", "ListProviderDeletionImpact", "SetDefaultLLMProvider", "CreateLLMModel", "UpdateLLMModel", "DeleteLLMModel", "ListModelDeletionImpact", "SetDefaultLLMModel", "ListRevisions", "ListRevisionRuns", "GetRunHistory"]) {
+	for (const method of ["GetLLMSettings", "CreateLLMProvider", "UpdateLLMProvider", "DeleteLLMProvider", "ListProviderDeletionImpact", "SetDefaultLLMProvider", "CreateLLMModel", "UpdateLLMModel", "DeleteLLMModel", "ListModelDeletionImpact", "SetDefaultLLMModel", "ListRevisions", "ListRevisionRuns", "GetRunHistory", "GenerateDiagnosticsBundle"]) {
 		requireMethod(desktopAdapter, method, "desktop adapter");
 	}
   return {
@@ -81,6 +85,7 @@ export function createDesktopWorkflowClient(desktopAdapter) {
 		listRevisions: (workflowId) => desktopAdapter.ListRevisions(workflowId),
 		listRevisionRuns: (revisionId) => desktopAdapter.ListRevisionRuns(revisionId),
 		getRunHistory: (runId) => desktopAdapter.GetRunHistory(runId),
+		generateDiagnosticsBundle: (runId) => desktopAdapter.GenerateDiagnosticsBundle(runId),
 		listNodeCatalog: () => desktopAdapter.ListNodeCatalog(),
 		getLLMSettings: () => desktopAdapter.GetLLMSettings(),
 		createLLMProvider: (input) => desktopAdapter.CreateLLMProvider(input),

@@ -14,6 +14,7 @@ import (
 	"github.com/Jayj1997/gum-workflows/internal/chat"
 	"github.com/Jayj1997/gum-workflows/internal/product/nodecatalog"
 	productworkflow "github.com/Jayj1997/gum-workflows/internal/product/workflow"
+	"github.com/Jayj1997/gum-workflows/internal/redaction"
 	"github.com/Jayj1997/gum-workflows/internal/runtimepath"
 	"github.com/Jayj1997/gum-workflows/internal/secret"
 )
@@ -48,6 +49,7 @@ type WorkflowApplication interface {
 	ListRevisions(ctx context.Context, workflowID string) ([]RevisionView, error)
 	ListRevisionRuns(ctx context.Context, revisionID string) ([]RunSummaryView, error)
 	GetRunHistory(ctx context.Context, runID string) (RunView, error)
+	GenerateDiagnosticsBundle(ctx context.Context, runID string) (DiagnosticsBundleView, error)
 }
 
 // DraftView is the current mutable Product Workflow definition returned to UI adapters.
@@ -137,6 +139,7 @@ type Application struct {
 	runRecovery  productworkflow.RunRecoveryRepository
 	secrets      secret.Adapter
 	chat         chat.Adapter
+	redactor     *redaction.Redactor
 	initializeMu sync.Mutex
 	initialized  bool
 }
@@ -159,6 +162,16 @@ func WithChatAdapter(adapter chat.Adapter) ApplicationOption {
 	return func(application *Application) { application.chat = adapter }
 }
 
+// WithRedactor configures the shared Secret redaction seam used by run logs,
+// errors and diagnostics bundles. A nil argument leaves the default in place.
+func WithRedactor(redactor *redaction.Redactor) ApplicationOption {
+	return func(application *Application) {
+		if redactor != nil {
+			application.redactor = redactor
+		}
+	}
+}
+
 // NewApplication creates the Product Application with injected persistence, the
 // explicitly assembled product Node Definition/Executor registry, and the default
 // OpenAI-compatible protocol Adapter for real model calls.
@@ -167,7 +180,7 @@ func NewApplication(repository productworkflow.Repository, catalog *nodecatalog.
 	runs, _ := repository.(productworkflow.RunRepository)
 	runHistory, _ := repository.(productworkflow.RunHistoryRepository)
 	runRecovery, _ := repository.(productworkflow.RunRecoveryRepository)
-	application := &Application{repository: repository, llmSettings: settings, runRepo: runs, runHistory: runHistory, runRecovery: runRecovery, catalog: catalog, chat: chat.NewOpenAIChatAdapter(nil)}
+	application := &Application{repository: repository, llmSettings: settings, runRepo: runs, runHistory: runHistory, runRecovery: runRecovery, catalog: catalog, chat: chat.NewOpenAIChatAdapter(nil), redactor: redaction.NewRedactor()}
 	for _, option := range options {
 		option(application)
 	}

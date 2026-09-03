@@ -8,7 +8,7 @@ Workflow 通过 Node 的 Input / Output Contract 组合工作过程，Node 之�
 
 项目遵循“现实工作流优先”：Agent 直接修改用户项目，Automation 在同一份工作状态上执行检查；Gum 负责组合、调度、结果留存和诊断，不默认复制项目、创建内部代码 Revision 或接管代码恢复。
 
-当前 YAML、CLI 与 Mock Agent 主要服务 Runtime 开发、验证和演示。macOS 产品壳已经可以通过通用 Application seam 在 SQLite 中创作 Product Workflow、管理用户级 LLM Provider / Model Slot，把 API Key 保存到 macOS Keychain，并从 authored `human-chat(source)` 提交本轮 text，通过真实 OpenAI-compatible 非流式 Chat Completions 完成单轮 `human-chat -> llm-chat` 闭环与持久化 Conversation Artifact。真实执行会先持久化 Running Run，Structural Failure、取消和进程中断都能在 History 中查看；删除 Provider/Model 会预告受影响 Workflow 并留下可修复的悬空 UUID 诊断。已发布的每个 product schema 版本都有旧库 fixture 与顺序升级测试，升级保留全部数据且失败可恢复。WaitingHuman、多轮回边、Interaction Error 同 Run Retry 与 Resume 仍按后续票交付。
+当前 YAML、CLI 与 Mock Agent 主要服务 Runtime 开发、验证和演示。macOS 产品壳已经可以通过通用 Application seam 在 SQLite 中创作 Product Workflow、管理用户级 LLM Provider / Model Slot，把 API Key 保存到 macOS Keychain，并从 authored `human-chat(source)` 提交本轮 text，通过真实 OpenAI-compatible 非流式 Chat Completions 完成单轮 `human-chat -> llm-chat` 闭环与持久化 Conversation Artifact。真实执行会先持久化 Running Run，Structural Failure、取消和进程中断都能在 History 中查看；删除 Provider/Model 会预告受影响 Workflow 并留下可修复的悬空 UUID 诊断。已发布的每个 product schema 版本都有旧库 fixture 与顺序升级测试，升级保留全部数据且失败可恢复。每个真实 Run 写入脱敏的结构化运行日志，用户可以显式生成不含 Prompt、Conversation 与 API Key 的 Crash 诊断包。WaitingHuman、多轮回边、Interaction Error 同 Run Retry 与 Resume 仍按后续票交付。
 
 ## 项目规划
 
@@ -25,6 +25,20 @@ Code Quality Check 的后续增强保留为独立新模块：Changed Scope、项
 任何新模块都需要先形成设计文档和开发票，再修改实现。模块完成后的 README 与进度文档同步方法见 [`README 更新规范`](<plans/README 更新规范：模块完成后的进度同步.md>)。
 
 ## 项目当前进展
+
+### 日志脱敏与 Crash diagnostics — 已完成
+
+该切片让用户在 Provider、Node 或应用崩溃后获得足够的脱敏诊断信息：每个真实 Run 写入带身份与延迟的结构化日志，用户可以显式生成内容边界清晰的 Crash 诊断包，而已解析的 API Key 与敏感 Header 在任何输出路径都不出现。
+
+主要交付：
+
+- 新增 `internal/redaction` 共享脱敏 seam：注册进程内已解析的 Secret 值做精确子串替换（长前缀优先），并结构性移除 Authorization、Proxy-Authorization、Cookie、Set-Cookie 与 X-API-Key Header 值；Product Application 在 StartRun 解析 Provider API Key 时注册该值；
+- 每个真实 Run 在 Local Data Root 的 `runs/<run-id>/logs/run.log` 追加 JSON 行日志：Node Run start/finish 行携带 Run/Node Run UUID、Node Definition、phase、latencyMs、Provider request ID 与脱敏错误，Run 级事件记录 preflight 失败、成功、失败与中断；日志打开失败降级为丢弃 handler，不阻塞 Run；
+- `GenerateDiagnosticsBundle(runID)` 由用户在历史面板显式触发，在 `runs/<run-id>/diagnostics/` 写入 `manifest.json`（bundle schema、应用版本、product schema version、Run/Node Run 摘要与 includes/excludes 边界声明）和二次脱敏的 run.log 副本；
+- bundle 与日志永不包含 Prompt、Conversation body 或任何 Artifact 本体——Artifact 只以 `Kind:ID:Version` 引用文本出现；UI 显示 bundle 内容边界、产物路径与显式生成按钮；
+- 已知 Secret canary 验收测试覆盖最坏情形（Provider 错误体回显 Secret）：扫描 SQLite 数据库、Run 目录（日志与 Artifact）、Run History 视图与整个诊断包，全部无泄漏。
+
+详细范围见 [issue 15](.scratch/product-workflow/issues/15-log-redaction-crash-diagnostics.md)。
 
 ### Product schema 升级 fixtures — 已完成
 

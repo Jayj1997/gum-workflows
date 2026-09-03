@@ -184,6 +184,8 @@ func (a *Application) StartRun(ctx context.Context, input StartRunInput) (RunVie
 
 	now := time.Now().UTC()
 	runID := uuid.NewString()
+	runLog := openRunLogger(a.runLogPath(runID), a.redactor)
+	defer runLog.close()
 	revision := productworkflow.Revision{ID: uuid.NewString(), WorkflowID: input.WorkflowID, SemanticHash: semanticHash, Content: revisionContent, CreatedAt: now}
 	snapshot := snapshotForDraft(revision.ID, materialized, selections)
 	run := productworkflow.Run{
@@ -209,10 +211,11 @@ func (a *Application) StartRun(ctx context.Context, input StartRunInput) (RunVie
 	recordProgress := func(nodeRuns []productworkflow.NodeRun, artifacts []productworkflow.RunArtifact) error {
 		return a.runRepo.RecordProductWorkflowRunProgress(ctx, runID, nodeRuns, artifacts)
 	}
-	nodeRuns, runArtifacts, artifactViews, err := a.executeSingleTurn(ctx, runID, materialized, selections, input.HumanInput, beginRun, recordProgress, now)
+	nodeRuns, runArtifacts, artifactViews, err := a.executeSingleTurn(ctx, runID, materialized, selections, input.HumanInput, beginRun, recordProgress, runLog, now)
 	if err != nil {
 		if !begun {
 			_ = os.RemoveAll(a.runPaths.RunDir(runID))
+			runLog.logRunEvent(ctx, runID, "preflight-failed", err.Error(), time.Now().UTC())
 			return RunView{}, fmt.Errorf("start Run: %w", err)
 		}
 		run.Status = "failed"
@@ -224,6 +227,7 @@ func (a *Application) StartRun(ctx context.Context, input StartRunInput) (RunVie
 		if run.Error.Kind == "unknown-outcome" {
 			run.Status = "interrupted"
 		}
+		runLog.logRunEvent(ctx, runID, "run-"+run.Status, run.Error.Message, run.FinishedAt)
 		finishCtx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancelFinish()
 		if persistErr := a.runRepo.FinishProductWorkflowRun(finishCtx, productworkflow.FinishRunRequest{Run: run, NodeRuns: nodeRuns, Artifacts: runArtifacts}); persistErr != nil {
@@ -233,6 +237,7 @@ func (a *Application) StartRun(ctx context.Context, input StartRunInput) (RunVie
 	}
 	run.Status = "succeeded"
 	run.FinishedAt = time.Now().UTC()
+	runLog.logRunEvent(ctx, runID, "run-succeeded", "", run.FinishedAt)
 	finishCtx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancelFinish()
 	if err := a.runRepo.FinishProductWorkflowRun(finishCtx, productworkflow.FinishRunRequest{Run: run, NodeRuns: nodeRuns, Artifacts: runArtifacts}); err != nil {
@@ -322,7 +327,7 @@ func (a *Application) materializeLLMSelections(ctx context.Context, content map[
 // Workflow: the human turn publishes the user Conversation Artifact, the agent
 // turn makes one real OpenAI-compatible call and appends exactly one assistant
 // message as the new Conversation version.
-func (a *Application) executeSingleTurn(ctx context.Context, runID string, content map[string]any, selections []productworkflow.ResolvedLLMSelection, humanInput HumanRunInput, beginRun func() error, recordProgress func([]productworkflow.NodeRun, []productworkflow.RunArtifact) error, now time.Time) ([]productworkflow.NodeRun, []productworkflow.RunArtifact, []ArtifactView, error) {
+func (a *Application) executeSingleTurn(ctx context.Context, runID string, content map[string]any, selections []productworkflow.ResolvedLLMSelection, humanInput HumanRunInput, beginRun func() error, recordProgress func([]productworkflow.NodeRun, []productworkflow.RunArtifact) error, runLog *runLogger, now time.Time) ([]productworkflow.NodeRun, []productworkflow.RunArtifact, []ArtifactView, error) {
 	nodes, _ := content["nodes"].([]any)
 	nodesByID := make(map[string]map[string]any, len(nodes))
 	var agent map[string]any
@@ -374,6 +379,10 @@ func (a *Application) executeSingleTurn(ctx context.Context, runID string, conte
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("llm-chat Node %q resolve Provider API Key: %w", agentID, err)
 	}
+	// The resolved Secret value is registered before any log line can name it:
+	// error messages, Node Run diagnostics and the bundle all pass the
+	// Redactor from this point on.
+	a.redactor.Register(apiKey)
 	if err := beginRun(); err != nil {
 		return nil, nil, nil, fmt.Errorf("persist running Run: %w", err)
 	}
@@ -392,9 +401,12 @@ func (a *Application) executeSingleTurn(ctx context.Context, runID string, conte
 	humanRunID := uuid.NewString()
 	agentRunID := uuid.NewString()
 	humanRun := productworkflow.NodeRun{ID: humanRunID, RunID: runID, NodeID: sourceID, NodeDefinition: stringValue(human, "definition"), NodeExecutor: stringValue(human, "executor"), Status: "succeeded", Inputs: map[string]artifact.ArtifactRef{}, Outputs: map[string]artifact.ArtifactRef{"conversation": sourceRef}, StartedAt: now, FinishedAt: now}
+	runLog.logNodeRunStart(ctx, runID, humanRunID, sourceID, humanRun.NodeDefinition, now)
+	runLog.logNodeRunFinish(ctx, runID, humanRunID, sourceID, humanRun.NodeDefinition, "succeeded", now, now, "", nil)
 	sourceItem := productworkflow.RunArtifact{ID: sourceArtifactID, RunID: runID, NodeRunID: humanRunID, NodeID: sourceID, Port: "conversation", Type: "Conversation", Version: "1", URI: sourceRef.URI, CreatedAt: now}
 	agentStarted := time.Now().UTC()
 	runningAgent := productworkflow.NodeRun{ID: agentRunID, RunID: runID, NodeID: agentID, NodeDefinition: stringValue(agent, "definition"), NodeExecutor: stringValue(agent, "executor"), Status: "running", Inputs: map[string]artifact.ArtifactRef{"conversation": sourceRef}, Outputs: map[string]artifact.ArtifactRef{}, StartedAt: agentStarted, FinishedAt: agentStarted}
+	runLog.logNodeRunStart(ctx, runID, agentRunID, agentID, runningAgent.NodeDefinition, agentStarted)
 	if err := recordProgress([]productworkflow.NodeRun{humanRun, runningAgent}, []productworkflow.RunArtifact{sourceItem}); err != nil {
 		return []productworkflow.NodeRun{humanRun}, []productworkflow.RunArtifact{sourceItem}, []ArtifactView{artifactView(sourceItem, sourceConversation)}, fmt.Errorf("persist Run progress: %w", err)
 	}
@@ -421,6 +433,7 @@ func (a *Application) executeSingleTurn(ctx context.Context, runID string, conte
 			status = "unknown-outcome"
 		}
 		agentRun := productworkflow.NodeRun{ID: agentRunID, RunID: runID, NodeID: agentID, NodeDefinition: stringValue(agent, "definition"), NodeExecutor: stringValue(agent, "executor"), Status: status, Inputs: map[string]artifact.ArtifactRef{"conversation": sourceRef}, Outputs: map[string]artifact.ArtifactRef{}, Diagnostics: productworkflow.NodeRunDiagnostics{Error: details}, StartedAt: agentStarted, FinishedAt: agentFinished}
+		runLog.logNodeRunFinish(ctx, runID, agentRunID, agentID, agentRun.NodeDefinition, status, agentStarted, agentFinished, "", err)
 		return []productworkflow.NodeRun{humanRun, agentRun}, []productworkflow.RunArtifact{sourceItem}, []ArtifactView{artifactView(sourceItem, sourceConversation)}, fmt.Errorf("llm-chat Node %q model call: %w", agentID, err)
 	}
 	finalConversation := chat.Conversation{Messages: append(append([]chat.ChatMessage{}, sourceConversation.Messages...), result.Assistant)}
@@ -435,9 +448,11 @@ func (a *Application) executeSingleTurn(ctx context.Context, runID string, conte
 			Status: "failed", Inputs: map[string]artifact.ArtifactRef{"conversation": sourceRef}, Outputs: map[string]artifact.ArtifactRef{},
 			Diagnostics: productworkflow.NodeRunDiagnostics{Error: details}, StartedAt: agentStarted, FinishedAt: agentFinished,
 		}
+		runLog.logNodeRunFinish(ctx, runID, agentRunID, agentID, failedAgent.NodeDefinition, "failed", agentStarted, agentFinished, "", wrapped)
 		return []productworkflow.NodeRun{humanRun, failedAgent}, []productworkflow.RunArtifact{sourceItem}, []ArtifactView{artifactView(sourceItem, sourceConversation)}, wrapped
 	}
 	usage := chat.Usage(result.Usage)
+	runLog.logNodeRunFinish(ctx, runID, agentRunID, agentID, stringValue(agent, "definition"), "succeeded", agentStarted, agentFinished, result.ProviderRequestID, nil)
 	nodeRuns := []productworkflow.NodeRun{
 		humanRun,
 		{ID: agentRunID, RunID: runID, NodeID: agentID, NodeDefinition: stringValue(agent, "definition"), NodeExecutor: stringValue(agent, "executor"), Status: "succeeded", Inputs: map[string]artifact.ArtifactRef{"conversation": sourceRef}, Outputs: map[string]artifact.ArtifactRef{"conversation": finalRef}, Diagnostics: productworkflow.NodeRunDiagnostics{ProviderRequestID: result.ProviderRequestID, FinishReason: result.FinishReason, Usage: &usage}, StartedAt: agentStarted, FinishedAt: agentFinished},

@@ -40,6 +40,14 @@ const expectedRun = {
 const expectedRevisions = [
 	{ id: "revision-uuid", semanticHash: "abc12345", runCount: 1, createdAt: "2026-08-31T09:00:00Z" },
 ];
+const expectedBundle = {
+	runId: "run-uuid", workflowId: expectedWorkflow.id, path: "/tmp/diagnostics", schemaVersion: "productDiagnosticsBundle/v1", appVersion: "0.0.0-dev",
+	generatedAt: "2026-09-03T09:00:00Z",
+	contents: [
+		{ kind: "manifest", name: "manifest.json", description: "schema versions, app version, Run and Node Run summaries" },
+		{ kind: "run-log", name: "run.log", description: "sanitized structured run log" },
+	],
+};
 const expectedRevisionRuns = [
 	{ id: "run-uuid", revisionId: "revision-uuid", status: "succeeded", startedAt: "2026-08-31T09:00:00Z", finishedAt: "2026-08-31T09:00:01Z" },
 ];
@@ -88,6 +96,7 @@ const clientContract = [
 		async listRevisions() { return expectedRevisions; },
 		async listRevisionRuns() { return expectedRevisionRuns; },
 		async getRunHistory() { return expectedRun; },
+		async generateDiagnosticsBundle() { return expectedBundle; },
 		async listNodeCatalog() { return expectedCatalog; },
 		async getLLMSettings() { return expectedSettings; },
 		async createLLMProvider(input) { return { ...expectedSettings.providers[0], ...input }; },
@@ -125,6 +134,7 @@ const clientContract = [
 		async ListRevisions() { return expectedRevisions; },
 		async ListRevisionRuns() { return expectedRevisionRuns; },
 		async GetRunHistory() { return expectedRun; },
+		async GenerateDiagnosticsBundle() { return expectedBundle; },
 		async ListNodeCatalog() { return expectedCatalog; },
 		async GetLLMSettings() { return expectedSettings; },
 		async CreateLLMProvider(input) { return { ...expectedSettings.providers[0], ...input }; },
@@ -153,6 +163,7 @@ for (const [name, createClient] of clientContract) {
 	assert.deepEqual(await client.listRevisions(expectedWorkflow.id), expectedRevisions);
 	assert.deepEqual(await client.listRevisionRuns("revision-uuid"), expectedRevisionRuns);
 	assert.deepEqual(await client.getRunHistory("run-uuid"), expectedRun);
+	assert.deepEqual(await client.generateDiagnosticsBundle("run-uuid"), expectedBundle);
 	assert.deepEqual(await client.listNodeCatalog(), expectedCatalog);
 	assert.deepEqual(await client.getLLMSettings(), expectedSettings);
 	assert.equal((await client.createLLMProvider({ name: "Primary" })).name, "Primary");
@@ -1229,6 +1240,50 @@ test("the DOM history panel renders Revisions, Revision Runs and a historical Ru
 	dangling.snapshot = { executors: [], llmSelections: [{ nodeId: "answer", providerId: "provider-uuid", providerName: "Primary", protocol: "openai-chat-completions", dialect: "developer", baseUrl: "https://api.example/v1", modelUuid: "deleted-model-uuid", providerModelId: "model-fast" }] };
 	view.renderHistoryRun(dangling);
 	assert.match(historyRunStatus.textContent, /answer: Primary \(model-fast\)/);
+});
+
+test("the DOM diagnostics action is explicit and shows the bundle content boundary", async () => {
+	const document = {
+		createElement(tag) {
+			return {
+				tag, children: [], textContent: "", listeners: {},
+				append(...children) { this.children.push(...children); },
+				addEventListener(event, handler) { this.listeners[event] = handler; },
+			};
+		},
+	};
+	const revisionList = { ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } };
+	const revisionRunList = { ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } };
+	const historyRunStatus = { textContent: "" };
+	const historyNodeRunList = { ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } };
+	const historyArtifactList = { ownerDocument: document, items: [], replaceChildren(...items) { this.items = items; } };
+	const generateDiagnosticsButton = { listeners: {}, addEventListener(event, handler) { this.listeners[event] = handler; } };
+	const diagnosticsStatus = { textContent: "before" };
+	const view = createProductDOMView({
+		title: {}, message: {}, status: { dataset: {} }, button: { addEventListener() {} }, form: { addEventListener() {} }, nameInput: {},
+		workflowList: { replaceChildren() {} }, draftEditor: { addEventListener() {} }, draftStatus: {}, diagnosticList: { replaceChildren() {} },
+		revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList,
+		generateDiagnosticsButton, diagnosticsStatus,
+	}, productStatusMessage);
+	let requestedRunId = "";
+	let rejection;
+	view.onGenerateDiagnosticsBundle(async (runId) => {
+		if (rejection) throw rejection;
+		requestedRunId = runId;
+		return structuredClone(expectedBundle);
+	});
+	view.renderHistoryRun(expectedRun);
+
+	await generateDiagnosticsButton.listeners.click();
+	assert.equal(requestedRunId, expectedRun.id);
+	assert.match(diagnosticsStatus.textContent, /manifest\.json, run\.log/);
+	assert.match(diagnosticsStatus.textContent, /excludes prompts, conversations, artifact content and API keys/);
+	assert.match(diagnosticsStatus.textContent, /\/tmp\/diagnostics/);
+
+	// The button surfaces failures instead of silently dropping the bundle.
+	rejection = new Error("bundle directory is not writable");
+	await generateDiagnosticsButton.listeners.click();
+	assert.match(diagnosticsStatus.textContent, /not writable/);
 });
 
 test("the Node editor renders distinct Input Binding and Control Dependency controls", async () => {

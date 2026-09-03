@@ -75,6 +75,10 @@ func (s *applicationStub) GetRunHistory(context.Context, string) (product.RunVie
 	return s.run, s.err
 }
 
+func (s *applicationStub) GenerateDiagnosticsBundle(context.Context, string) (product.DiagnosticsBundleView, error) {
+	return product.DiagnosticsBundleView{}, s.err
+}
+
 func (s *applicationStub) ListNodeCatalog(context.Context) ([]nodecatalog.Entry, error) {
 	return s.catalog, s.err
 }
@@ -283,6 +287,16 @@ func TestDesktopAdapterListsRevisionsRunsAndGetsRunThroughWorkflowApplication(t 
 	}
 	if !reflect.DeepEqual(gotRun, run) {
 		t.Fatalf("run history = %#v, want %#v", gotRun, run)
+	}
+}
+
+func TestDesktopAdapterGeneratesDiagnosticsBundleThroughWorkflowApplication(t *testing.T) {
+	t.Parallel()
+
+	application := &applicationStub{}
+	adapter := newDesktopAdapter(application)
+	if _, err := adapter.GenerateDiagnosticsBundle("run-id"); err != nil {
+		t.Fatalf("generate diagnostics bundle: %v", err)
 	}
 }
 

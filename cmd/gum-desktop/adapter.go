@@ -78,6 +78,11 @@ func (a *DesktopAdapter) GetRunHistory(runID string) (product.RunView, error) {
 	return a.application.GetRunHistory(a.ctx, runID)
 }
 
+// GenerateDiagnosticsBundle forwards an explicit crash bundle generation.
+func (a *DesktopAdapter) GenerateDiagnosticsBundle(runID string) (product.DiagnosticsBundleView, error) {
+	return a.application.GenerateDiagnosticsBundle(a.ctx, runID)
+}
+
 // ListNodeCatalog forwards the registered product Node Catalog.
 func (a *DesktopAdapter) ListNodeCatalog() ([]nodecatalog.Entry, error) {
 	return a.application.ListNodeCatalog(a.ctx)

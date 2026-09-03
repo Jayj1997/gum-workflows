@@ -92,6 +92,11 @@
 			<h3>Selected Run</h3><p id="history-run-status">Select a Run to view its Node Runs and Artifacts.</p>
 			<h4>Node Runs</h4><ol id="history-node-run-list"></ol>
 			<h4>Conversation Artifacts</h4><ol id="history-artifact-list"></ol>
+			<div class="diagnostics">
+				<h4>Diagnostics bundle</h4>
+				<button id="generate-diagnostics-bundle" type="button">Generate diagnostics bundle</button>
+				<p id="diagnostics-status">The bundle contains the Run summary, Node Run identities, latencies, sanitized errors and the run log. It never contains prompts, conversations, artifacts or API keys.</p>
+			</div>
 		</section>
 		<section class="draft-editor" aria-labelledby="draft-editor-title">
 			<h2 id="draft-editor-title">Workflow Draft</h2>

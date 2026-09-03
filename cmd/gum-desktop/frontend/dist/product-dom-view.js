@@ -172,6 +172,13 @@ function previewLayers(preview) {
 	return new Map([...componentByNode].map(([nodeId, component]) => [nodeId, layers.get(component) ?? 0]));
 }
 
+// bundleBoundaryText renders the explicit content boundary of a generated
+// diagnostics bundle so the user sees what they are about to share.
+function bundleBoundaryText(bundle) {
+	const names = (bundle?.contents ?? []).map((item) => item.name).join(", ");
+	return `Bundle ${bundle?.schemaVersion ?? ""} · ${names || "empty"} · excludes prompts, conversations, artifact content and API keys · ${bundle?.path ?? ""}`;
+}
+
 export function createProductDOMView(elements, statusMessage, options = {}) {
 	const {
 		title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList,
@@ -181,6 +188,7 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 		providerForm, providerName, providerProtocol, providerDialect, providerBaseURL, providerAPIKey, llmProviderList, llmDiagnosticList,
 		runButton, runInputLabel, runInput, runStatus, nodeRunList, artifactList,
 		historyRefreshButton, revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList,
+		generateDiagnosticsButton, diagnosticsStatus,
 	} = elements;
 	const confirmDelete = options.confirmDelete ?? ((message) => globalThis.confirm?.(message) ?? false);
 	let selectWorkflow = () => {};
@@ -208,9 +216,11 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 	let refreshRevisions = () => {};
 	let selectRevision = () => {};
 	let selectRun = () => {};
+	let generateDiagnosticsBundle = () => {};
 	let pendingDraftEdit;
 	let activeWorkflowId = "";
 	let activeNodeId = "";
+	let activeHistoryRunId = "";
 	let editRevision = 0;
 	let autosaveTimer;
 	let previewZoom = 1;
@@ -316,6 +326,19 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 		},
 		onSelectRevision(handler) { selectRevision = handler; },
 			onSelectRun(handler) { selectRun = handler; },
+		// The diagnostics bundle is always explicit: the user clicks Generate
+		// for one selected Run, sees the content boundary and the bundle path.
+		onGenerateDiagnosticsBundle(handler) {
+			generateDiagnosticsBundle = handler;
+			generateDiagnosticsButton?.addEventListener("click", async () => {
+				try {
+					const bundle = await generateDiagnosticsBundle(activeHistoryRunId);
+					diagnosticsStatus.textContent = bundleBoundaryText(bundle);
+				} catch (error) {
+					diagnosticsStatus.textContent = error instanceof Error ? error.message : String(error);
+				}
+			});
+		},
 		render(state) {
 			title.textContent = state.title;
 			message.textContent = state.message;
@@ -501,6 +524,7 @@ export function createProductDOMView(elements, statusMessage, options = {}) {
 				}));
 			},
 			renderHistoryRun(run) {
+				activeHistoryRunId = run?.id ?? "";
 				if (historyRunStatus) historyRunStatus.textContent = runStatusText(run);
 				const selection = llmSelectionText(run);
 				if (historyRunStatus && selection) historyRunStatus.textContent += ` · ${selection}`;

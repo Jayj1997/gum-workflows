@@ -53,6 +53,9 @@ export function createProductShell(view, client, options = {}) {
 			view.render({ status: "error", title: "Gum Workflows", message: errorMessage(error) });
 		}
 	}
+	// The DOM view tracks the currently displayed history Run; the explicit
+	// diagnostics-bundle action targets that Run.
+	let selectedHistoryRunId = "";
 	async function changeLLMSettings(action) {
 		try {
 			await action();
@@ -258,7 +261,18 @@ export function createProductShell(view, client, options = {}) {
 	view.onSelectRun?.(async (runId) => {
 		if (!view.renderHistoryRun || !client.getRunHistory) return;
 		try {
-			view.renderHistoryRun(await client.getRunHistory(runId));
+			const detail = await client.getRunHistory(runId);
+			selectedHistoryRunId = detail.id;
+			view.renderHistoryRun(detail);
+		} catch (error) {
+			view.render({ status: "error", title: "Gum Workflows", message: errorMessage(error) });
+		}
+	});
+	view.onGenerateDiagnosticsBundle?.(async () => {
+		if (!client.generateDiagnosticsBundle) return;
+		if (!selectedHistoryRunId) return;
+		try {
+			await client.generateDiagnosticsBundle(selectedHistoryRunId);
 		} catch (error) {
 			view.render({ status: "error", title: "Gum Workflows", message: errorMessage(error) });
 		}

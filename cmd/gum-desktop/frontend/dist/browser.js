@@ -260,6 +260,23 @@ export function createBrowserApplication(options = {}) {
 			draft, snapshot: structuredClone(run.snapshot), nodeRuns: structuredClone(run.nodeRuns), artifacts: structuredClone(run.artifacts),
 		};
 	},
+	// The Browser Mock diagnostics bundle mirrors the Desktop boundary: it
+	// summarizes identities and sanitized errors only, never prompts,
+	// conversations, artifacts or resolved secrets.
+	async generateDiagnosticsBundle(runId) {
+		const run = runs.get(runId);
+		if (!run) throw new Error(`Run ${runId} not found`);
+		return {
+			runId: run.id, workflowId: run.workflowId,
+			path: `memory://gum-workflows/runs/${run.id}/diagnostics`,
+			schemaVersion: "productDiagnosticsBundle/v1", appVersion: "0.0.0-browser-mock",
+			generatedAt: new Date().toISOString(),
+			contents: [
+				{ kind: "manifest", name: "manifest.json", description: "schema versions, app version, Run and Node Run summaries" },
+				{ kind: "run-log", name: "run.log", description: "sanitized structured run log" },
+			],
+		};
+	},
 	async getLLMSettings() { return llmSettings.getSettings(); },
 	async createLLMProvider(input) { return llmSettings.createProvider(input); },
 	async updateLLMProvider(input) { return llmSettings.updateProvider(input); },
@@ -322,10 +339,12 @@ const revisionRunList = document.querySelector("#revision-run-list");
 const historyRunStatus = document.querySelector("#history-run-status");
 const historyNodeRunList = document.querySelector("#history-node-run-list");
 const historyArtifactList = document.querySelector("#history-artifact-list");
+const generateDiagnosticsButton = document.querySelector("#generate-diagnostics-bundle");
+const diagnosticsStatus = document.querySelector("#diagnostics-status");
 
 createProductShell(
   createProductDOMView(
-		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerDialect, providerBaseURL, providerAPIKey, llmProviderList, llmDiagnosticList, runButton, runInputLabel, runInput, runStatus, nodeRunList, artifactList, historyRefreshButton, revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList },
+		{ title, message, status, button, form, nameInput, workflowList, draftEditor, draftStatus, diagnosticList, nodeCatalogList, nodeList, nodeEditor, nodeEditorStatus, nodeName, removeNodeButton, nodeConfigForm, nodeInputForm, nodeControlForm, previewCanvas, previewEdges, previewGroups, previewZoomIn, previewZoomOut, previewZoomReset, providerForm, providerName, providerProtocol, providerDialect, providerBaseURL, providerAPIKey, llmProviderList, llmDiagnosticList, runButton, runInputLabel, runInput, runStatus, nodeRunList, artifactList, historyRefreshButton, revisionList, revisionRunList, historyRunStatus, historyNodeRunList, historyArtifactList, generateDiagnosticsButton, diagnosticsStatus },
     productStatusMessage,
   ),
   client,
